@@ -1,26 +1,17 @@
 from abc import abstractmethod, ABC
 from datetime import datetime
-from typing import Optional, Dict, Any, Union, List, Type, TypeVar
-import importlib
+from typing import Optional, Dict, Any, Union, List, TypeVar
 import polars as pl
 from dask.delayed import Delayed
 
+from vnpy.factor.utils.factor_utils import init_factors
+
 # Assuming FactorMemory is in a sibling file 'factor_memory.py'
 # If FactorMemory is defined elsewhere, adjust the import path accordingly.
-try:
-    from .memory import FactorMemory
-except ImportError:
-    # Fallback if running in a context where relative import fails (e.g. top-level script)
-    # This might require FactorMemory to be in PYTHONPATH or installed.
-    # For this example, we'll assume it might be defined in the same file temporarily
-    # if the relative import fails, or that the user will adjust.
-    print("Attempting to import FactorMemory, ensure it's accessible.")
-    # As a placeholder if the import fails and it's not defined in this file:
-    class FactorMemory: # type: ignore
-        pass
+from vnpy.factor.memory import FactorMemory
 
 
-from vnpy.app.factor_maker.base import FactorMode
+from vnpy.factor.base import FactorMode
 from vnpy.trader.constant import Exchange, Interval
 from vnpy.config import VTSYMBOL_FACTOR # General vnpy config/constant
 
@@ -167,18 +158,18 @@ class FactorTemplate(ABC):
     Subclasses must implement `get_output_schema` and `calculate`.
     """
     author: str = "Unknown" # Author of the factor
-    module_factors_lookup = None # Class attribute to hold the imported factors module, set by FactorEngine
-
+    module_factors_lookup = None # Lookup for module factors, set by FactorEngine
+    
     factor_name: str = "" # Unique name for the factor, set by subclass or from settings
     freq: Optional[Interval] = None # Calculation frequency/interval of the factor
     
     # These are typically not used directly by individual factors if they are symbol/exchange agnostic
     # but can be part of the context if a factor is specific.
-    symbol: str = "" 
+    vt_symbols: List[str] = []
     exchange: Exchange = Exchange.TEST
 
     # Configurations for dependencies, will be resolved to FactorTemplate instances
-    dependencies_factor_config: List[Dict[str, Any]] = [] 
+    dependencies_factor_config: List[Dict[str, Any]] = {}
     dependencies_freq_config: List[Interval] = [] # Or strings
     dependencies_symbol_config: List[str] = []
     dependencies_exchange_config: List[Exchange] = [] # Or strings
@@ -191,7 +182,7 @@ class FactorTemplate(ABC):
     VTSYMBOL_TEMPLATE: str = VTSYMBOL_FACTOR # Template string for generating factor keys
 
     @abstractmethod
-    def get_output_schema(self) -> Dict[str, pl.PolarsDataType]:
+    def get_output_schema(self) -> Dict[str, pl.DataType]:
         """
         Returns the Polars schema of the DataFrame produced by this factor's
         calculate() method. This schema will be used by FactorMemory.
@@ -202,7 +193,7 @@ class FactorTemplate(ABC):
         Example:
             return {
                 "datetime": pl.Datetime(time_unit="us"), # Standard datetime column
-                self.factor_name + "_value": pl.Float64, # Example output column
+                self.vt_symbols: pl.Float64, # Example output column
                 # Add other output columns as needed
             }
         """
@@ -237,53 +228,25 @@ class FactorTemplate(ABC):
         their stored configurations (self.dependencies_factor_config).
         Requires self.module_factors_lookup to be set by the FactorEngine.
         """
-        if not self.dependencies_factor_config or isinstance(self.dependencies_factor_config[0], FactorTemplate):
-            # Already initialized (if list contains instances) or no config to initialize from.
-            if isinstance(self.dependencies_factor_config, list) and \
-               all(isinstance(item, FactorTemplate) for item in self.dependencies_factor_config):
-                self.dependencies_factor = self.dependencies_factor_config # Already instances
+        if not self.dependencies_factor_config:
             return
-
-        if not self.module_factors_lookup:
-            print(f"Warning: Factors module (self.module_factors_lookup) not set for {self.factor_key}. "
-                  "Cannot initialize dependency instances from configurations.")
-            self.dependencies_factor = [] # Clear or keep as config? Clearing to avoid mixed types.
-            return
-
-        initialized_deps = []
-        for dep_conf_item in self.dependencies_factor_config:
-            # dep_conf_item is usually a dict like { "factor_key_of_dependency": { actual_settings_for_dependency }}
-            # or directly the actual_settings_for_dependency if simplified.
-            
-            actual_dep_settings = None
-            if isinstance(dep_conf_item, dict) and len(dep_conf_item) == 1: # {factor_key: settings}
-                actual_dep_settings = list(dep_conf_item.values())[0]
-            elif isinstance(dep_conf_item, dict) and "class_name" in dep_conf_item: # Direct settings
-                actual_dep_settings = dep_conf_item
-            
-            if not actual_dep_settings or "class_name" not in actual_dep_settings:
-                print(f"Warning: Invalid dependency configuration for {self.factor_key}: {dep_conf_item}. Skipping.")
-                continue
-
-            dep_class_name = actual_dep_settings["class_name"]
-            try:
-                DepFactorClass: Type[FactorTemplate] = getattr(self.module_factors_lookup, dep_class_name)
-            except AttributeError:
-                print(f"Error: Dependency class '{dep_class_name}' not found in factors module for {self.factor_key}.")
-                continue
-            
-            dep_params = actual_dep_settings.get("params", {})
-            # Pass the full setting for the dependency, and params separately for __init__ kwargs
-            try:
-                dep_instance = DepFactorClass(setting=actual_dep_settings, **dep_params)
-                initialized_deps.append(dep_instance)
-            except Exception as e:
-                print(f"Error initializing dependency instance {dep_class_name} for {self.factor_key}: {e}")
         
-        self.dependencies_factor = initialized_deps
+        if not self._dependencies_module_lookup:
+            if self.dependencies_factor_config: # Only an issue if there are dependencies
+                raise ValueError(
+                    f"Factor '{self.factor_name}' has dependencies but "
+                    "dependencies_module_lookup was not provided during initialization."
+                )
+            return # No dependencies to init, so it's fine
+        
+        self.dependencies_factor = init_factors(
+            self._dependencies_module_lookup, 
+            self.dependencies_factor_config,
+            self._dependencies_module_lookup # Pass the same module lookup for dependencies
+        )
 
 
-    def __init__(self, setting: Optional[dict] = None, **kwargs):
+    def __init__(self, setting: Optional[dict] = None, dependencies_module_lookup: Optional[object] = None,  **kwargs):
         """
         Initializes the FactorTemplate.
 
@@ -305,6 +268,8 @@ class FactorTemplate(ABC):
         # This allows dynamic parameter adjustments.
         if kwargs:
             self.set_params(kwargs)
+
+        self._dependencies_module_lookup = dependencies_module_lookup # Store it
 
         # Initialize dependency instances from their configurations.
         # This requires self.module_factors_lookup to be set, usually by FactorEngine.
@@ -505,36 +470,30 @@ class FactorTemplate(ABC):
             self.factor_mode = mode_str
 
     def to_setting(self) -> dict:
-        """
-        Converts the factor's current configuration to a dictionary suitable for saving.
-        This represents the settings for *this specific factor instance*.
-        """
-        # Convert dependency FactorTemplate instances back to their setting representations
         dep_factor_settings_list = []
-        for dep_instance in self.dependencies_factor: # These should be FactorTemplate instances
+        for dep_instance in self.dependencies_factor: # self.dependencies_factor holds FactorTemplate instances
             if isinstance(dep_instance, FactorTemplate):
-                # to_dict() returns {factor_key: settings_dict}
-                # We want to store the settings_dict part.
-                dep_settings_dict_outer = dep_instance.to_dict()
-                # Assuming to_dict() returns a single key dict
-                dep_settings_dict_inner = list(dep_settings_dict_outer.values())[0] if dep_settings_dict_outer else {}
-                dep_factor_settings_list.append({dep_instance.factor_key: dep_settings_dict_inner})
-
-            elif isinstance(dep_instance, dict): # If it's already a setting dict (less ideal here)
-                dep_factor_settings_list.append(dep_instance)
-
+                # Get the full settings of the dependency instance
+                dep_factor_settings_list.append(dep_instance.to_setting()) # CHANGED
+            elif isinstance(dep_instance, dict): 
+                # This case implies dep_instance is already a settings dict (e.g. from config)
+                # This might occur if dependencies aren't fully resolved to instances yet
+                # or if the stored dependency was just a config.
+                # For saving, we prefer actual instance settings if available.
+                # If it's a dict, assume it's already a compliant settings dict.
+                dep_factor_settings_list.append(dep_instance) 
 
         return {
             "class_name": self.__class__.__name__,
-            "factor_name": self.factor_name, # Crucial to save the effective factor_name
+            "factor_name": self.factor_key,
             "freq": str(self.freq.value) if self.freq else Interval.UNKNOWN.value,
             "params": self.params.get_all_parameters(),
-            "dependencies_factor": dep_factor_settings_list, # List of {dep_key: dep_settings}
-            "dependencies_freq": [str(f.value) if isinstance(f, Interval) else f for f in self.dependencies_freq_config], # Save original config
+            "dependencies_factor": dep_factor_settings_list, # NOW A LIST OF SETTINGS DICTS
+            "dependencies_freq": [str(f.value) if isinstance(f, Interval) else f for f in self.dependencies_freq_config],
             "dependencies_symbol": self.dependencies_symbol_config,
             "dependencies_exchange": [str(e.value) if isinstance(e, Exchange) else e for e in self.dependencies_exchange_config],
             "last_run_datetime": self.run_datetime,
-            "factor_mode": self.factor_mode.name if self.factor_mode else FactorMode.LIVE.name # Save as string
+            "factor_mode": self.factor_mode.name if self.factor_mode else FactorMode.LIVE.name
         }
 
     def to_dict(self) -> dict:

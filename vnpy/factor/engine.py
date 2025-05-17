@@ -5,11 +5,8 @@ import traceback
 from datetime import datetime, timedelta
 from logging import INFO, DEBUG, WARNING, ERROR
 from typing import Callable, Any, Dict, Optional, List
-from functools import lru_cache
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from threading import Lock
-import pathlib
 from pathlib import Path
 import re
 import numpy as np
@@ -19,25 +16,20 @@ import dask
 from dask.delayed import Delayed
 import dask.diagnostics
 
-from vnpy.app.factor_maker.memory import FactorMemory
-from vnpy.app.factor_maker.template_v2 import FactorTemplate
+from vnpy.factor.memory import FactorMemory
+from vnpy.factor.template import FactorTemplate
 from vnpy.event import EventEngine, Event
 from vnpy.trader.event import EVENT_FACTOR, EVENT_TICK, EVENT_BAR
-from vnpy.trader.constant import Interval
-from vnpy.trader.database import get_database, DB_TZ
 from vnpy.trader.engine import BaseEngine, MainEngine
-from vnpy.trader.object import TickData, BarData, HistoryRequest
-from vnpy.trader.utility import extract_vt_symbol
+from vnpy.trader.object import BarData
 from vnpy.trader.setting import SETTINGS
-from vnpy.app.factor_maker.base import APP_NAME, FactorMode # Import FactorMode
+from vnpy.factor.base import APP_NAME # Import FactorMode
 # FactorTemplate and FactorMemory are assumed to be defined above or importable
-# from .factor_template import FactorTemplate, TV_FactorTemplate
-# from .factor_memory import FactorMemory
-from vnpy.app.factor_maker.utils.factor_utils import init_factors, load_factor_setting, save_factor_setting # Ensure these utils are compatible
-from vnpy.app.factor_maker.utils.memory_utils import truncate_memory as truncate_bar_memory, create_placeholder_bar
+from vnpy.factor.utils.factor_utils import init_factors, load_factor_setting, save_factor_setting # Ensure these utils are compatible
+from vnpy.factor.utils.memory_utils import truncate_memory as truncate_bar_memory
 
 
-FACTOR_MODULE_NAME = 'vnpy.app.factor_maker.factors' # Default, can be overridden
+FACTOR_MODULE_NAME = 'vnpy.factor.factors' # Default, can be overridden
 SYSTEM_MODE = SETTINGS.get('system.mode', 'LIVE') # LIVE, BACKTEST, etc.
 DEFAULT_DATETIME_COL = "datetime" # Standard datetime column name for FactorMemory
 
@@ -53,7 +45,7 @@ class CalculationMetrics:
     error_count: int
 
 class FactorEngine(BaseEngine):
-    setting_filename: str = "factor_maker_setting.json"
+    setting_filename: str = "/Users/chenzhao/Documents/crypto_vnpy/vnpy/vnpy/factor/factor_maker_setting.json"
     factor_data_cache_dirname: str = "factor_data_cache" # Directory for FactorMemory files
 
     def __init__(self, main_engine: MainEngine, event_engine: EventEngine) -> None:
@@ -66,7 +58,7 @@ class FactorEngine(BaseEngine):
                            "Factor loading might fail if factors are not self-contained.", level=ERROR)
             self.module_factors = None # Allow engine to start, but factor loading may fail
 
-        self.database = get_database()
+        #self.database = get_database()
         self.vt_symbols: List[str] = getattr(main_engine, 'vt_symbols', []) # Get from main_engine or default to empty
         if not self.vt_symbols and hasattr(main_engine, 'get_all_contracts'):
             try:
@@ -154,7 +146,11 @@ class FactorEngine(BaseEngine):
             return
 
         # init_factors should take the list of settings and the factors module
-        inited_factor_instances = init_factors(factor_settings_list, module_factors=self.module_factors)
+        inited_factor_instances = init_factors(
+            self.module_factors, # Module for finding primary factor classes
+            factor_settings_list,
+            dependencies_module_lookup_for_instances=self.module_factors # Module for their dependencies too
+        )
         self.stacked_factors = {f.factor_key: f for f in inited_factor_instances}
         self.write_log(f"Loaded {len(self.stacked_factors)} stacked factors.", level=INFO)
 
@@ -206,6 +202,7 @@ class FactorEngine(BaseEngine):
         self.factor_memory_instances.clear()
         for factor_key, factor_instance in self.flattened_factors.items():
             try:
+                factor_instance.vt_symbols = self.vt_symbols # Pass symbols to factor instance
                 output_schema = factor_instance.get_output_schema()
                 if self.factor_datetime_col not in output_schema:
                     raise ValueError(f"Factor '{factor_key}' output schema must contain the datetime column '{self.factor_datetime_col}'.")
@@ -215,7 +212,7 @@ class FactorEngine(BaseEngine):
                 if not isinstance(factor_specific_max_rows, int) or factor_specific_max_rows <=0:
                     factor_specific_max_rows = self.max_memory_length_factor # Use engine default
 
-                file_path = self.factor_data_dir / f"{safe_filename(factor_key)}.arrow"
+                file_path = self.factor_data_dir.joinpath(f"{safe_filename(factor_key)}.arrow")
                 
                 self.factor_memory_instances[factor_key] = FactorMemory(
                     file_path=file_path,
@@ -686,19 +683,17 @@ class FactorEngine(BaseEngine):
     def close(self) -> None:
         self.write_log("Closing FactorEngine...", level=INFO)
         self.stop_all_factors()
-        
-        # Save factor settings (configurations of the stacked factors)
-        settings_to_save = [f.to_dict() for f in self.stacked_factors.values()]
+
+        # Get a list of settings dictionaries from each "stacked" factor instance
+        settings_to_save = [f.to_setting() for f in self.stacked_factors.values()] # CHANGED
+
         try:
+            # save_factor_setting utility should be able to handle a list of dicts
             save_factor_setting(settings_to_save, self.setting_filename)
             self.write_log(f"Factor settings saved to {self.setting_filename}", level=INFO)
         except Exception as e:
             self.write_log(f"Error saving factor settings: {e}", level=ERROR)
-        
-        # Clear FactorMemory instances (optional, OS handles file locks on process exit)
-        for fm_instance in self.factor_memory_instances.values():
-            # fm_instance.clear() # Could clear files, or just let them be
-            pass 
+
         self.factor_memory_instances.clear()
         self.write_log("FactorEngine closed.", level=INFO)
 
@@ -717,7 +712,7 @@ class FactorEngine(BaseEngine):
 
     def write_log(self, msg: str, factor: Optional[FactorTemplate] = None, level: int = INFO) -> None:
         log_msg = f"[{APP_NAME}] {factor.factor_key}: {msg}" if factor else f"[{APP_NAME}] {msg}"
-        self.main_engine.write_log(message=log_msg, level=level) # Removed source, APP_NAME is in msg
+        self.main_engine.write_log(msg=log_msg, level=level) # Removed source, APP_NAME is in msg
 
     # Other utility functions like get_factor_parameters, stop_factor, etc. can be adapted
     # from the original FactorEngine if still needed.
