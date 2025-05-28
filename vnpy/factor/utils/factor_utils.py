@@ -1,12 +1,11 @@
 # Utility functions for factor management
 
-import typing # Added import
+import importlib
 from types import ModuleType
 from typing import Any, Dict, Type, List
+from pathlib import Path
 
-if typing.TYPE_CHECKING:
-    from vnpy.factor.template import FactorTemplate # Import for type hinting, made conditional
-
+from vnpy.factor.memory import FactorMemory
 from vnpy.trader.utility import load_json, save_json
 
 def get_factor_class(module_to_search: ModuleType, class_name: str) -> Type:
@@ -57,8 +56,8 @@ def init_factors(
     module_for_primary_classes: ModuleType,
     settings_data: List[Dict[str, Any]], # THIS IS NOW A LIST OF ACTUAL SETTINGS DICTS
     dependencies_module_lookup_for_instances: ModuleType
-) -> List['FactorTemplate']: # Updated return type hint to string literal
-    initialized_factors: List['FactorTemplate'] = [] # Explicitly type initialized_factors to string literal
+) -> List[Any]: # Returns List[FactorTemplate]
+    initialized_factors = []
 
     if not isinstance(settings_data, list): # Should be caught by load_factor_setting
         raise TypeError(f"init_factors expected settings_data to be a list, got {type(settings_data)}")
@@ -76,7 +75,7 @@ def init_factors(
         try:
             FactorClass = get_factor_class(module_for_primary_classes, class_name)
         except AttributeError as e:
-            print(f"[FactorUtils] Error initializing factor: {str(e)} Skipping.")
+            print(str(e) + " Skipping this factor.")
             continue
 
         instance = FactorClass(
@@ -85,3 +84,23 @@ def init_factors(
         )
         initialized_factors.append(instance)
     return initialized_factors
+
+"""if __name__ == "__main__":
+    f_setting = load_factor_setting("/Users/chenzhao/Documents/crypto_vnpy/vnpy/vnpy/factor/factor_maker_setting.json")
+    print(f_setting)
+    FACTOR_MODULE_NAME = 'vnpy.factor.factors' # Default, can be overridden
+    module_factors = importlib.import_module(FACTOR_MODULE_NAME)
+    factors = init_factors(module_factors, f_setting, module_factors)
+    settings_list_to_save = []
+    for factor in factors:
+        settings_list_to_save.append(factor.to_setting())
+    save_factor_setting(settings_list_to_save, "/Users/chenzhao/Documents/crypto_vnpy/vnpy/vnpy/factor/factor_maker_setting.json")
+    factor_data_cache = Path('/Users/chenzhao/Documents/crypto_vnpy/vnpy/tests/factor_data_cache')
+
+    factor_memory_dict = {}
+    for factor in factors:
+        factor_memory_dict[factor.factor_key] = FactorMemory(
+            file_path= factor_data_cache.joinpath(f"{factor.factor_key}.arrow"),
+            max_rows=30,
+            schema=factor.get_output_schema()
+        )"""

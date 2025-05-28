@@ -15,3 +15,5 @@ class DataRecorderApp(BaseApp):
     app_path = Path(__file__).parent
     display_name = "行情记录"
     engine_class = RecorderEngine
+    widget_name = "RecorderManager"
+    icon_name = "recorder.ico"
