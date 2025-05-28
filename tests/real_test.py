@@ -8,24 +8,19 @@
 # @Description:
 
 import multiprocessing
-from datetime import datetime, time, timedelta
+from datetime import datetime, time
 from logging import DEBUG
 from time import sleep
 
 from vnpy.app.data_recorder import DataRecorderApp
-from vnpy.factor.engine import FactorEngine
-#from vnpy.app.factor_maker import FactorMakerApp
+from vnpy.app.factor_maker import FactorEngine
+from vnpy.app.factor_maker import FactorMakerApp
 from vnpy.event import EventEngine
 from vnpy.gateway.binance import BinanceSpotGateway
-from vnpy.trader.constant import Exchange
 from vnpy.trader.engine import MainEngine
-from vnpy.trader.event import EVENT_BAR
-from vnpy.trader.object import BarData
 from vnpy.trader.setting import SETTINGS
-from vnpy.strategy.engine import StrategyEngine
-#from vnpy.strategy.examples.test_strategy_template import TestStrategyTemplate
-
-from vnpy.event import Event
+from vnpy.strategy.engine import BaseStrategyEngine
+from vnpy.strategy.examples.test_strategy_template import TestStrategyTemplate
 
 
 def run_child():
@@ -37,70 +32,28 @@ def run_child():
 
     event_engine = EventEngine()
     main_engine = MainEngine(event_engine)
-    main_engine.write_log("Main engine created successfully")
-
-
-    # start factor engine
-    factor_maker_engine: FactorEngine = main_engine.add_engine(FactorEngine)
-    factor_maker_engine.init_engine(fake=True)
-    factor_maker_engine.execute_calculation(dt=datetime.now())
-
-    factor_maker_engine.bars = {}
-
-    main_engine.write_log("Factor engine dask worker started successfully")
-
-    dt = datetime.now()+timedelta(minutes=1)
-
-
-    event1 = Event(
-        type = EVENT_BAR,
-        data=BarData(
-            symbol="btcusdt",
-            exchange=Exchange.BINANCE,
-            datetime=dt,
-            interval="1m",
-            volume=687678,
-            open_price=111111,
-            high_price=1111459,
-            low_price=111110,
-            close_price=111118,
-            gateway_name="BINANCE_SPOT"
-        )
-    )
-
-    event2 = Event(
-        type = EVENT_BAR,
-        data=BarData(
-            symbol="ethusdt",
-            exchange=Exchange.BINANCE,
-            datetime=dt,
-            interval="1m",
-            volume=288000,
-            open_price=2000,
-            high_price=3000,
-            low_price=1980,
-            close_price=2500,
-            gateway_name="BINANCE_SPOT"
-        )
-    )
-
-    event_engine.put(event1)
-    event_engine.put(event2)
-    main_engine.write_log("Bar Event broadcasted successfully")
+    main_engine.write_log("主引擎创建成功")
 
     # connect to exchange
-    """ main_engine.add_gateway(BinanceSpotGateway, "BINANCE_SPOT")
+    main_engine.add_gateway(BinanceSpotGateway, "BINANCE_SPOT")
     binance_gateway_setting = {
         "key": SETTINGS.get("gateway.api_key", ""),
         "secret": SETTINGS.get("gateway.api_secret", ""),
         "server": "REAL"
     }
     main_engine.connect(binance_gateway_setting, "BINANCE_SPOT")
-    main_engine.write_log("Connected to Binance interface")
-    main_engine.subscribe_all(gateway_name='BINANCE_SPOT')"""
-    # start data recorder
+    main_engine.write_log("连接币安接口")
+    main_engine.subscribe_all(gateway_name='BINANCE_SPOT')
 
-    """# # test engine
+    # start data recorder
+    data_recorder_engine = main_engine.add_app(DataRecorderApp)
+    main_engine.write_log(f"启动[{data_recorder_engine.__class__.__name__}]")
+
+    factor_maker_engine: FactorEngine = main_engine.add_app(FactorMakerApp)
+    factor_maker_engine.init_engine(fake=True)
+    main_engine.write_log(f"启动[{factor_maker_engine.__class__.__name__}]")
+
+    # # test engine
     strategy_engine: BaseStrategyEngine = main_engine.add_engine(BaseStrategyEngine)
 
     # init strategy template
@@ -110,7 +63,7 @@ def run_child():
 
     strategy_engine.init_engine(strategies_path="vnpy/tests/strategy/strategies",
                                 strategies={template_strategy.strategy_name: template_strategy})
-    main_engine.write_log(f"启动[{strategy_engine.__class__.__name__}]")"""
+    main_engine.write_log(f"启动[{strategy_engine.__class__.__name__}]")
 
     # log_engine = main_engine.get_engine("log")
     # event_engine.register(EVENT_CTA_LOG, log_engine.process_log_event)
@@ -130,41 +83,59 @@ def run_child():
     #
     # cta_engine.start_all_strategies()
     # main_engine.write_log("CTA策略全部启动")
+    counter = 0
+    while True:
+        if counter == 5:
+            main_engine.write_log("running", level=DEBUG)
+            counter = 0
+        counter += 1
+        sleep(1)
 
 
 def run_parent():
     """
     Running in the parent process.
     """
-    print("Starting parent process")
+    print("启动父进程")
 
-    # Crypto markets trade 24/7
+    # Chinese futures market trading period (day/night)
+    DAY_START = time(8, 45)
+    DAY_END = time(15, 30)
+
+    NIGHT_START = time(20, 45)
+    NIGHT_END = time(2, 45)
+
     child_process = None
 
-    try:
-        if child_process is None:
-            print("Starting child process")
+    while True:
+        current_time = datetime.now().time()
+        trading = False
+
+        # Check whether in trading period
+        if (
+                (current_time >= DAY_START and current_time <= DAY_END)
+                or (current_time >= NIGHT_START)
+                or (current_time <= NIGHT_END)
+        ) or True:
+            trading = True
+
+        # Start child process in trading period
+        if trading and child_process is None:
+            print("启动子进程")
             child_process = multiprocessing.Process(target=run_child)
             child_process.start()
-            print("Child process started successfully")
-            
-            # Keep the parent process running
-            while True:
-                sleep(5)
-                if not child_process.is_alive():
-                    print("Child process unexpectedly exited, restarting...")
-                    child_process.join()
-                    child_process = multiprocessing.Process(target=run_child)
-                    child_process.start()
-                    
-    except KeyboardInterrupt:
-        if child_process is not None:
-            print("Shutting down child process")
+            print("子进程启动成功")
+
+        # 非记录时间则退出子进程
+        if not trading and child_process is not None:
+            print("关闭子进程")
             child_process.terminate()
             child_process.join()
             child_process = None
-            print("Child process shutdown successful")
+            print("子进程关闭成功")
+
+        sleep(5)
 
 
 if __name__ == '__main__':
-    run_child()
+    run_parent()
