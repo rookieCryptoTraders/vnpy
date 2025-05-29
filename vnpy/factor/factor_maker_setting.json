@@ -1,7 +1,8 @@
 [
     {
         "class_name": "EMAFactor",
-        "factor_name": "factor_1m_emafactor@period_12",
+        "factor_name": "EMAFactor",
+        "factor_key": "factor_1m_emafactor@period_12",
         "freq": "1m",
         "params": {
             "period": 12
@@ -10,12 +11,13 @@
         "dependencies_freq": [],
         "dependencies_symbol": [],
         "dependencies_exchange": [],
-        "last_run_datetime": "2025-05-28 14:06:41",
+        "last_run_datetime": "2025-05-29 16:26:46",
         "factor_mode": "LIVE"
     },
     {
         "class_name": "EMAFactor",
-        "factor_name": "factor_1m_emafactor@period_26",
+        "factor_name": "EMAFactor",
+        "factor_key": "factor_1m_emafactor@period_26",
         "freq": "1m",
         "params": {
             "period": 26
@@ -24,12 +26,13 @@
         "dependencies_freq": [],
         "dependencies_symbol": [],
         "dependencies_exchange": [],
-        "last_run_datetime": "2025-05-28 14:06:41",
+        "last_run_datetime": "2025-05-29 16:26:46",
         "factor_mode": "LIVE"
     },
     {
         "class_name": "MACDFactor",
-        "factor_name": "factor_1m_macdfactor@fast_period_12-signal_period_9-slow_period_26",
+        "factor_name": "MACDFactor",
+        "factor_key": "factor_1m_macdfactor@fast_period_12-signal_period_9-slow_period_26",
         "freq": "1m",
         "params": {
             "fast_period": 12,
@@ -39,7 +42,8 @@
         "dependencies_factor": [
             {
                 "class_name": "EMAFactor",
-                "factor_name": "factor_1m_emafactor@period_12",
+                "factor_name": "fast_ema",
+                "factor_key": "factor_1m_emafactor@period_12",
                 "freq": "1m",
                 "params": {
                     "period": 12
@@ -48,12 +52,13 @@
                 "dependencies_freq": [],
                 "dependencies_symbol": [],
                 "dependencies_exchange": [],
-                "last_run_datetime": "2025-05-28 14:06:41",
+                "last_run_datetime": "2025-05-29 16:26:46",
                 "factor_mode": "LIVE"
             },
             {
                 "class_name": "EMAFactor",
-                "factor_name": "factor_1m_emafactor@period_26",
+                "factor_name": "slow_ema",
+                "factor_key": "factor_1m_emafactor@period_26",
                 "freq": "1m",
                 "params": {
                     "period": 26
@@ -62,14 +67,14 @@
                 "dependencies_freq": [],
                 "dependencies_symbol": [],
                 "dependencies_exchange": [],
-                "last_run_datetime": "2025-05-28 14:06:41",
+                "last_run_datetime": "2025-05-29 16:26:46",
                 "factor_mode": "LIVE"
             }
         ],
         "dependencies_freq": [],
         "dependencies_symbol": [],
         "dependencies_exchange": [],
-        "last_run_datetime": "2025-05-28 14:06:41",
+        "last_run_datetime": "2025-05-29 16:26:46",
         "factor_mode": "LIVE"
     }
 ]

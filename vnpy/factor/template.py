@@ -205,11 +205,6 @@ class FactorTemplate(ABC):
         Generates a unique key for this factor instance based on its name,
         frequency, and parameters.
         """
-        if not self.factor_name:
-            # Try to infer from class name if not set, but subclasses should define it.
-            self.factor_name = self.__class__.__name__
-            # raise ValueError(f"Factor name not set for class {self.__class__.__name__}")
-        self.factor_name = self.factor_name.lower() # Normalize to lowercase for consistency
         
         interval_value = self.freq.value if self.freq else "UNKNOWN" # Handle None freq
         
@@ -218,7 +213,7 @@ class FactorTemplate(ABC):
         # If your VTSYMBOL_TEMPLATE is different, adjust accordingly.
         base_key_part = self.VTSYMBOL_TEMPLATE.format(
             interval=interval_value, 
-            factorname=self.factor_name
+            factorname=self.__class__.__name__.lower() # Ensure factor name is lowercase
         )
         param_str = self.params.to_str(with_value=True)
         return f"{base_key_part}@{param_str}"
@@ -422,7 +417,7 @@ class FactorTemplate(ABC):
 
         # Set factor_name from settings if available and not already set by subclass
         # Subclass definition of self.factor_name takes precedence.
-        if not self.factor_name and "factor_name" in actual_setting_dict:
+        if "factor_name" in actual_setting_dict:
             self.factor_name = actual_setting_dict["factor_name"]
         elif not self.factor_name and "class_name" in actual_setting_dict:
             # Fallback: use class_name for factor_name if factor_name is not in settings
@@ -486,7 +481,8 @@ class FactorTemplate(ABC):
 
         return {
             "class_name": self.__class__.__name__,
-            "factor_name": self.factor_key,
+            "factor_name": self.factor_name,
+            "factor_key": self.factor_key,
             "freq": str(self.freq.value) if self.freq else Interval.UNKNOWN.value,
             "params": self.params.get_all_parameters(),
             "dependencies_factor": dep_factor_settings_list,
