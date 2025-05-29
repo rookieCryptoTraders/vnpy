@@ -5,7 +5,7 @@ import json
 import shutil
 import time
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from logging import INFO, DEBUG, WARNING, ERROR
 from loguru import logger  # Add this import at the top with other imports
 from typing import Any, Dict, Optional, List, Union, Tuple
@@ -37,54 +37,54 @@ from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 DEFAULT_DATETIME_COL = "datetime" # Standard datetime column name for FactorMemory
 
 
-    @staticmethod
-    def _split_data_dict(
-        data_dict: Dict[str, pl.DataFrame], 
-        test_size_ratio: float, 
-        dt_col: str # datetime column name
-    ) -> Tuple[Dict[str, pl.DataFrame], Dict[str, pl.DataFrame], Optional[datetime], Optional[datetime], Optional[datetime], Optional[datetime]]:
-        if not (0.0 <= test_size_ratio < 1.0): # test_size_ratio cannot be 1 (no training data)
-            raise ValueError("test_size_ratio must be between 0.0 (inclusive) and 1.0 (exclusive).")
+@staticmethod
+def _split_data_dict(
+    data_dict: Dict[str, pl.DataFrame], 
+    test_size_ratio: float, 
+    dt_col: str # datetime column name
+) -> Tuple[Dict[str, pl.DataFrame], Dict[str, pl.DataFrame], Optional[datetime], Optional[datetime], Optional[datetime], Optional[datetime]]:
+    if not (0.0 <= test_size_ratio < 1.0): # test_size_ratio cannot be 1 (no training data)
+        raise ValueError("test_size_ratio must be between 0.0 (inclusive) and 1.0 (exclusive).")
 
-        if "close" not in data_dict or not isinstance(data_dict["close"], pl.DataFrame) or data_dict["close"].is_empty():
-            # Cannot determine split sizes or date ranges if 'close' is missing/empty
-            # Return empty dicts and None for dates, let caller handle this error.
-            return {}, {}, None, None, None, None 
+    if "close" not in data_dict or not isinstance(data_dict["close"], pl.DataFrame) or data_dict["close"].is_empty():
+        # Cannot determine split sizes or date ranges if 'close' is missing/empty
+        # Return empty dicts and None for dates, let caller handle this error.
+        return {}, {}, None, None, None, None 
 
-        n_total_rows = data_dict["close"].height
-        n_test_rows = int(n_total_rows * test_size_ratio)
-        n_train_rows = n_total_rows - n_test_rows
+    n_total_rows = data_dict["close"].height
+    n_test_rows = int(n_total_rows * test_size_ratio)
+    n_train_rows = n_total_rows - n_test_rows
 
-        train_data_dict = {}
-        test_data_dict = {}
+    train_data_dict = {}
+    test_data_dict = {}
 
-        for key, df in data_dict.items():
-            if isinstance(df, pl.DataFrame) and not df.is_empty() and df.height == n_total_rows:
-                train_data_dict[key] = df.slice(0, n_train_rows)
-                if n_test_rows > 0:
-                    test_data_dict[key] = df.slice(n_train_rows, n_test_rows)
-                else: # No test rows, create empty DF preserving schema
-                    test_data_dict[key] = df.clear() 
-            else: # Pass through non-DF items or DFs not matching n_total_rows (e.g. metadata)
-                  # For test_data_dict, create an empty version if it was a DF, else None or empty construct.
-                train_data_dict[key] = df 
-                if isinstance(df, pl.DataFrame):
-                    test_data_dict[key] = df.clear()
-                elif callable(type(df)) and hasattr(type(df), '__init__'): # Check if it's a class instance that can be "emptied"
-                    try: # Attempt to create an empty instance if it's a common collection type
-                        test_data_dict[key] = type(df)() if not isinstance(df, (str, int, float, bool)) else df
-                    except TypeError: # Handle cases where default constructor might not work as expected
-                        test_data_dict[key] = None 
-                else: # For basic types or non-callable types
-                    test_data_dict[key] = None
+    for key, df in data_dict.items():
+        if isinstance(df, pl.DataFrame) and not df.is_empty() and df.height == n_total_rows:
+            train_data_dict[key] = df.slice(0, n_train_rows)
+            if n_test_rows > 0:
+                test_data_dict[key] = df.slice(n_train_rows, n_test_rows)
+            else: # No test rows, create empty DF preserving schema
+                test_data_dict[key] = df.clear() 
+        else: # Pass through non-DF items or DFs not matching n_total_rows (e.g. metadata)
+                # For test_data_dict, create an empty version if it was a DF, else None or empty construct.
+            train_data_dict[key] = df 
+            if isinstance(df, pl.DataFrame):
+                test_data_dict[key] = df.clear()
+            elif callable(type(df)) and hasattr(type(df), '__init__'): # Check if it's a class instance that can be "emptied"
+                try: # Attempt to create an empty instance if it's a common collection type
+                    test_data_dict[key] = type(df)() if not isinstance(df, (str, int, float, bool)) else df
+                except TypeError: # Handle cases where default constructor might not work as expected
+                    test_data_dict[key] = None 
+            else: # For basic types or non-callable types
+                test_data_dict[key] = None
 
 
-        train_start_dt = train_data_dict["close"][dt_col].min() if n_train_rows > 0 and not train_data_dict["close"].is_empty() else None
-        train_end_dt = train_data_dict["close"][dt_col].max() if n_train_rows > 0 and not train_data_dict["close"].is_empty() else None
-        test_start_dt = test_data_dict.get("close")[dt_col].min() if n_test_rows > 0 and test_data_dict.get("close") is not None and not test_data_dict["close"].is_empty() else None
-        test_end_dt = test_data_dict.get("close")[dt_col].max() if n_test_rows > 0 and test_data_dict.get("close") is not None and not test_data_dict["close"].is_empty() else None
-        
-        return train_data_dict, test_data_dict, train_start_dt, train_end_dt, test_start_dt, test_end_dt
+    train_start_dt = train_data_dict["close"][dt_col].min() if n_train_rows > 0 and not train_data_dict["close"].is_empty() else None
+    train_end_dt = train_data_dict["close"][dt_col].max() if n_train_rows > 0 and not train_data_dict["close"].is_empty() else None
+    test_start_dt = test_data_dict.get("close")[dt_col].min() if n_test_rows > 0 and test_data_dict.get("close") is not None and not test_data_dict["close"].is_empty() else None
+    test_end_dt = test_data_dict.get("close")[dt_col].max() if n_test_rows > 0 and test_data_dict.get("close") is not None and not test_data_dict["close"].is_empty() else None
+    
+    return train_data_dict, test_data_dict, train_start_dt, train_end_dt, test_start_dt, test_end_dt
 
 def safe_filename(name: str) -> str:
     name = re.sub(r'[^\w\.\-@]', '_', name)
