@@ -30,9 +30,61 @@ from vnpy.factor.base import APP_NAME, FactorMode # Import FactorMode
 # FactorTemplate and FactorMemory are assumed to be defined above or importable
 from vnpy.factor.utils.factor_utils import init_factors, load_factor_setting # Ensure these utils are compatible
 from vnpy.factor.setting import get_factor_path, get_factor_setting
+from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
+# from vnpy.factor.optimizer import FactorBacktestEstimator # Imported dynamically in method
 
 # DEFAULT_FACTOR_MODULE_NAME = SETTINGS.get('factor.module_name', 'vnpy.factor.factors') # This is used by self.factor_module_name
 DEFAULT_DATETIME_COL = "datetime" # Standard datetime column name for FactorMemory
+
+
+    @staticmethod
+    def _split_data_dict(
+        data_dict: Dict[str, pl.DataFrame], 
+        test_size_ratio: float, 
+        dt_col: str # datetime column name
+    ) -> Tuple[Dict[str, pl.DataFrame], Dict[str, pl.DataFrame], Optional[datetime], Optional[datetime], Optional[datetime], Optional[datetime]]:
+        if not (0.0 <= test_size_ratio < 1.0): # test_size_ratio cannot be 1 (no training data)
+            raise ValueError("test_size_ratio must be between 0.0 (inclusive) and 1.0 (exclusive).")
+
+        if "close" not in data_dict or not isinstance(data_dict["close"], pl.DataFrame) or data_dict["close"].is_empty():
+            # Cannot determine split sizes or date ranges if 'close' is missing/empty
+            # Return empty dicts and None for dates, let caller handle this error.
+            return {}, {}, None, None, None, None 
+
+        n_total_rows = data_dict["close"].height
+        n_test_rows = int(n_total_rows * test_size_ratio)
+        n_train_rows = n_total_rows - n_test_rows
+
+        train_data_dict = {}
+        test_data_dict = {}
+
+        for key, df in data_dict.items():
+            if isinstance(df, pl.DataFrame) and not df.is_empty() and df.height == n_total_rows:
+                train_data_dict[key] = df.slice(0, n_train_rows)
+                if n_test_rows > 0:
+                    test_data_dict[key] = df.slice(n_train_rows, n_test_rows)
+                else: # No test rows, create empty DF preserving schema
+                    test_data_dict[key] = df.clear() 
+            else: # Pass through non-DF items or DFs not matching n_total_rows (e.g. metadata)
+                  # For test_data_dict, create an empty version if it was a DF, else None or empty construct.
+                train_data_dict[key] = df 
+                if isinstance(df, pl.DataFrame):
+                    test_data_dict[key] = df.clear()
+                elif callable(type(df)) and hasattr(type(df), '__init__'): # Check if it's a class instance that can be "emptied"
+                    try: # Attempt to create an empty instance if it's a common collection type
+                        test_data_dict[key] = type(df)() if not isinstance(df, (str, int, float, bool)) else df
+                    except TypeError: # Handle cases where default constructor might not work as expected
+                        test_data_dict[key] = None 
+                else: # For basic types or non-callable types
+                    test_data_dict[key] = None
+
+
+        train_start_dt = train_data_dict["close"][dt_col].min() if n_train_rows > 0 and not train_data_dict["close"].is_empty() else None
+        train_end_dt = train_data_dict["close"][dt_col].max() if n_train_rows > 0 and not train_data_dict["close"].is_empty() else None
+        test_start_dt = test_data_dict.get("close")[dt_col].min() if n_test_rows > 0 and test_data_dict.get("close") is not None and not test_data_dict["close"].is_empty() else None
+        test_end_dt = test_data_dict.get("close")[dt_col].max() if n_test_rows > 0 and test_data_dict.get("close") is not None and not test_data_dict["close"].is_empty() else None
+        
+        return train_data_dict, test_data_dict, train_start_dt, train_end_dt, test_start_dt, test_end_dt
 
 def safe_filename(name: str) -> str:
     name = re.sub(r'[^\w\.\-@]', '_', name)
@@ -89,6 +141,7 @@ class BacktestEngine:
         self.long_short_portfolio_returns_df: Optional[pl.DataFrame] = None
         self.long_short_stats: Optional[Dict[str, float]] = None
         self.performance_metrics: Optional[Dict[str, Any]] = None
+        self.optimization_results: Optional[Dict[str, Any]] = None
         
         self.dask_tasks: Dict[str, Delayed] = {}
         self.calculation_lock = Lock() # To prevent concurrent Dask graph executions if called multiple times
@@ -1113,10 +1166,16 @@ class BacktestEngine:
         if hasattr(self, 'performance_metrics') and self.performance_metrics:
             report_data["analysis_results"]["performance_metrics_quantstats"] = self.performance_metrics
         
+        # Add Parameter Optimization Summary if available
+        if hasattr(self, 'optimization_results') and self.optimization_results:
+            report_data["parameter_optimization_summary"] = self.optimization_results
+            self.write_log("Added optimization summary to the report.", INFO)
+
         if not report_data["analysis_results"].get("quantile_analysis") and \
            not report_data["analysis_results"].get("long_short_portfolio_statistics") and \
-           not report_data["analysis_results"].get("performance_metrics_quantstats"):
-            self.write_log("No analysis results were available to include in the report content.", level=WARNING)
+           not report_data["analysis_results"].get("performance_metrics_quantstats") and \
+           not report_data.get("parameter_optimization_summary"): # Check if optimization summary was also not added
+            self.write_log("No analysis results or optimization summary were available to include in the report content.", level=WARNING)
 
         self.write_log("Report dictionary generation complete.", level=INFO)
         return report_data
@@ -1171,111 +1230,271 @@ class BacktestEngine:
         factor_definition: Union[FactorTemplate, Dict, str],
         start_datetime: datetime,
         end_datetime: datetime,
-        vt_symbols_for_factor: List[str], 
+        vt_symbols_for_factor: List[str],  # vt_symbols for the factor if NOT optimizing
         factor_json_conf_path: Optional[str] = None,
-        data_interval: Any = Interval.MINUTE, 
+        data_interval: Any = Interval.MINUTE,
         num_quantiles: int = 5,
         returns_look_ahead_period: int = 1,
         long_percentile_threshold: float = 0.5,
         short_percentile_threshold: float = 0.5,
         output_dir_override: Optional[str] = None,
-        report_filename_prefix: str = "single_factor_report"
+        report_filename_prefix: str = "single_factor_report",
+        perform_optimization: bool = False,
+        parameter_grid: Optional[Dict[str, List[Any]]] = None,
+        n_splits_for_optimization_cv: int = 3,
+        test_set_size_ratio: float = 0.2
     ) -> Optional[Path]:
-        # Ensure logging constants INFO, DEBUG, WARNING, ERROR are accessible here
-        # For example, through self.write_log(..., level=logging.INFO) or direct use if imported.
-        # Assuming self.write_log handles mapping if class uses specific constants.
-        # The BacktestEngine's write_log uses INFO, DEBUG etc. from 'logging' directly.
         
-        self.write_log(f"Starting single factor backtest: {start_datetime} to {end_datetime}.", INFO)
+        self.write_log(f"Starting single factor backtest run. Optimization: {perform_optimization}. Period: {start_datetime} to {end_datetime}.", INFO)
 
         original_output_dir = self.output_data_dir
         if output_dir_override:
             self.output_data_dir = Path(output_dir_override)
             self.write_log(f"Output directory overridden: {self.output_data_dir}", INFO)
         
-        self.start_datetime_for_report = start_datetime
-        self.end_datetime_for_report = end_datetime
-        
-        self._prepare_output_directory() 
+        self._prepare_output_directory()
 
-        if not self.init_single_factor(factor_definition, factor_json_conf_path, vt_symbols_for_factor):
-            self.write_log("Factor initialization failed. Aborting.", ERROR)
-            if output_dir_override: self.output_data_dir = original_output_dir
-            return None
+        # --- Load full data period first ---
+        # The engine's vt_symbols will be set to vt_symbols_for_factor initially for data loading.
+        # If optimization occurs, vt_symbols might be refined based on the symbols present in the training/testing data splits.
+        self.vt_symbols = vt_symbols_for_factor # Set engine symbols for full data load
+        _ = self.load_bar_data(start_datetime, end_datetime, data_interval)
         
-        factor_key_for_log = self.target_factor_instance.factor_key if self.target_factor_instance else "UnknownFactor"
-        self.write_log(f"Target factor: {factor_key_for_log}", INFO)
-
-        self.write_log(f"Simulating bar data load for {len(self.vt_symbols)} symbols.", INFO)
-        _ = self.load_bar_data(start_datetime, end_datetime, data_interval) 
-        
-        if self.num_data_rows == 0:
+        if self.num_data_rows == 0: # If load_bar_data is a pass-through and no real data loaded
             time_delta = end_datetime - start_datetime
             if data_interval == Interval.MINUTE: self.num_data_rows = int(time_delta.total_seconds() / 60)
             elif data_interval == Interval.HOUR: self.num_data_rows = int(time_delta.total_seconds() / 3600)
             elif data_interval == Interval.DAILY: self.num_data_rows = time_delta.days
-            else: self.num_data_rows = int(time_delta.total_seconds() / 60) 
-            if self.num_data_rows <= 0: self.num_data_rows = 200
-            self.write_log(f"Calculated self.num_data_rows = {self.num_data_rows} for placeholder.", DEBUG)
+            else: self.num_data_rows = int(time_delta.total_seconds() / 60)
+            if self.num_data_rows <= 0: self.num_data_rows = 200 # Default if interval is too small or dates are same
+            self.write_log(f"Calculated self.num_data_rows = {self.num_data_rows} for placeholder full period.", DEBUG)
 
         if ("close" not in self.memory_bar or self.memory_bar["close"].is_empty()) and self.num_data_rows > 0 and self.vt_symbols:
-            self.write_log(f"Populating memory_bar['close'] with dummy data: {self.num_data_rows} points.", DEBUG)
-            # Use timedelta from datetime
-            dummy_dates_list = [end_datetime - timedelta(minutes=i) for i in range(self.num_data_rows - 1, -1, -1)]
+            self.write_log(f"Populating memory_bar['close'] with dummy data for full period: {self.num_data_rows} points.", DEBUG)
+            dummy_dates_list = [end_datetime - timedelta(minutes=i) for i in range(self.num_data_rows - 1, -1, -1)] # Generate backwards from end_datetime
             dummy_dates = pl.Series(self.factor_datetime_col, sorted(dummy_dates_list), dtype=pl.Datetime)
-
             if not dummy_dates.is_empty():
                 close_data = {self.factor_datetime_col: dummy_dates}
                 for sym in self.vt_symbols: close_data[sym] = np.random.rand(len(dummy_dates)) * 100 + 50
                 self.memory_bar["close"] = pl.DataFrame(close_data)
-                self.num_data_rows = len(dummy_dates) # Update num_data_rows to actual dummy data length
-                self.write_log(f"Populated memory_bar['close'] with {self.num_data_rows} dummy rows.", DEBUG)
+                self.num_data_rows = len(dummy_dates)
             else:
-                self.write_log("Failed to create dummy dates for placeholder. Critical error.", ERROR)
+                self.write_log("Failed to create dummy dates for placeholder. Critical error.", ERROR); return None
+        elif self.num_data_rows == 0 or not self.vt_symbols:
+             self.write_log("num_data_rows is 0 or vt_symbols empty. Cannot populate dummy bar data for full period.", WARNING)
+        
+        full_period_memory_bar = {k: v.clone() for k, v in self.memory_bar.items() if isinstance(v, pl.DataFrame)}
+        full_period_num_rows = self.num_data_rows
+
+        current_factor_definition = factor_definition 
+        data_for_final_backtest: Dict[str, pl.DataFrame] = {}
+        num_rows_for_final_backtest = 0
+        final_s_dt, final_e_dt = start_datetime, end_datetime # Default to full period
+
+        if perform_optimization and parameter_grid:
+            if isinstance(factor_definition, str):
+                self.write_log("Factor definition by string key is not supported with optimization.", ERROR)
                 if output_dir_override: self.output_data_dir = original_output_dir
                 return None
-        elif self.num_data_rows == 0 or not self.vt_symbols:
-             self.write_log("num_data_rows is 0 or vt_symbols empty. Cannot populate dummy bar data.", WARNING)
+
+            self.write_log(f"Optimization enabled. Splitting data with test ratio: {test_set_size_ratio}", INFO)
+            train_data_dict, test_data_dict, tr_s, tr_e, ts_s, ts_e = BacktestEngine._split_data_dict(
+                full_period_memory_bar, test_set_size_ratio, self.factor_datetime_col
+            )
+
+            if not train_data_dict or not train_data_dict.get("close") or train_data_dict.get("close").is_empty():
+                self.write_log("Training data is empty after split. Cannot perform optimization.", ERROR)
+                data_for_final_backtest = full_period_memory_bar
+                num_rows_for_final_backtest = full_period_num_rows
+                self.write_log("Fallback: Proceeding with backtest on full data period without optimization.", WARNING)
+            else:
+                self.write_log(f"Training data period for optimization: {tr_s} to {tr_e}", INFO)
+                opt_factor_class_name = ""
+                opt_initial_settings: Dict[str, Any] = {}
+                if isinstance(factor_definition, FactorTemplate):
+                    opt_factor_class_name = factor_definition.__class__.__name__
+                    opt_initial_settings = factor_definition.get_params()
+                elif isinstance(factor_definition, dict):
+                    opt_factor_class_name = factor_definition.get("class_name", "")
+                    opt_initial_settings = factor_definition.get("params", {}).copy() # Use a copy
+                    if not opt_factor_class_name:
+                        self.write_log("Factor definition dict must contain 'class_name' for optimization.", ERROR); return None
+                
+                best_params = self.optimize_factor_parameters(
+                    factor_class_name=opt_factor_class_name,
+                    initial_factor_settings=opt_initial_settings,
+                    parameter_grid=parameter_grid,
+                    full_bar_data=train_data_dict,
+                    n_splits_for_cv=n_splits_for_optimization_cv
+                )
+
+                if best_params:
+                    self.write_log(f"Optimization successful. Best params: {best_params}", INFO)
+                    if isinstance(current_factor_definition, FactorTemplate):
+                        current_factor_definition.params.set_parameters(best_params)
+                    elif isinstance(current_factor_definition, dict):
+                        current_factor_definition["params"] = current_factor_definition.get("params", {}).copy() # Ensure params dict exists and is a copy
+                        current_factor_definition["params"].update(best_params)
+                    
+                    if test_data_dict and test_data_dict.get("close") and not test_data_dict.get("close").is_empty():
+                        data_for_final_backtest = test_data_dict
+                        num_rows_for_final_backtest = test_data_dict["close"].height
+                        final_s_dt, final_e_dt = ts_s, ts_e
+                        self.write_log(f"Using test set for final backtest: {ts_s} to {ts_e}", INFO)
+                    else:
+                        data_for_final_backtest = full_period_memory_bar
+                        num_rows_for_final_backtest = full_period_num_rows
+                        self.write_log("No test data or ratio was 0. Running on full period with optimized params.", INFO)
+                else:
+                    self.write_log("Optimization failed. Running on full period with original params.", WARNING)
+                    data_for_final_backtest = full_period_memory_bar
+                    num_rows_for_final_backtest = full_period_num_rows
+        else:
+            self.write_log("Optimization not enabled or no grid. Running on full data period.", INFO)
+            data_for_final_backtest = full_period_memory_bar
+            num_rows_for_final_backtest = full_period_num_rows
+
+        self.memory_bar = data_for_final_backtest
+        self.num_data_rows = num_rows_for_final_backtest
+        self.start_datetime_for_report = final_s_dt if final_s_dt else start_datetime
+        self.end_datetime_for_report = final_e_dt if final_e_dt else end_datetime
+
+        if self.num_data_rows == 0:
+            self.write_log("No data for final backtest run. Aborting.", ERROR)
+            if output_dir_override: self.output_data_dir = original_output_dir
+            return None
+
+        # Derive vt_symbols from the actual data being used for the final backtest
+        final_vt_symbols_list = [c for c in self.memory_bar.get("close", pl.DataFrame()).columns if c != self.factor_datetime_col]
+        if not final_vt_symbols_list: # If somehow close DF is missing or has no symbols
+             self.write_log("No symbols found in the data for the final backtest. Aborting.", ERROR)
+             if output_dir_override: self.output_data_dir = original_output_dir
+             return None
+
+        # init_single_factor will update self.vt_symbols based on final_vt_symbols_list
+        if not self.init_single_factor(current_factor_definition, factor_json_conf_path, final_vt_symbols_list):
+            self.write_log("Factor initialization for final run failed. Aborting.", ERROR)
+            if output_dir_override: self.output_data_dir = original_output_dir
+            return None
+        
+        factor_key_for_log = self.target_factor_instance.factor_key if self.target_factor_instance else "UnknownFactor"
+        self.write_log(f"Final backtest on factor: {factor_key_for_log}. Period: {self.start_datetime_for_report} to {self.end_datetime_for_report}", INFO)
 
         factor_data_df = self.calculate_single_factor_data()
         if factor_data_df is None:
-            self.write_log("Factor calculation failed. Aborting.", ERROR)
-            if output_dir_override: self.output_data_dir = original_output_dir
-            return None
+            self.write_log("Factor calculation for final run failed.", ERROR); return None # Critical error
         if factor_data_df.is_empty():
-            self.write_log("Factor calculation produced empty data.", WARNING)
+            self.write_log("Factor calculation for final run produced empty data.", WARNING)
 
-        if not self.prepare_symbol_returns():
-            self.write_log("Preparing symbol returns failed. Aborting.", ERROR)
-            if output_dir_override: self.output_data_dir = original_output_dir
+        # Prepare returns using the datetime series from the final backtest data
+        final_close_data = self.memory_bar.get("close")
+        if final_close_data is None or final_close_data.is_empty() or self.factor_datetime_col not in final_close_data.columns:
+            self.write_log("Close price data for final run is missing or invalid. Cannot prepare symbol returns.", ERROR)
             return None
+        if not self.prepare_symbol_returns(reference_datetime_series=final_close_data[self.factor_datetime_col]):
+            self.write_log("Preparing symbol returns for final run failed.", ERROR); return None # Critical error
 
         if not self.perform_quantile_analysis(factor_data_df, num_quantiles, returns_look_ahead_period):
-            self.write_log("Quantile analysis failed.", WARNING) 
+            self.write_log("Quantile analysis for final run failed.", WARNING) 
 
         if not self.perform_long_short_analysis(factor_data_df, returns_look_ahead_period, long_percentile_threshold, short_percentile_threshold):
-            self.write_log("Long-short portfolio analysis failed.", WARNING) 
+            self.write_log("Long-short portfolio analysis for final run failed.", WARNING) 
 
         if hasattr(self, 'long_short_portfolio_returns_df') and self.long_short_portfolio_returns_df is not None and not self.long_short_portfolio_returns_df.is_empty():
             if not self.calculate_performance_metrics():
-                self.write_log("Performance metrics calculation failed.", WARNING)
+                self.write_log("Performance metrics calculation for final run failed.", WARNING)
         else:
-            self.write_log("Skipping performance metrics: L-S portfolio returns unavailable.", INFO)
+            self.write_log("Skipping performance metrics for final run: L-S portfolio returns unavailable.", INFO)
 
         report_dict = self.generate_single_factor_report()
         saved_report_path: Optional[Path] = None
         if report_dict:
+            # Include optimization results in the report if they exist
+            if hasattr(self, 'optimization_results') and self.optimization_results:
+                report_dict["optimization_summary"] = self.optimization_results
+                self.write_log("Added optimization summary to report.", DEBUG)
+
             saved_report_path = self.save_report(report_dict, report_filename_prefix)
-            if saved_report_path:
-                self.write_log(f"Report saved: {saved_report_path}", INFO)
-            else:
-                self.write_log("Failed to save report.", ERROR)
+            if saved_report_path: self.write_log(f"Report saved: {saved_report_path}", INFO)
+            else: self.write_log("Failed to save report.", ERROR)
         else:
             self.write_log("Report generation failed.", ERROR)
 
-        if output_dir_override:
-            self.output_data_dir = original_output_dir
-
+        if output_dir_override: self.output_data_dir = original_output_dir
         self.write_log("Single factor backtest run completed.", INFO)
         return saved_report_path
+
+    def optimize_factor_parameters(
+        self,
+        factor_class_name: str,
+        initial_factor_settings: Dict[str, Any], 
+        parameter_grid: Dict[str, List[Any]],    
+        full_bar_data: Dict[str, pl.DataFrame], 
+        n_splits_for_cv: int = 3
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Optimizes factor parameters using GridSearchCV with TimeSeriesSplit.
+        """
+        self.write_log(f"Starting factor parameter optimization for {factor_class_name}...", INFO)
+        self.optimization_results = None # Clear previous results
+
+        if not isinstance(full_bar_data, dict) or "close" not in full_bar_data or \
+           not isinstance(full_bar_data["close"], pl.DataFrame) or full_bar_data["close"].is_empty():
+            self.write_log("full_bar_data must be a dict with a non-empty 'close' Polars DataFrame.", ERROR)
+            return None
+
+        try:
+            from vnpy.factor.optimizer import FactorBacktestEstimator # Dynamic import
+            
+            estimator = FactorBacktestEstimator(
+                backtesting_engine=self,
+                factor_class_name=factor_class_name,
+                full_bar_data_for_slicing=full_bar_data, # Pass the full data for estimator to slice
+                **initial_factor_settings # Pass base/fixed parameters
+            )
+        except ImportError:
+            self.write_log("Failed to import FactorBacktestEstimator. Ensure it's in vnpy.factor.optimizer.", ERROR)
+            self.write_log(traceback.format_exc(), DEBUG) # Add traceback for import error
+            return None
+        except Exception as e_est:
+            self.write_log(f"Error initializing FactorBacktestEstimator: {e_est}\n{traceback.format_exc()}", ERROR)
+            return None
+
+        time_series_splitter = TimeSeriesSplit(n_splits=n_splits_for_cv)
+        
+        grid_search = GridSearchCV(
+            estimator=estimator,
+            param_grid=parameter_grid,
+            scoring=None,  # Uses FactorBacktestEstimator's score method
+            cv=time_series_splitter,
+            verbose=1,     # Adjust verbosity as needed
+            n_jobs=1       # Crucial: Must be 1 due to shared BacktestEngine instance state
+        )
+
+        num_samples = full_bar_data["close"].height
+        indices = np.arange(num_samples)
+
+        self.write_log(f"Starting GridSearchCV with {n_splits_for_cv} time-series splits on {num_samples} samples.", INFO)
+        try:
+            # X for GridSearchCV's fit is just the indices array.
+            # The estimator's fit will use these indices to slice self.full_bar_data_for_slicing.
+            grid_search.fit(X=indices, y=None) 
+        except Exception as e_grid:
+            self.write_log(f"Error during GridSearchCV.fit: {e_grid}\n{traceback.format_exc()}", ERROR)
+            return None
+
+        self.write_log(f"GridSearchCV completed. Best score (Sharpe Ratio): {grid_search.best_score_:.4f}", INFO)
+        self.write_log(f"Best parameters found: {grid_search.best_params_}", INFO)
+
+        self.optimization_results = {
+            "best_params": grid_search.best_params_,
+            "best_score": grid_search.best_score_,
+            "cv_results_summary": { 
+                "mean_test_score": grid_search.cv_results_["mean_test_score"].tolist(),
+                "std_test_score": grid_search.cv_results_["std_test_score"].tolist(),
+                "params": [str(p) for p in grid_search.cv_results_["params"]] 
+            }
+        }
+        
+        return grid_search.best_params_
 
