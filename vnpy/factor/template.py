@@ -537,82 +537,91 @@ class FactorTemplate(ABC):
         #     raise ValueError(f"Historical data for {self.factor_key} missing required columns. "
         #                      f"Expected: {expected_historical_cols}, Found: {historical_df.columns}")
         return True
-
+    
+    # --- Optimizer Parameter Path Methods (Modified for simpler paths) ---
     def get_nested_params_for_optimizer(self, current_path_prefix: str = "") -> Dict[str, Any]:
         """
-        Recursively collects all tunable parameters from this factor and its
-        dependencies, formatting them with path-based keys.
-        Keys for root factor params are direct (e.g., "window").
-        Keys for dependency params are prefixed (e.g., "dependencies_factor[0].period").
-
-        Args:
-            current_path_prefix: The prefix for parameter paths, used during recursion.
-
-        Returns:
-            A flat dictionary of path-based parameter keys and their current values.
+        Recursively collects all tunable parameters, using simplified dot-separated
+        factor_name (nickname) paths for dependencies.
+        Example paths: "param_A", "short_ema.period", "my_macd.fast_ema_of_macd.period"
         """
         nested_params: Dict[str, Any] = {}
-
-        # 1. Add own parameters
-        own_params = self.get_params() # Uses existing get_params()
+        own_params = self.get_params() 
         for param_name, param_value in own_params.items():
-            # If current_path_prefix is empty (root call), key is just param_name.
-            # Otherwise, key is prefix + param_name.
+            # For the root factor's params, prefix is empty, so key is just param_name
             key_path = f"{current_path_prefix}{param_name}"
             nested_params[key_path] = param_value
 
-        # 2. Recursively add parameters from dependencies
         if hasattr(self, 'dependencies_factor') and self.dependencies_factor:
-            for i, dep_factor_instance in enumerate(self.dependencies_factor):
+            dep_nicknames_count = {} # To handle potential non-unique nicknames among siblings
+            for dep_factor_instance in self.dependencies_factor:
                 if isinstance(dep_factor_instance, FactorTemplate):
-                    # Construct new prefix for this dependency's parameters
-                    new_prefix_for_child = f"{current_path_prefix}dependencies_factor[{i}]."
+                    dep_nickname = dep_factor_instance.factor_name
+                    if not dep_nickname: 
+                        print(f"Warning: Dependency of '{self.factor_key}' (key: {dep_factor_instance.factor_key}) has empty factor_name. Using unique key for path.")
+                        dep_nickname = dep_factor_instance.factor_key # Fallback
+
+                    # Handle potentially non-unique nicknames by appending a counter for path uniqueness
+                    base_nickname_for_count = dep_nickname # Use the original nickname for counting
+                    current_count = dep_nicknames_count.get(base_nickname_for_count, 0)
+                    effective_nickname_for_path = f"{dep_nickname}_{current_count}" if current_count > 0 else dep_nickname
+                    dep_nicknames_count[base_nickname_for_count] = current_count + 1
                     
-                    child_params = dep_factor_instance.get_nested_params_for_optimizer(
-                        current_path_prefix=new_prefix_for_child
-                    )
+                    if current_count > 0: # Log if de-duplication happened
+                         print(f"Warning: Duplicate nickname '{dep_nickname}' for dependencies of '{self.factor_key}'. Using '{effective_nickname_for_path}' in optimizer path.")
+
+                    # Construct new prefix: if current_path_prefix is empty, new_prefix is "nickname.",
+                    # otherwise it's "parent_prefix.nickname."
+                    new_prefix_for_child = f"{current_path_prefix}{effective_nickname_for_path}."
+                    
+                    child_params = dep_factor_instance.get_nested_params_for_optimizer(current_path_prefix=new_prefix_for_child)
                     nested_params.update(child_params)
-                
         return nested_params
 
     def set_nested_params_for_optimizer(self, nested_params_dict: Dict[str, Any]) -> None:
         """
-        Sets parameters on this factor or its nested dependencies using path-based keys.
-        Keys like "window" apply to self.
-        Keys like "dependencies_factor[0].period" apply to the first dependency.
-        Keys like "dependencies_factor[0].dependencies_factor[1].alpha" apply to a nested dependency.
-
-        Args:
-            nested_params_dict: A flat dictionary of path-based parameter keys and values.
+        Sets parameters using simplified dot-separated factor_name (nickname) paths.
+        Example paths: "param_A", "short_ema.period", "my_macd.fast_ema_of_macd.period"
         """
         own_params_to_set: Dict[str, Any] = {}
-        deps_params_to_set_grouped: Dict[int, Dict[str, Any]] = {} 
+        # Group parameters for each uniquely identified direct dependency
+        deps_params_to_set_grouped: Dict[str, Dict[str, Any]] = {} # Keyed by effective_nickname_for_path
 
         for path_key, value in nested_params_dict.items():
-            match = re.match(r"dependencies_factor\[(\d+)\]\.(.+)", path_key) 
+            path_parts = path_key.split('.', 1) # Split only on the first dot
 
-            if match: 
-                dep_index = int(match.group(1))
-                remainder_path_for_child = match.group(2)
-                
-                if dep_index not in deps_params_to_set_grouped:
-                    deps_params_to_set_grouped[dep_index] = {}
-                deps_params_to_set_grouped[dep_index][remainder_path_for_child] = value
-                
-            else: 
+            if len(path_parts) == 1: # No dot, so it's a parameter for the current (self) factor
                 own_params_to_set[path_key] = value
+            else: # Contains at least one dot, meaning it's for a dependency
+                # direct_dep_effective_nickname is the first segment of the path
+                direct_dep_effective_nickname = path_parts[0]
+                remainder_path_for_child = path_parts[1] # This is the rest of the path for the child
+                
+                if direct_dep_effective_nickname not in deps_params_to_set_grouped:
+                    deps_params_to_set_grouped[direct_dep_effective_nickname] = {}
+                deps_params_to_set_grouped[direct_dep_effective_nickname][remainder_path_for_child] = value
 
+        # Apply parameters to the current factor
         if own_params_to_set:
             self.set_params(own_params_to_set)
 
+        # Apply parameters to direct dependencies
         if hasattr(self, 'dependencies_factor') and self.dependencies_factor:
-            for dep_index, params_for_dep_dict in deps_params_to_set_grouped.items():
-                if 0 <= dep_index < len(self.dependencies_factor):
-                    dep_instance = self.dependencies_factor[dep_index]
-                    if isinstance(dep_instance, FactorTemplate):
-                        dep_instance.set_nested_params_for_optimizer(params_for_dep_dict)
-                    # else: Log or handle if a dependency is not a FactorTemplate instance
-                # else: Log or handle out-of-bounds dep_index
+            dep_nicknames_count = {} # To reconstruct the effective_nickname_for_path used in get_nested_params
+            for dep_instance in self.dependencies_factor:
+                if isinstance(dep_instance, FactorTemplate):
+                    base_nickname = dep_instance.factor_name
+                    if not base_nickname: base_nickname = dep_instance.factor_key # Fallback
+
+                    current_count = dep_nicknames_count.get(base_nickname, 0)
+                    effective_nickname_for_path = f"{base_nickname}_{current_count}" if current_count > 0 else base_nickname
+                    dep_nicknames_count[base_nickname] = current_count + 1
+                    
+                    if effective_nickname_for_path in deps_params_to_set_grouped:
+                        params_for_this_dep = deps_params_to_set_grouped[effective_nickname_for_path]
+                        # Recursively call set_nested_params_for_optimizer on the dependency
+                        dep_instance.set_nested_params_for_optimizer(params_for_this_dep)
+                    # Else: No parameters in nested_params_dict were targeted for this specific dependency instance
     
 
 # Type variable for FactorTemplate subclasses

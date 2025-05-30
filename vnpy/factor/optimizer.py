@@ -1,281 +1,487 @@
-# File: vnpy/factor/optimizer.py
+# optimizer.py
 
-from __future__ import annotations # For forward reference of BacktestEngine if needed
+import copy
+import traceback # For detailed error logging
+from datetime import datetime
+from logging import INFO, DEBUG, WARNING, ERROR
+from turtle import pd
+from typing import Any, Dict, List, Optional, Union, Tuple
+from pathlib import Path
 
 import numpy as np
-from sklearn.base import BaseEstimator
-from typing import Dict, Any, Optional, TYPE_CHECKING, List
-
-if TYPE_CHECKING:
-    from vnpy.factor.backtesting.backtesting import BacktestEngine
-    # FactorTemplate will be imported directly now
-
-from vnpy.factor.template import FactorTemplate # Direct import
-from logging import INFO, DEBUG, WARNING, ERROR 
+from pandas import Interval
 import polars as pl
-import copy # For deepcopy
-import traceback # For error logging
+from sklearn.base import BaseEstimator
+from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
+import quantstats as qs
 
+from vnpy.factor.backtesting.factor_calculator import FactorCalculator
+from vnpy.factor.utils.factor_utils import apply_params_to_definition_dict
+
+DEFAULT_DATETIME_COL = "datetime"
+APP_NAME = "OPTIMIZER_FALLBACK"
+
+from vnpy.factor.backtesting.backtesting import BacktestEngine
+from vnpy.factor.backtesting.factor_analyzer import FactorAnalyser
+from vnpy.factor.template import FactorTemplate # For Sharpe ratio calculation in estimator
+
+from loguru import logger
 
 
 class FactorBacktestEstimator(BaseEstimator):
     """
-    A scikit-learn compatible custom estimator for factor parameter optimization
-    using GridSearchCV within the VnPy factor backtesting engine.
+    Custom scikit-learn estimator for factor backtesting.
+    It allows GridSearchCV to optimize factor parameters by running
+    backtests and scoring them (e.g., using Sharpe ratio).
     """
-
     def __init__(
         self,
-        backtesting_engine: BacktestEngine, # Type hint, actual instance passed
-        initial_factor_definition_dict: Dict[str, Any],
-        full_bar_data_for_slicing: Dict[str, pl.DataFrame],
-        # vt_symbols_for_factor: List[str] # This will be derived from full_bar_data_for_slicing
+        backtest_engine_instance: BacktestEngine,
+        base_factor_definition: Union[FactorTemplate, Dict], # Template to be modified
+        full_training_memory_bar: Dict[str, pl.DataFrame],   # Full training dataset
+        full_training_num_rows: int,
+        vt_symbols: List[str],
+        data_interval: Interval,
+        factor_json_conf_path: Optional[str] = None, # For string-based factor_definition
+        # Parameters for scoring logic (L/S portfolio analysis)
+        returns_look_ahead_period: int = 1,
+        long_percentile_threshold: float = 0.7,
+        short_percentile_threshold: float = 0.3,
+        # Internal state for params set by GridSearchCV
+        **kwargs_params_to_set # Will be populated by set_params
     ):
-        """
-        Initializes the FactorBacktestEstimator.
-        Performs a one-time full initialization of the factor tree.
+        self.backtest_engine_instance = backtest_engine_instance
+        self.base_factor_definition = base_factor_definition # Store the original template
+        self.full_training_memory_bar = full_training_memory_bar
+        self.full_training_num_rows = full_training_num_rows
+        self.vt_symbols = vt_symbols
+        self.data_interval = data_interval # Needed if FactorCalculator requires it, but data is pre-loaded for estimator
+        self.factor_json_conf_path = factor_json_conf_path
 
-        Args:
-            backtesting_engine: An instance of the VnPy BacktestEngine.
-            initial_factor_definition_dict: The full definition dictionary for the
-                                              root factor, including any nested dependencies.
-            full_bar_data_for_slicing: The complete bar data (dict of DataFrames like 
-                                         {"close": df}) that will be sliced for each fold 
-                                         during optimization by the fit method.
-        """
-        self.backtesting_engine: BacktestEngine = backtesting_engine
-        # Store a deep copy of the initial definition for reference and to prevent modification
-        self.initial_factor_definition_dict: Dict[str, Any] = copy.deepcopy(initial_factor_definition_dict)
-        self.full_bar_data_for_slicing: Dict[str, pl.DataFrame] = full_bar_data_for_slicing # Store direct reference
+        # Analysis params for scoring
+        self.returns_look_ahead_period = returns_look_ahead_period
+        self.long_percentile_threshold = long_percentile_threshold
+        self.short_percentile_threshold = short_percentile_threshold
         
-        self.root_factor_for_optimization: Optional[FactorTemplate] = None
-        self.current_score: float = -np.inf
-
-        # Determine vt_symbols for the initial factor setup from full_bar_data_for_slicing['close']
-        dt_col = self.backtesting_engine.factor_datetime_col
-        vt_symbols_for_setup: List[str] = []
-
-        close_data = self.full_bar_data_for_slicing.get("close")
-        if isinstance(close_data, pl.DataFrame) and not close_data.is_empty() and dt_col in close_data.columns:
-            vt_symbols_for_setup = [col for col in close_data.columns if col != dt_col]
+        # Store parameters set by GridSearchCV
+        self.params_to_set: Dict[str, Any] = kwargs_params_to_set
         
-        if not vt_symbols_for_setup:
-            msg = "Optimizer.__init__: vt_symbols_for_setup could not be determined from full_bar_data_for_slicing['close']. Cannot initialize factor tree."
-            self.backtesting_engine.write_log(msg, ERROR)
-            raise ValueError(msg)
+        # This will hold the factor instance with the best params found by this estimator instance
+        # (useful if GridSearchCV asks for best_estimator_)
+        self._best_factor_instance_for_this_estimator: Optional[FactorTemplate] = None
 
-        # Use another deep copy for the actual initialization call, as init_single_factor might modify it.
-        definition_for_init = copy.deepcopy(self.initial_factor_definition_dict)
 
-        self.backtesting_engine.write_log(f"Optimizer.__init__: Initializing factor tree for '{definition_for_init.get('factor_name', definition_for_init.get('class_name'))}' with {len(vt_symbols_for_setup)} symbols.", DEBUG)
-
-        if self.backtesting_engine.init_single_factor(
-            factor_definition=definition_for_init,
-            vt_symbols_for_factor=vt_symbols_for_setup
-        ):
-            if self.backtesting_engine.target_factor_instance:
-                self.root_factor_for_optimization = self.backtesting_engine.target_factor_instance
-                self.backtesting_engine.write_log(f"Optimizer.__init__: Root factor '{self.root_factor_for_optimization.factor_key}' and its tree initialized and stored.", DEBUG)
-            else:
-                msg = "Optimizer.__init__: Engine.init_single_factor succeeded but target_factor_instance is None."
-                self.backtesting_engine.write_log(msg, ERROR)
-                raise RuntimeError(msg)
-        else:
-            msg = "Optimizer.__init__: Engine.init_single_factor failed to initialize the factor tree."
-            self.backtesting_engine.write_log(msg, ERROR)
-            raise RuntimeError(msg)
-        
-        # Note: Previous attributes like self.factor_class_name and self._factor_param_names
-        # are removed as parameter handling will be managed by custom get_params/set_params
-        # interacting with the self.root_factor_for_optimization tree.
-
-    def get_params(self, deep: bool = True) -> Dict[str, Any]:
-        """
-        Gets parameters for this estimator, including those from the nested factor tree.
-        """
-        # Start with parameters from __init__ (as per BaseEstimator convention)
-        params = {
-            "backtesting_engine": self.backtesting_engine, # Not typically tuned
-            "initial_factor_definition_dict": self.initial_factor_definition_dict, # Not typically tuned
-            "full_bar_data_for_slicing": self.full_bar_data_for_slicing # Not typically tuned
-        }
-        if hasattr(self, 'root_factor_for_optimization') and self.root_factor_for_optimization:
-            # Call the new method on FactorTemplate to get all tunable params from the tree
-            # These are the parameters GridSearchCV will be interested in.
-            factor_tree_params = self.root_factor_for_optimization.get_nested_params_for_optimizer()
-            params.update(factor_tree_params)
-        return params
-
-    def set_params(self, **params_from_grid: Any) -> FactorBacktestEstimator:
-        """
-        Sets parameters for this estimator. Parameters for the factor tree are
-        delegated to the root factor's set_nested_params_for_optimizer method.
-        """
-        estimator_init_params = ["backtesting_engine", "initial_factor_definition_dict", "full_bar_data_for_slicing"]
-        factor_params_to_set_on_tree = {}
-
-        for key, value in params_from_grid.items():
-            if key in estimator_init_params:
-                # These are __init__ params of the estimator itself.
-                # While GridSearchCV usually doesn't change these post-init, handle if it does.
-                setattr(self, key, value) 
-            else:
-                # Assume other parameters are for the factor tree
-                factor_params_to_set_on_tree[key] = value
-        
-        if hasattr(self, 'root_factor_for_optimization') and self.root_factor_for_optimization:
-            if factor_params_to_set_on_tree:
-                self.root_factor_for_optimization.set_nested_params_for_optimizer(factor_params_to_set_on_tree)
-        elif factor_params_to_set_on_tree:
-            # This case should ideally not happen if __init__ succeeded
-            msg = "set_params: root_factor_for_optimization not set, but received factor parameters."
-            if hasattr(self, 'backtesting_engine') and self.backtesting_engine:
-                 self.backtesting_engine.write_log(msg, WARNING) # WARNING from logging
-            # else: print(msg) # Or raise error
-
+    def fit(self, X, y=None):
+        # Not much to do in fit for this type of estimator used with GridSearchCV,
+        # as the main work (parameter setting and scoring) happens in set_params and score.
+        # X and y are typically features and target, which we don't use directly here.
+        # We use the full_training_memory_bar for CV splits.
         return self
 
-    def fit(self, X_indices_for_fold: np.ndarray, y: Any = None) -> FactorBacktestEstimator:
-        self.current_score = -np.inf
-        
-        # Logging for the current parameters being tested by GridSearchCV can be helpful.
-        # current_params_for_log = self.get_params(deep=True) 
-        # self.backtesting_engine.write_log(f"Estimator.fit: Testing with params: { {k:v for k,v in current_params_for_log.items() if k not in ['backtesting_engine', 'initial_factor_definition_dict', 'full_bar_data_for_slicing']} }", DEBUG)
+    def score(self, X, y=None) -> float:
+        """
+        Calculates the score (Sharpe ratio of L/S portfolio) for the current parameter set.
+        X here represents the indices of a CV split of the training data.
+        """
+        # 1. Create a working copy of the base factor definition for this scoring run
+        current_trial_factor_definition: Union[FactorTemplate, Dict]
+        if isinstance(self.base_factor_definition, FactorTemplate):
+            # If FactorTemplate instances are truly cloneable without side effects
+            current_trial_factor_definition = copy.deepcopy(self.base_factor_definition)
+            # Or, more robustly, re-create from its settings if deepcopy is problematic
+            # current_trial_factor_definition = self.base_factor_definition.to_setting()
+        elif isinstance(self.base_factor_definition, dict):
+            current_trial_factor_definition = copy.deepcopy(self.base_factor_definition)
+        else:
+            logger.error("Estimator: Invalid base_factor_definition type for score.")
+            return -float('inf') # Very bad score
 
-        # Helper to slice the dict of DataFrames
-        def slice_bar_data_dict(bar_data_dict: Dict[str, pl.DataFrame], slice_indices: np.ndarray) -> Dict[str, pl.DataFrame]:
-            sliced_dict = {}
-            if not bar_data_dict or not isinstance(slice_indices, np.ndarray) or slice_indices.size == 0:
-                self.backtesting_engine.write_log("slice_bar_data_dict: Invalid input or empty indices.", WARNING)
-                return sliced_dict 
-            for key, df in bar_data_dict.items():
-                if isinstance(df, pl.DataFrame) and not df.is_empty():
-                    # Ensure indices are within bounds before attempting to slice
-                    if slice_indices.max() < df.height and slice_indices.min() >= 0:
-                        # Polars slice: offset, length. slice_indices must be contiguous for this simple usage.
-                        # If X_indices_for_fold from TimeSeriesSplit are not guaranteed contiguous,
-                        # df.filter(pl.arange(0, pl.count()).is_in(slice_indices)) or df[slice_indices] (if polars supports numpy array directly for row selection)
-                        # For now, assuming TimeSeriesSplit gives groups that can be sliced if we take min/max,
-                        # or more robustly, use the direct indices if Polars supports it.
-                        # Polars df[slice_indices] works if slice_indices is a Pl.Series of Int/Bool, or list/numpy array of Int/Bool.
-                        sliced_dict[key] = df[slice_indices] 
+        # 2. Apply current parameters (set by GridSearchCV via set_params)
+        if self.params_to_set:
+            if isinstance(current_trial_factor_definition, FactorTemplate):
+                current_trial_factor_definition.set_nested_params_for_optimizer(self.params_to_set)
+            elif isinstance(current_trial_factor_definition, dict):
+                current_trial_factor_definition = apply_params_to_definition_dict(
+                    current_trial_factor_definition, self.params_to_set
+                )
+        
+        # 3. Initialize and flatten the factor with current trial's parameters
+        #    This uses the BacktestEngine's internal logic for consistency.
+        target_factor_instance, flattened_factors = \
+            self.backtest_engine_instance._init_and_flatten_factor(
+                factor_definition=current_trial_factor_definition,
+                vt_symbols_for_factor=self.vt_symbols, # Use symbols relevant to the training data
+                factor_json_conf_path=self.factor_json_conf_path
+            )
+
+        if not target_factor_instance or not flattened_factors:
+            logger.warning(f"Estimator: Failed to initialize/flatten factor for params: {self.params_to_set}. Returning very low score.")
+            return -float('inf')
+
+        # 4. Get the data for the current CV split
+        # X contains indices for the current CV split. Slice full_training_memory_bar.
+        # TimeSeriesSplit provides (train_indices_for_split, test_indices_for_split_within_train_data)
+        # For scoring, we use the "test" part of this CV split from the training data.
+        cv_split_indices = X # X is already the test indices for this CV fold
+        
+        cv_split_memory_bar: Dict[str, pl.DataFrame] = {}
+        min_len_for_cv_split = 0
+        if not self.full_training_memory_bar.get("close", pl.DataFrame()).is_empty():
+            min_len_for_cv_split = self.full_training_memory_bar["close"].select(pl.col(DEFAULT_DATETIME_COL).slice(cv_split_indices[0], len(cv_split_indices))).height
+
+        if min_len_for_cv_split == 0:
+             logger.warning("Estimator: CV split resulted in empty data. Returning very low score.")
+             return -float('inf')
+             
+        for key, df in self.full_training_memory_bar.items():
+            if isinstance(df, pl.DataFrame) and not df.is_empty():
+                # Slice the DataFrame according to the CV split indices
+                # Note: X (cv_split_indices) are absolute indices into full_training_memory_bar
+                # Polars slice is (offset, length). We need to find the start index and length of this split.
+                if len(cv_split_indices) > 0:
+                    start_idx = cv_split_indices[0]
+                    length = len(cv_split_indices)
+                    cv_split_memory_bar[key] = df.slice(start_idx, length)
+                else: # Should not happen if min_len > 0
+                    cv_split_memory_bar[key] = df.clear()
+            else:
+                cv_split_memory_bar[key] = df # Pass non-DataFrame items as is
+
+        cv_split_num_rows = min_len_for_cv_split
+
+
+        # 5. Calculate factor values on this CV split
+        #    FactorCalculator is created fresh or reconfigured for each score evaluation.
+        #    It needs the output_data_dir_for_calculator_cache from the main engine.
+        calculator = FactorCalculator(
+            output_data_dir_for_cache=self.backtest_engine_instance.output_data_dir_for_calculator_cache
+        )
+        factor_df_cv = calculator.compute_factor_values(
+            target_factor_instance_input=target_factor_instance,
+            flattened_factors_input=flattened_factors,
+            memory_bar_input=cv_split_memory_bar,
+            num_data_rows_input=cv_split_num_rows,
+            vt_symbols_for_run=self.vt_symbols
+        )
+        calculator.close()
+
+        if factor_df_cv is None or factor_df_cv.is_empty():
+            logger.warning(f"Estimator: Factor calculation on CV split yielded no data for params: {self.params_to_set}. Score: -inf")
+            return -float('inf')
+
+        # 6. Perform analysis to get Sharpe Ratio
+        #    FactorAnalyser is also created fresh.
+        analyser = FactorAnalyser(
+             output_data_dir_for_reports=None # No full report needed during CV scoring
+        )
+        
+        # Market close prices for this CV split
+        market_close_cv = cv_split_memory_bar.get("close")
+        if market_close_cv is None or market_close_cv.is_empty():
+            logger.warning("Estimator: Market close data for CV split is missing. Score: -inf")
+            analyser.close(); return -float('inf')
+
+        # Use factor_df_cv's datetime column as the reference for returns alignment
+        ref_dt_series = factor_df_cv[DEFAULT_DATETIME_COL]
+
+        if not analyser.prepare_symbol_returns(market_close_cv, ref_dt_series):
+            logger.warning(f"Estimator: Failed to prepare returns for CV split. Params: {self.params_to_set}. Score: -inf")
+            analyser.close(); return -float('inf')
+        
+        if not analyser.perform_long_short_analysis(
+            factor_data_df=factor_df_cv,
+            returns_look_ahead_period=self.returns_look_ahead_period,
+            long_percentile_threshold=self.long_percentile_threshold,
+            short_percentile_threshold=self.short_percentile_threshold
+        ):
+            logger.warning(f"Estimator: L/S analysis failed for CV split. Params: {self.params_to_set}. Score: -inf")
+            analyser.close(); return -float('inf')
+
+        # Calculate Sharpe ratio from L/S portfolio returns
+        sharpe = -float('inf') # Default to very bad score
+        if analyser.long_short_portfolio_returns_df is not None and not analyser.long_short_portfolio_returns_df.is_empty():
+            try:
+                # Convert to pandas series for quantstats
+                pd_returns = analyser.long_short_portfolio_returns_df.select([
+                    pl.col(DEFAULT_DATETIME_COL),
+                    pl.col("ls_portfolio_return").fill_null(0.0) # Fill NaNs before passing to qs
+                ]).to_pandas().set_index(DEFAULT_DATETIME_COL)["ls_portfolio_return"]
+                
+                if not pd_returns.empty:
+                    # Ensure index is datetime
+                    if not isinstance(pd_returns.index, pd.DatetimeIndex):
+                        pd_returns.index = pd.to_datetime(pd_returns.index)
+                    # Handle potential all-NaN or all-zero series after fill_null if original was all null
+                    if pd_returns.count() > 1 and not (pd_returns == 0).all(): # count() excludes NaNs
+                        sharpe_value = qs.stats.sharpe(pd_returns, smart=True, annualize=True) # Annualize if appropriate for data freq
+                        sharpe = float(sharpe_value) if not np.isnan(sharpe_value) and not np.isinf(sharpe_value) else -float('inf')
                     else:
-                        self.backtesting_engine.write_log(f"slice_bar_data_dict: Indices {slice_indices[:5]}... (min/max: {slice_indices.min()}/{slice_indices.max()}) out of bounds for DF height {df.height} on key {key}.", WARNING)
-                        return {} 
-                else:
-
-                    sliced_dict[key] = df 
-            return sliced_dict
-
-        current_data_slice_dict = slice_bar_data_dict(self.full_bar_data_for_slicing, X_indices_for_fold)
-
-        if not current_data_slice_dict or "close" not in current_data_slice_dict or current_data_slice_dict["close"].is_empty():
-            self.backtesting_engine.write_log("Estimator.fit: Data slice is invalid or 'close' data is missing/empty after slicing.", ERROR)
-            return self
-
-
-        dt_col_name = self.backtesting_engine.factor_datetime_col
-        if dt_col_name not in current_data_slice_dict["close"].columns:
-            self.backtesting_engine.write_log(f"Estimator.fit: Datetime col '{dt_col_name}' not in sliced X['close'].", ERROR)
-            return self
-            
-        current_vt_symbols = [col for col in current_data_slice_dict["close"].columns if col != dt_col_name]
-        if not current_vt_symbols:
-            self.backtesting_engine.write_log("Estimator.fit: No symbol columns in sliced X['close'].", ERROR)
-            return self
-
-        # --- This is the NEW core logic for setting up the engine with the live factor tree ---
-        if not self.root_factor_for_optimization:
-            self.backtesting_engine.write_log("Estimator.fit: root_factor_for_optimization is not set.", ERROR)
-            return self 
-
-        # Configure engine with the current data slice (memory_bar, num_data_rows)
-        self.backtesting_engine.memory_bar = {k: v.clone() for k, v in current_data_slice_dict.items() if isinstance(v, pl.DataFrame)}
-        self.backtesting_engine.num_data_rows = current_data_slice_dict["close"].height
-        self.backtesting_engine.vt_symbols = current_vt_symbols # Update engine's active symbols
-
-        # Set the parametrically updated root factor as the engine's target
-        self.backtesting_engine.target_factor_instance = self.root_factor_for_optimization
+                        sharpe = 0.0 # Or some other neutral score for zero returns/not enough data
+            except Exception as e:
+                logger.warning(f"Estimator: Error calculating Sharpe for CV split: {e}. Params: {self.params_to_set}. Score: -inf")
+                sharpe = -float('inf')
         
-        # Clear and rebuild engine's factor collections for this specific factor state
-        self.backtesting_engine.stacked_factors.clear()
-        self.backtesting_engine.flattened_factors.clear()
-        self.backtesting_engine.sorted_factor_keys.clear()
-        self.backtesting_engine.dask_tasks.clear()      
-        self.backtesting_engine.factor_memory_instances.clear() 
+        logger.info(f"Estimator Score (Sharpe): {sharpe:.4f} for params: {self.params_to_set}")
+        analyser.close()
+        
+        # Store the factor instance that produced this score if it's the best so far for this estimator instance
+        # Note: GridSearchCV manages the overall best_estimator_. This is for inspection if needed.
+        if not hasattr(self, '_current_best_score') or sharpe > self._current_best_score: # type: ignore
+            self._current_best_score = sharpe
+            self._best_factor_instance_for_this_estimator = target_factor_instance
 
-        self.backtesting_engine.stacked_factors = {
-            self.root_factor_for_optimization.factor_key: self.root_factor_for_optimization
+        return sharpe
+
+    def get_params(self, deep=True):
+        # Required by sklearn: return constructor parameters
+        return {
+            "backtest_engine_instance": self.backtest_engine_instance,
+            "base_factor_definition": self.base_factor_definition,
+            "full_training_memory_bar": self.full_training_memory_bar,
+            "full_training_num_rows": self.full_training_num_rows,
+            "vt_symbols": self.vt_symbols,
+            "data_interval": self.data_interval,
+            "factor_json_conf_path": self.factor_json_conf_path,
+            "returns_look_ahead_period": self.returns_look_ahead_period,
+            "long_percentile_threshold": self.long_percentile_threshold,
+            "short_percentile_threshold": self.short_percentile_threshold,
+            **self.params_to_set # Include parameters set by GridSearchCV
         }
+
+    def set_params(self, **params):
+        # Called by GridSearchCV to set parameters for the current trial
+        # We store them in self.params_to_set so `score` can access them.
+        # Filter out estimator's own init params from those to be set on the factor
+        own_init_params = [
+            "backtest_engine_instance", "base_factor_definition", 
+            "full_training_memory_bar", "full_training_num_rows",
+            "vt_symbols", "data_interval", "factor_json_conf_path",
+            "returns_look_ahead_period", "long_percentile_threshold", "short_percentile_threshold"
+        ]
+        self.params_to_set = {k: v for k, v in params.items() if k not in own_init_params}
+        
+        # Also update the estimator's own attributes if they are in params (e.g., analysis params)
+        for param_name, value in params.items():
+            if hasattr(self, param_name) and param_name in own_init_params:
+                setattr(self, param_name, value)
+        return self
+
+    def get_best_factor_definition_after_fit(self) -> Optional[Union[FactorTemplate, Dict]]:
+        """
+        Helper to retrieve the factor definition that achieved the best score
+        WITHIN THIS SPECIFIC ESTIMATOR INSTANCE (which GridSearchCV makes copies of).
+        GridSearchCV's `best_estimator_` attribute will hold the estimator instance
+        that found the globally best parameters.
+        """
+        if self._best_factor_instance_for_this_estimator:
+            # Return a serializable form or the instance itself
+            return self._best_factor_instance_for_this_estimator # Or .to_setting()
+        return None
+
+
+class FactorOptimizer:
+    """
+    Optimizes factor parameters using GridSearchCV and FactorBacktestEstimator.
+    """
+    engine_name = APP_NAME + "_FactorOptimizer"
+
+    def __init__(self, backtest_engine: BacktestEngine): # Requires a BacktestEngine instance
+        self.backtest_engine = backtest_engine # The orchestrator
+        self._write_log(f"{self.engine_name} initialized.", level=INFO)
+
+    @staticmethod
+    def _split_data_dict(
+        data_dict: Dict[str, pl.DataFrame],
+        test_size_ratio: float,
+        dt_col: str 
+    ) -> Tuple[Dict[str, pl.DataFrame], Dict[str, pl.DataFrame], int, int]:
+        """
+        Splits data dictionary. Returns train_dict, test_dict, train_rows, test_rows.
+        (Simplified version for optimizer context)
+        """
+        if not (0.0 <= test_size_ratio < 1.0):
+            raise ValueError("test_size_ratio must be between 0.0 and 1.0 (exclusive).")
+        if "close" not in data_dict or data_dict["close"].is_empty():
+            logger.warning("Optimizer split: 'close' data missing or empty.")
+            return {}, {}, 0, 0
+
+        n_total = data_dict["close"].height
+        n_test = int(n_total * test_size_ratio)
+        n_train = n_total - n_test
+        
+        train_d, test_d = {}, {}
+        for k, df in data_dict.items():
+            if isinstance(df, pl.DataFrame) and df.height == n_total:
+                train_d[k] = df.slice(0, n_train)
+                test_d[k] = df.slice(n_train, n_test) if n_test > 0 else df.clear()
+            else: # Non-DataFrame or mismatched rows
+                train_d[k] = df 
+                test_d[k] = df.clear() if isinstance(df, pl.DataFrame) else (type(df)() if callable(type(df)) else None)
+        return train_d, test_d, n_train, n_test
+
+
+    def optimize_factor(
+        self,
+        factor_definition_template: Union[FactorTemplate, Dict], # Base definition to optimize
+        parameter_grid: Dict[str, List[Any]], # Optimizer grid
+        start_datetime: datetime,
+        end_datetime: datetime,
+        vt_symbols: List[str],
+        data_interval: Interval,
+        factor_json_conf_path: Optional[str] = None, # If definition_template is a key string (less ideal for optimizer)
+        test_size_ratio: float = 0.2,
+        n_cv_splits: int = 3,
+        # Analysis parameters for scoring objective (L/S Sharpe) & final report
+        returns_look_ahead_period: int = 1,
+        long_percentile_threshold: float = 0.7,
+        short_percentile_threshold: float = 0.3,
+        report_filename_prefix: str = "optimized_factor_report"
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[Any], Optional[Path]]:
+        """
+        Performs grid search optimization for the given factor definition.
+
+        Returns:
+            A tuple: (best_params, grid_search_cv_results, path_to_final_report_on_test_set)
+        """
+        self._write_log(f"Starting optimization for factor. Symbols: {vt_symbols}", level=INFO)
+
+        # 1. Load full data ONCE using the BacktestEngine's loader
+        if not self.backtest_engine._load_bar_data_engine(start_datetime, end_datetime, data_interval, vt_symbols):
+            self._write_log("Optimizer: Failed to load full bar data. Aborting optimization.", ERROR)
+            return None, None, None
+        if self.backtest_engine.num_data_rows == 0:
+            self._write_log("Optimizer: No bar data rows loaded. Aborting optimization.", WARNING)
+            return None, None, None
+        
+        full_memory_bar = copy.deepcopy(self.backtest_engine.memory_bar) # Use a copy
+        full_num_rows = self.backtest_engine.num_data_rows
+
+        # 2. Split data into training and testing sets
+        train_memory_bar, test_memory_bar, train_num_rows, test_num_rows = \
+            FactorOptimizer._split_data_dict(full_memory_bar, test_size_ratio, DEFAULT_DATETIME_COL)
+
+        if train_num_rows == 0:
+            self._write_log("Optimizer: Training data is empty after split. Cannot proceed with optimization.", ERROR)
+            return None, None, None
+        
+        self._write_log(f"Data split: Train rows={train_num_rows}, Test rows={test_num_rows}", INFO)
+
+        # 3. Setup FactorBacktestEstimator
+        estimator = FactorBacktestEstimator(
+            backtest_engine_instance=self.backtest_engine, # Pass the orchestrator
+            base_factor_definition=factor_definition_template,
+            full_training_memory_bar=train_memory_bar, # Estimator works with training data
+            full_training_num_rows=train_num_rows,
+            vt_symbols=vt_symbols, # Symbols relevant for this training data
+            data_interval=data_interval,
+            factor_json_conf_path=factor_json_conf_path,
+            returns_look_ahead_period=returns_look_ahead_period,
+            long_percentile_threshold=long_percentile_threshold,
+            short_percentile_threshold=short_percentile_threshold
+        )
+
+        # 4. Setup GridSearchCV
+        if train_num_rows < n_cv_splits + 1 and n_cv_splits > 0: # TimeSeriesSplit needs enough samples
+            self._write_log(f"Optimizer: Not enough samples ({train_num_rows}) in training data for {n_cv_splits} CV splits. Reducing CV splits or increasing data.", WARNING)
+            # Adjust n_cv_splits if possible, or raise error if too few for any reasonable CV
+            n_cv_splits = max(1, train_num_rows -1) if train_num_rows > 1 else 0 # Or handle as error
+            if n_cv_splits == 0:
+                 self._write_log("Optimizer: Cannot perform CV with current training data size. Aborting.", ERROR)
+                 return None, None, None
+
+        cv_splitter = TimeSeriesSplit(n_splits=n_cv_splits) if n_cv_splits > 0 else None # Handle no CV case if desired
+
+        grid_search = GridSearchCV(
+            estimator=estimator,
+            param_grid=parameter_grid,
+            scoring=None, # Relies on estimator's score method
+            cv=cv_splitter,
+            verbose=2,
+            n_jobs=1 # Crucial for safety with shared BacktestEngine state if not designed for parallel estimator runs
+        )
+        
+        self._write_log(f"Optimizer: Starting GridSearchCV.fit on training data ({train_num_rows} samples, {n_cv_splits} CV splits)...", INFO)
         try:
-            self.backtesting_engine.flattened_factors = self.backtesting_engine._complete_factor_tree(
-                self.backtesting_engine.stacked_factors
+            # X for GridSearchCV is typically features. Estimator uses pre-loaded training data.
+            # Pass indices for TimeSeriesSplit to work correctly.
+            training_indices = np.arange(train_num_rows)
+            grid_search.fit(X=training_indices, y=None)
+        except Exception as e_grid:
+            self._write_log(f"Optimizer: Error during GridSearchCV.fit: {e_grid}", ERROR)
+            self._write_log(traceback.format_exc(), DEBUG)
+            return None, None, None
+
+        best_params = grid_search.best_params_
+        cv_results = grid_search.cv_results_
+        self._write_log(f"Optimizer: GridSearchCV completed. Best Score (Sharpe): {grid_search.best_score_:.4f}", INFO)
+        self._write_log(f"Optimizer: Best Parameters found: {best_params}", INFO)
+
+        # 5. Final Evaluation on Test Set using best parameters
+        final_report_path: Optional[Path] = None
+        if test_num_rows > 0:
+            self._write_log(f"Optimizer: Evaluating best parameters on test set ({test_num_rows} rows)...", INFO)
+            
+            # Create the factor definition with the best parameters
+            final_factor_definition: Union[FactorTemplate, Dict]
+            if isinstance(factor_definition_template, FactorTemplate):
+                # It's often better to create a new instance from settings with best_params
+                # or ensure deepcopy and set_nested_params is robust.
+                # For simplicity, assuming set_nested_params works on a copy or original template.
+                final_factor_definition = copy.deepcopy(factor_definition_template)
+                final_factor_definition.set_nested_params_for_optimizer(best_params)
+            elif isinstance(factor_definition_template, dict):
+                final_factor_definition = apply_params_to_definition_dict(
+                    copy.deepcopy(factor_definition_template), best_params
+                )
+            else: # Should not happen if initial checks are done
+                self._write_log("Optimizer: Invalid factor_definition_template type for final evaluation.", ERROR)
+                return best_params, cv_results, None
+
+            # Temporarily set BacktestEngine's data to the test set for the final run
+            original_engine_memory_bar = self.backtest_engine.memory_bar
+            original_engine_num_rows = self.backtest_engine.num_data_rows
+            
+            self.backtest_engine.memory_bar = test_memory_bar
+            self.backtest_engine.num_data_rows = test_num_rows
+            
+            # Determine test set start/end datetimes for the report
+            test_start_dt = test_memory_bar["close"][DEFAULT_DATETIME_COL].min() if test_num_rows > 0 else end_datetime
+            test_end_dt = test_memory_bar["close"][DEFAULT_DATETIME_COL].max() if test_num_rows > 0 else end_datetime
+
+
+            # Run a single backtest with the best parameters on the test data
+            # The run_single_factor_backtest will use the (now test) data in self.backtest_engine.memory_bar
+            final_report_path = self.backtest_engine.run_single_factor_backtest(
+                factor_definition=final_factor_definition,
+                start_datetime=test_start_dt, # Reporting purpose, actual data is test_memory_bar
+                end_datetime=test_end_dt,     # Reporting purpose
+                vt_symbols_for_factor=vt_symbols, # Symbols are consistent
+                factor_json_conf_path=factor_json_conf_path, # If original def was key
+                data_interval=data_interval, # Consistent interval
+                num_quantiles=estimator.get_params()["num_quantiles"] if hasattr(estimator, "num_quantiles") else 5, # Use analysis params from estimator
+                returns_look_ahead_period=returns_look_ahead_period,
+                long_percentile_threshold=long_percentile_threshold,
+                short_percentile_threshold=short_percentile_threshold,
+                report_filename_prefix=report_filename_prefix + "_TEST_SET"
             )
             
-            dependency_graph = {
-                fk: [dep.factor_key for dep in fi.dependencies_factor if isinstance(dep, FactorTemplate)]
-                for fk, fi in self.backtesting_engine.flattened_factors.items()
-            }
-            self.backtesting_engine.sorted_factor_keys = self.backtesting_engine._topological_sort(dependency_graph)
+            # Restore BacktestEngine's original data state if it was modified
+            self.backtest_engine.memory_bar = original_engine_memory_bar
+            self.backtest_engine.num_data_rows = original_engine_num_rows
 
-            if not self.backtesting_engine.sorted_factor_keys or \
-               self.root_factor_for_optimization.factor_key not in self.backtesting_engine.sorted_factor_keys:
-                 self.backtesting_engine.write_log(f"Estimator.fit: Root factor '{self.root_factor_for_optimization.factor_key}' not in sorted_keys after graph rebuild. Keys: {self.backtesting_engine.sorted_factor_keys}", ERROR)
-                 # raise RuntimeError("Root factor not in sorted_keys after graph rebuild.") # Optional: make it stricter
-                 return self 
-        except Exception as e:
-            self.backtesting_engine.write_log(f"Estimator.fit: Error rebuilding factor graph: {e}\n{traceback.format_exc()}", ERROR)
-            return self
-        # --- End of NEW core logic ---
-        
-        # --- Existing pipeline calls (calculate_single_factor_data, etc.) ---
-        # These will now use the engine state prepared above.
-        factor_data_df = self.backtesting_engine.calculate_single_factor_data()
-        if factor_data_df is None or factor_data_df.is_empty():
-            self.backtesting_engine.write_log("Estimator.fit: Factor calculation failed or produced empty data (post graph rebuild).", WARNING); return self
-        
-        if not self.backtesting_engine.prepare_symbol_returns(reference_datetime_series=current_data_slice_dict["close"][self.backtesting_engine.factor_datetime_col]):
-            self.backtesting_engine.write_log("Estimator.fit: Preparing symbol returns failed (post graph rebuild).", WARNING); return self
-        
-        if not self.backtesting_engine.perform_long_short_analysis(factor_data_df): 
-            self.backtesting_engine.write_log("Estimator.fit: L-S analysis failed (post graph rebuild).", WARNING); return self
-        
-
-        if hasattr(self.backtesting_engine, 'long_short_portfolio_returns_df') and \
-           self.backtesting_engine.long_short_portfolio_returns_df is not None and \
-           not self.backtesting_engine.long_short_portfolio_returns_df.is_empty():
-            if not self.backtesting_engine.calculate_performance_metrics():
-                self.backtesting_engine.write_log("Estimator.fit: Metrics calculation failed (post graph rebuild).", WARNING); return self
-        else:
-            self.backtesting_engine.write_log("Estimator.fit: L-S returns unavailable, skipping metrics (post graph rebuild).", INFO); return self
-
-
-        if hasattr(self.backtesting_engine, 'performance_metrics') and self.backtesting_engine.performance_metrics:
-            sharpe_ratio = self.backtesting_engine.performance_metrics.get('sharpe')
-            if sharpe_ratio is not None and np.isfinite(sharpe_ratio):
-                self.current_score = sharpe_ratio
-
-                self.backtesting_engine.write_log(f"Estimator.fit successful. Sharpe: {self.current_score:.4f}", DEBUG) # Restored original log
+            if final_report_path:
+                self._write_log(f"Optimizer: Final evaluation on test set complete. Report: {final_report_path}", INFO)
             else:
-                self.current_score = -np.inf
-                self.backtesting_engine.write_log(f"Estimator.fit: Sharpe is None or non-finite ({sharpe_ratio}). Score set to -inf.", DEBUG) # Restored original log
+                self._write_log("Optimizer: Final evaluation on test set failed to produce a report.", WARNING)
         else:
-            self.current_score = -np.inf
-            self.backtesting_engine.write_log("Estimator.fit: No performance metrics. Score set to -inf.", DEBUG) # Restored original log
+            self._write_log("Optimizer: No test data to evaluate. Skipping final test set evaluation.", INFO)
+            # Optionally, could run on full training data again if no test set
+            # final_report_path = self.backtest_engine.run_single_factor_backtest(...) on training data
 
+        return best_params, cv_results, final_report_path
 
-        return self
-
-    def score(self, X: Any, y: Any = None) -> float:
-        """
-        Returns the score (e.g., Sharpe Ratio) calculated by the last `fit` call.
-        This method will be called by GridSearchCV after `fit`.
-
-        Args:
-            X: Data slice (not directly used here as score is based on last fit).
-            y: Target variable (not used).
-            
-        Returns:
-            The calculated score (e.g., Sharpe Ratio).
-        """
-        return self.current_score
+    def _write_log(self, msg: str, level: int = INFO) -> None:
+        log_msg = f"[{self.engine_name}] {msg}"
+        level_map = {DEBUG: logger.debug, INFO: logger.info, WARNING: logger.warning, ERROR: logger.error}
+        log_func = level_map.get(level, logger.info)
+        log_func(log_msg)
