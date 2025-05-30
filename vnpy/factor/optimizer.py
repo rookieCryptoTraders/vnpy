@@ -17,6 +17,7 @@ import copy # For deepcopy
 import traceback # For error logging
 
 
+
 class FactorBacktestEstimator(BaseEstimator):
     """
     A scikit-learn compatible custom estimator for factor parameter optimization
@@ -162,6 +163,7 @@ class FactorBacktestEstimator(BaseEstimator):
                         self.backtesting_engine.write_log(f"slice_bar_data_dict: Indices {slice_indices[:5]}... (min/max: {slice_indices.min()}/{slice_indices.max()}) out of bounds for DF height {df.height} on key {key}.", WARNING)
                         return {} 
                 else:
+
                     sliced_dict[key] = df 
             return sliced_dict
 
@@ -170,6 +172,7 @@ class FactorBacktestEstimator(BaseEstimator):
         if not current_data_slice_dict or "close" not in current_data_slice_dict or current_data_slice_dict["close"].is_empty():
             self.backtesting_engine.write_log("Estimator.fit: Data slice is invalid or 'close' data is missing/empty after slicing.", ERROR)
             return self
+
 
         dt_col_name = self.backtesting_engine.factor_datetime_col
         if dt_col_name not in current_data_slice_dict["close"].columns:
@@ -237,6 +240,7 @@ class FactorBacktestEstimator(BaseEstimator):
         if not self.backtesting_engine.perform_long_short_analysis(factor_data_df): 
             self.backtesting_engine.write_log("Estimator.fit: L-S analysis failed (post graph rebuild).", WARNING); return self
         
+
         if hasattr(self.backtesting_engine, 'long_short_portfolio_returns_df') and \
            self.backtesting_engine.long_short_portfolio_returns_df is not None and \
            not self.backtesting_engine.long_short_portfolio_returns_df.is_empty():
@@ -245,10 +249,12 @@ class FactorBacktestEstimator(BaseEstimator):
         else:
             self.backtesting_engine.write_log("Estimator.fit: L-S returns unavailable, skipping metrics (post graph rebuild).", INFO); return self
 
+
         if hasattr(self.backtesting_engine, 'performance_metrics') and self.backtesting_engine.performance_metrics:
             sharpe_ratio = self.backtesting_engine.performance_metrics.get('sharpe')
             if sharpe_ratio is not None and np.isfinite(sharpe_ratio):
                 self.current_score = sharpe_ratio
+
                 self.backtesting_engine.write_log(f"Estimator.fit successful. Sharpe: {self.current_score:.4f}", DEBUG) # Restored original log
             else:
                 self.current_score = -np.inf
@@ -256,6 +262,7 @@ class FactorBacktestEstimator(BaseEstimator):
         else:
             self.current_score = -np.inf
             self.backtesting_engine.write_log("Estimator.fit: No performance metrics. Score set to -inf.", DEBUG) # Restored original log
+
 
         return self
 

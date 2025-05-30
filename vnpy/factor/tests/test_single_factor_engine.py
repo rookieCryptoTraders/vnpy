@@ -13,6 +13,7 @@ from vnpy.factor.backtesting.backtesting import BacktestEngine, DEFAULT_DATETIME
 from vnpy.factor.optimizer import FactorBacktestEstimator
 from sklearn.model_selection import GridSearchCV, TimeSeriesSplit # For patching
 import numpy as np
+
 import re # For MockNestableFactor
 
 class MockFactor(FactorTemplate):
@@ -252,6 +253,7 @@ class TestSingleFactorEngine(unittest.TestCase):
         
         # Using PropertyMock if performance_metrics is a property, else direct assignment
         # For this subtask, assuming performance_metrics is a direct attribute that can be set.
+
         mock_engine_instance.performance_metrics = {"sharpe": 1.23}
 
         # Mock methods involved in graph rebuilding
@@ -289,6 +291,7 @@ class TestSingleFactorEngine(unittest.TestCase):
         mock_engine_instance.calculate_performance_metrics.assert_called_once()
         
         # 4. Score
+
         self.assertEqual(estimator.current_score, 1.23)
         self.assertEqual(estimator.score(None), 1.23)
         
@@ -386,6 +389,7 @@ class TestSingleFactorEngine(unittest.TestCase):
             summary = self.engine.optimization_results["cv_results_summary"]
             self.assertEqual(summary["mean_test_score"], [1.55, 1.45]) # Check .tolist() conversion
             self.assertEqual(summary["params"], ['{\'window\': 25}', '{\'window\': 15}']) # Check str(p) conversion
+
 
 
 # Helper Mock Factor for testing nested parameter handling
@@ -760,7 +764,5 @@ class TestFactorBacktestEstimatorStandalone(unittest.TestCase): # New test class
         # The actual values of performance_metrics will be somewhat random due to prepare_symbol_returns
         # but we can check if they exist.
         self.assertIn("sharpe", self.engine.performance_metrics)
-
-
 if __name__ == '__main__':
     unittest.main()
