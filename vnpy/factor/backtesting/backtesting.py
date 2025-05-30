@@ -28,14 +28,13 @@ from vnpy.trader.constant import Interval
 from vnpy.trader.setting import SETTINGS
 from vnpy.factor.base import APP_NAME, FactorMode # Import FactorMode
 # FactorTemplate and FactorMemory are assumed to be defined above or importable
-from vnpy.factor.utils.factor_utils import init_factors, load_factor_setting # Ensure these utils are compatible
+from vnpy.factor.utils.factor_utils import init_factors, load_factor_setting, apply_params_to_definition_dict # Ensure these utils are compatible
 from vnpy.factor.setting import get_factor_path, get_factor_setting
 from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 # from vnpy.factor.optimizer import FactorBacktestEstimator # Imported dynamically in method
 
 # DEFAULT_FACTOR_MODULE_NAME = SETTINGS.get('factor.module_name', 'vnpy.factor.factors') # This is used by self.factor_module_name
 DEFAULT_DATETIME_COL = "datetime" # Standard datetime column name for FactorMemory
-
 
 @staticmethod
 def _split_data_dict(
@@ -1329,12 +1328,31 @@ class BacktestEngine:
                 )
 
                 if best_params:
-                    self.write_log(f"Optimization successful. Best params: {best_params}", INFO)
-                    if isinstance(current_factor_definition, FactorTemplate):
-                        current_factor_definition.params.set_parameters(best_params)
-                    elif isinstance(current_factor_definition, dict):
-                        current_factor_definition["params"] = current_factor_definition.get("params", {}).copy() # Ensure params dict exists and is a copy
-                        current_factor_definition["params"].update(best_params)
+                    self.write_log(f"Optimization successful. Best params found: {best_params}", INFO)
+                    
+                    best_estimator = self.optimization_results.get("best_estimator") if self.optimization_results else None
+                    
+                    if best_estimator and hasattr(best_estimator, 'root_factor_for_optimization') and \
+                       best_estimator.root_factor_for_optimization:
+                        current_factor_definition = best_estimator.root_factor_for_optimization
+                        self.write_log(f"Using factor tree from best_estimator ('{current_factor_definition.factor_key}') for final backtest.", INFO)
+                    else:
+                        self.write_log("Best estimator or its root factor not available from optimization_results. Applying best_params to original factor definition.", WARNING)
+                        if isinstance(current_factor_definition, FactorTemplate):
+                            try:
+                                current_factor_definition.set_nested_params_for_optimizer(best_params)
+                                self.write_log(f"Applied best_params to FactorTemplate instance '{current_factor_definition.factor_key}' using set_nested_params_for_optimizer.", INFO)
+                            except Exception as e_set_nested:
+                                self.write_log(f"Error applying best_params with set_nested_params_for_optimizer to FactorTemplate: {e_set_nested}", ERROR)
+                        elif isinstance(current_factor_definition, dict):
+                            try:
+                                updated_def_dict = apply_params_to_definition_dict(current_factor_definition, best_params)
+                                current_factor_definition = updated_def_dict # Replace with the new dict
+                                self.write_log(f"Applied best_params to factor definition dictionary using apply_params_to_definition_dict. Root params: {current_factor_definition.get('params')}", INFO)
+                            except Exception as e_apply_dict:
+                                self.write_log(f"Error applying best_params to definition dictionary: {e_apply_dict}", ERROR)
+                                # current_factor_definition remains unchanged if helper fails
+
                     
                     if test_data_dict and test_data_dict.get("close") and not test_data_dict.get("close").is_empty():
                         data_for_final_backtest = test_data_dict
@@ -1445,12 +1463,23 @@ class BacktestEngine:
 
         try:
             from vnpy.factor.optimizer import FactorBacktestEstimator # Dynamic import
+
+            # Construct the initial_factor_definition_dict for the estimator
+            # This dict should represent the complete structure of the factor,
+            # including any nested dependencies, if the factor is complex.
+            # For a simple factor without explicit dependencies in its definition,
+            # it's just its own class_name and params.
+            factor_def_for_estimator = {
+                "class_name": factor_class_name,
+                # "factor_name": factor_class_name, # Optional: if your FactorTemplate uses it
+                "params": initial_factor_settings.copy(), # Use a copy of initial settings
+                # "dependencies": [] # Add if your factor definition expects this key for dependencies
+            }
             
             estimator = FactorBacktestEstimator(
                 backtesting_engine=self,
-                factor_class_name=factor_class_name,
-                full_bar_data_for_slicing=full_bar_data, # Pass the full data for estimator to slice
-                **initial_factor_settings # Pass base/fixed parameters
+                initial_factor_definition_dict=factor_def_for_estimator,
+                full_bar_data_for_slicing=full_bar_data
             )
         except ImportError:
             self.write_log("Failed to import FactorBacktestEstimator. Ensure it's in vnpy.factor.optimizer.", ERROR)
@@ -1489,6 +1518,8 @@ class BacktestEngine:
         self.optimization_results = {
             "best_params": grid_search.best_params_,
             "best_score": grid_search.best_score_,
+            "best_estimator": grid_search.best_estimator_, # Store the best estimator
+
             "cv_results_summary": { 
                 "mean_test_score": grid_search.cv_results_["mean_test_score"].tolist(),
                 "std_test_score": grid_search.cv_results_["std_test_score"].tolist(),
