@@ -17,7 +17,7 @@ import dask.diagnostics
 from vnpy.factor.memory import FactorMemory
 from vnpy.factor.template import FactorTemplate
 from vnpy.factor.base import APP_NAME 
-from vnpy.factor.setting import get_factor_path 
+from vnpy.factor.setting import get_backtest_data_cache_path
 
 # Default datetime column name
 DEFAULT_DATETIME_COL = "datetime"
@@ -51,7 +51,7 @@ class FactorCalculator:
         self,
         output_data_dir_for_cache: Optional[str] = None 
     ) -> None:
-        self.output_data_dir: Path = Path(output_data_dir_for_cache) if output_data_dir_for_cache else get_factor_path("factor_data_cache")
+        self.output_data_dir: Path = Path(output_data_dir_for_cache) if output_data_dir_for_cache else get_backtest_data_cache_path()
 
         # State set per computation run
         self.vt_symbols: List[str] = []

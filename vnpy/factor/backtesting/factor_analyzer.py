@@ -17,7 +17,7 @@ from scipy import stats
 # VnTrader imports
 from vnpy.factor.template import FactorTemplate # For type hinting factor_instance
 from vnpy.factor.base import APP_NAME
-from vnpy.factor.setting import get_factor_path
+from vnpy.factor.setting import get_backtest_report_path
 
 # Default datetime column name
 DEFAULT_DATETIME_COL = "datetime"
@@ -39,7 +39,7 @@ class FactorAnalyser:
     engine_name = APP_NAME + "FactorAnalyser"
 
     def __init__(self, output_data_dir_for_reports: Optional[str] = None):
-        self.output_data_dir: Path = Path(output_data_dir_for_reports) if output_data_dir_for_reports else get_factor_path("factor_reports")
+        self.output_data_dir: Path = Path(output_data_dir_for_reports) if output_data_dir_for_reports else get_backtest_report_path()
         self.factor_datetime_col: str = DEFAULT_DATETIME_COL
         self.vt_symbols: List[str] = [] 
 

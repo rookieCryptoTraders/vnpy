@@ -75,10 +75,11 @@ if not _SETTINGS_INITIALIZED:
     # Base paths for factor data, cache, etc.
     ROOT_PATH = Path(SETTINGS.get("factor.root_path", Path.cwd() / ".vnpy" / "factor"))
     DATA_PATH = ROOT_PATH / "data"
+    REPORT_PATH = ROOT_PATH / "reports"
     CACHE_PATH = ROOT_PATH / "cache"
 
     # Ensure base directories exist
-    for path in [ROOT_PATH, DATA_PATH, CACHE_PATH]:
+    for path in [ROOT_PATH, DATA_PATH, CACHE_PATH, REPORT_PATH]:
         path.mkdir(parents=True, exist_ok=True)
 
     # For easier access if needed, though direct use of FACTOR_MODULE_SETTINGS is common
@@ -106,6 +107,10 @@ def get_backtest_data_cache_path() -> Path:
     """Get the path to the backtest factor data cache directory."""
     return CACHE_PATH / "backtest_factor_data_cache"
 
+def get_backtest_report_path() -> Path:
+    """Get the path to the backtest factor data cache directory."""
+    return REPORT_PATH / "backtest_reports"
+
 # Make FACTOR_DEFINITIONS_FILEPATH available for import if needed elsewhere for clarity,
 # though get_factor_definitions_filepath() is the preferred accessor.
 __all__ = [
@@ -117,6 +122,8 @@ __all__ = [
     "ROOT_PATH",
     "DATA_PATH",
     "CACHE_PATH",
+    "REPORT_PATH",
     "get_factor_data_cache_path",
-    "get_backtest_data_cache_path"
+    "get_backtest_data_cache_path",
+    "get_backtest_report_path"
 ]
