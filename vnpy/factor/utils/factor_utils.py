@@ -3,7 +3,7 @@
 import importlib
 import typing # Added import
 from types import ModuleType
-from typing import Any, Dict, Type, List
+from typing import Any, Dict, Type, List, Union
 import re
 import copy
 
@@ -59,7 +59,8 @@ def load_factor_setting(setting_path: str) -> List[Dict[str, Any]]:
 def init_factors(
     module_for_primary_classes: ModuleType,
     settings_data: List[Dict[str, Any]], # THIS IS NOW A LIST OF ACTUAL SETTINGS DICTS
-    dependencies_module_lookup_for_instances: ModuleType
+    dependencies_module_lookup_for_instances: ModuleType,
+    vt_symbols: Union[List[str], str] = None
 ) -> List['FactorTemplate']: # Updated return type hint to string literal
     initialized_factors: List['FactorTemplate'] = [] # Explicitly type initialized_factors to string literal
 
@@ -86,6 +87,10 @@ def init_factors(
             setting=actual_factor_settings,
             dependencies_module_lookup=dependencies_module_lookup_for_instances
         )
+        if vt_symbols is not None:
+            if isinstance(vt_symbols, str):
+                vt_symbols = [vt_symbols]
+            instance.vt_symbols = vt_symbols
         initialized_factors.append(instance)
     return initialized_factors
 

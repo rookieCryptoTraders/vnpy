@@ -47,7 +47,7 @@ class BacktestEngine:
         output_data_dir_for_calculator_cache: Optional[str] = None,
         output_data_dir_for_analyser_reports: Optional[str] = None,
     ):
-        self.factor_module_name: str = factor_module_name or SETTINGS.get('factor.module_name', 'vnpy_portfoliostrategy.factors')
+        self.factor_module_name: str = factor_module_name or SETTINGS.get('factor.module_name', 'vnpy.factor.factors')
         self.output_data_dir_for_calculator_cache = output_data_dir_for_calculator_cache
         self.output_data_dir_for_analyser_reports = output_data_dir_for_analyser_reports
         
@@ -181,16 +181,16 @@ class BacktestEngine:
         if isinstance(factor_definition, FactorTemplate):
             target_factor_instance = factor_definition
             # Ensure vt_symbols are aligned if provided
-            if target_factor_instance.params.get_parameter('vt_symbols') != vt_symbols_for_factor:
-                target_factor_instance.params.set_parameters({'vt_symbols': vt_symbols_for_factor})
+            if target_factor_instance.vt_symbols != vt_symbols_for_factor:
+                target_factor_instance.vt_symbols = vt_symbols_for_factor
                 target_factor_instance._init_dependency_instances() # Re-initialize dependencies with new symbols
         elif isinstance(factor_definition, dict):
             setting_copy = factor_definition.copy()
             setting_copy["factor_mode"] = FactorMode.BACKTEST.name
             if "params" not in setting_copy: setting_copy["params"] = {}
-            setting_copy["params"]["vt_symbols"] = vt_symbols_for_factor
+            # setting_copy["params"]["vt_symbols"] = vt_symbols_for_factor
             try:
-                inited_list = init_factors(self.module_factors, [setting_copy], self.module_factors)
+                inited_list = init_factors(self.module_factors, [setting_copy], self.module_factors, vt_symbols_for_factor)
                 if inited_list: target_factor_instance = inited_list[0]
             except Exception as e:
                 self._write_log(f"Error initializing factor from dict: {e}", level=ERROR); return None, None
@@ -208,18 +208,17 @@ class BacktestEngine:
                     temp_setting = setting_item.copy()
                     temp_setting["factor_mode"] = FactorMode.BACKTEST.name
                     if "params" not in temp_setting: temp_setting["params"] = {}
-                    temp_setting["params"]["vt_symbols"] = vt_symbols_for_factor
                     
-                    TempFactorClass = getattr(self.module_factors, temp_setting["class_name"])
+                    TempFactorClass: 'FactorTemplate' = getattr(self.module_factors, temp_setting["class_name"])
                     temp_instance = TempFactorClass(setting=temp_setting, dependencies_module_lookup=self.module_factors)
+                    temp_instance.vt_symbols = vt_symbols_for_factor # Ensure symbols are set
                     if temp_instance.factor_key == factor_definition:
                         found_setting = setting_item.copy(); break
                 if found_setting:
                     final_setting = found_setting
                     final_setting["factor_mode"] = FactorMode.BACKTEST.name
                     if "params" not in final_setting: final_setting["params"] = {}
-                    final_setting["params"]["vt_symbols"] = vt_symbols_for_factor
-                    inited_list = init_factors(self.module_factors, [final_setting], self.module_factors)
+                    inited_list = init_factors(self.module_factors, [final_setting], self.module_factors, vt_symbols_for_factor)
                     if inited_list: target_factor_instance = inited_list[0]
                 else:
                     self._write_log(f"Factor key '{factor_definition}' not found in '{factor_json_conf_path}'.", level=ERROR)

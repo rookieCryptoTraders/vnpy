@@ -167,7 +167,7 @@ class FactorTemplate(ABC):
     
     # These are typically not used directly by individual factors if they are symbol/exchange agnostic
     # but can be part of the context if a factor is specific.
-    vt_symbols: List[str] = []
+    _vt_symbols: List[str] = []
     exchange: Exchange = Exchange.TEST
 
     # Configurations for dependencies, will be resolved to FactorTemplate instances
@@ -219,6 +219,25 @@ class FactorTemplate(ABC):
         )
         param_str = self.params.to_str(with_value=True)
         return f"{base_key_part}@{param_str}"
+    
+    @property
+    def vt_symbols(self) -> List[str]:
+        return self._vt_symbols
+
+    @vt_symbols.setter
+    def vt_symbols(self, value: List[str]) -> None:
+        if not isinstance(value, list):
+            raise TypeError(f"vt_symbols must be a list, got {type(value)} for factor {self.factor_key}")
+        
+        # Update own _vt_symbols
+        self._vt_symbols = value
+        
+        # Propagate to dependencies if they exist
+        if hasattr(self, 'dependencies_factor') and self.dependencies_factor:
+            for dep_factor in self.dependencies_factor:
+                if isinstance(dep_factor, FactorTemplate):
+                    dep_factor.vt_symbols = value # This will call the setter on the dependency
+
 
     def _init_dependency_instances(self):
         """
