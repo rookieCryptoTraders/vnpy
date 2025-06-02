@@ -13,7 +13,7 @@ from typing import Callable, Optional, Union
 import pandas as pd
 import polars as pl
 import numpy as np
-import talib
+# import talib
 from zoneinfo import ZoneInfo, available_timezones  # noqa
 
 from vnpy.trader.object import BarData, TickData, FactorData

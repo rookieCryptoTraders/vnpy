@@ -78,9 +78,9 @@ class MainEngine:
         self.gateways: Dict[str, BaseGateway] = {}
         self.engines: Dict[str, BaseEngine] = {}
         self.apps: Dict[str, BaseApp] = {}
-        self.intervals = SETTINGS.get('gateway.intervals', [])
+        self.intervals = [Interval(interval) for interval in SETTINGS.get('gateway.intervals', [])]  # hyf
         self.symbols = SETTINGS.get("gateway.symbols", [])  # hyf
-        self.exchanges = SETTINGS.get("gateway.exchanges", [])  # hyf
+        self.exchanges = [Exchange(ex) for ex in SETTINGS.get("gateway.exchanges", [])]  # hyf
         self.vt_symbols: list[str] = [f"{s}.{e}" for s, e in product(self.symbols, self.exchanges)]
         self.mode: str = SETTINGS.get('mode', 'LIVE')
         assert self.mode in ['LIVE', 'BACKTEST', 'TEST']

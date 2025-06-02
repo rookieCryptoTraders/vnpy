@@ -12,12 +12,14 @@ from time import sleep
 import time
 
 from vnpy.factor.engine import FactorEngine
-#from vnpy.app.factor_maker import FactorMakerApp
+# from vnpy.app.factor_maker import FactorMakerApp
 from vnpy.event import EventEngine
 from vnpy.gateway.mimicgateway.mimicgateway import MimicGateway
 from vnpy.trader.engine import MainEngine
-#from vnpy.strategy.examples.test_strategy_template import TestStrategyTemplate
+from vnpy.app.data_recorder import DataRecorderApp
 
+
+# from vnpy.strategy.examples.test_strategy_template import TestStrategyTemplate
 
 
 def run_child():
@@ -31,18 +33,13 @@ def run_child():
     main_engine = MainEngine(event_engine)
     main_engine.write_log("Main engine created successfully")
 
-    time.sleep(10)
-
-
     # start factor engine
     factor_maker_engine: FactorEngine = main_engine.add_engine(FactorEngine)
     factor_maker_engine.init_engine(fake=False)
 
-    time.sleep(10)
-
     gateway_settings = {
         "symbols": [],
-        "simulation_interval_seconds": 60.0, # Bars every second for each symbol
+        "simulation_interval_seconds": 60.0,  # Bars every second for each symbol
         "open_price_range_min": 100,
         "open_price_range_max": 105,
         "price_change_range_min": -1,
@@ -53,10 +50,19 @@ def run_child():
 
     # connect to exchange
     main_engine.add_gateway(MimicGateway, "MIMIC")
+    main_engine.subscribe_all(gateway_name='MIMIC')
 
     main_engine.connect(gateway_settings, "MIMIC")
     main_engine.write_log("Connected to MIMIC interface")
     main_engine.subscribe_all(gateway_name='MIMIC')
+
+    # start data recorder
+    data_recorder_engine = main_engine.add_app(DataRecorderApp)
+    main_engine.write_log(f"启动[{data_recorder_engine.__class__.__name__}]")
+    data_recorder_engine.update_schema(database_name=data_recorder_engine.database_manager.database_name,
+                                       exchanges=main_engine.exchanges,
+                                       intervals=main_engine.intervals,
+                                       factor_keys=[key for key in factor_maker_engine.flattened_factors.keys()])
 
 
 def run_parent():
@@ -74,7 +80,7 @@ def run_parent():
             child_process = multiprocessing.Process(target=run_child)
             child_process.start()
             print("Child process started successfully")
-            
+
             # Keep the parent process running
             while True:
                 sleep(5)
@@ -83,7 +89,7 @@ def run_parent():
                     child_process.join()
                     child_process = multiprocessing.Process(target=run_child)
                     child_process.start()
-                    
+
     except KeyboardInterrupt:
         if child_process is not None:
             print("Shutting down child process")

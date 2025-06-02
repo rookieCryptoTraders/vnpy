@@ -45,14 +45,46 @@ class StatusCode(Enum):
 
 
 class BaseSchema(object):
+
+    @property
+    def schema(self) -> dict[str, str]:
+        """
+        Get the schema of the class as a dictionary.
+        Returns
+        -------
+        dict
+            A dictionary where keys are column names and values are column types.
+        """
+        return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+
+    def add_columns(self, columns: Dict[str, str]):
+        """
+        Add multiple columns to the schema.
+        Parameters
+        ----------
+        columns : Dict[str, str]
+            A dictionary where keys are column names and values are column types.
+        """
+        for name, type_ in columns.items():
+            self.__add_column__(name, type_)
+
+    def __add_column__(self, name: str, type_: str):
+        """
+        Add a column to the schema.
+        Parameters
+        ----------
+        name : str
+            The name of the column.
+        type_ : str
+            The type of the column, e.g., 'INT', 'VARCHAR(255)', etc.
+        """
+        if hasattr(self, name):
+            raise ValueError(f"Column '{name}' already exists in the schema.")
+        setattr(self, name, type_)
+
     def assign_schema_type(self, schema_type: Dict[str, str]):
-        supposed_attributes = set(self.__dict__.keys())
-        schema_attributes = set(schema_type.keys())
-        if not supposed_attributes == schema_attributes:
-            raise ValueError(
-                f"supposed_attributes - schema_attributes:{supposed_attributes - schema_attributes}; \nschema_attributes - supposed_attributes: {schema_attributes - supposed_attributes}")
         for k, v in schema_type.items():
-            setattr(self,k, v)
+            setattr(self, k, v)
 
     def to_sql(self):
         return ','.join([f'`{k}` {v}' for k, v in self.__dict__.items()])
