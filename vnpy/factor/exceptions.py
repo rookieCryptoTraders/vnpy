@@ -1,8 +1,8 @@
-from typing import Optional
-
+# exceptions.py
+# This module defines custom exceptions for the factor calculation system.
 class FactorCalculationError(Exception):
     """Base exception for factor calculation errors"""
-    def __init__(self, message: str, factor_key: Optional[str] = None):
+    def __init__(self, message: str, factor_key: str | None = None):
         self.factor_key = factor_key
         super().__init__(f"Factor {factor_key}: {message}" if factor_key else message)
 

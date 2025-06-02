@@ -6,6 +6,7 @@ from threading import Lock
 from pathlib import Path
 
 # Third-party imports
+import dask.delayed
 import polars as pl
 import dask
 from dask.delayed import Delayed
@@ -154,16 +155,15 @@ class FactorCalculator:
         if not self.vt_symbols:
             self._write_log("vt_symbols_for_run is empty. Cannot compute.", level=ERROR)
             return None
-
         # Align vt_symbols in all factors within the flattened_factors_input if they differ.
         # This ensures consistency for the current computation run.
         for factor_key, factor_instance in self.flattened_factors.items():
-            if factor_instance.params.get_parameter("vt_symbols") != self.vt_symbols:
+            if factor_instance.vt_symbols != self.vt_symbols:
                 self._write_log(
                     f"Aligning vt_symbols in factor '{factor_key}' to {self.vt_symbols}",
                     level=DEBUG,
                 )
-                factor_instance.params.set_parameters({"vt_symbols": self.vt_symbols})
+                factor_instance.vt_symbols = self.vt_symbols
                 # If FactorTemplate._init_dependency_instances needs to be called on symbol change,
                 # the BacktestEngine should ensure this happens before passing the flattened graph.
                 # Here, we assume the instances are ready or their logic adapts.
@@ -181,6 +181,7 @@ class FactorCalculator:
             return None
         if not self._execute_batch_dask_graph():
             return None
+        print(13)
 
         target_key = self.target_factor_instance.factor_key
         if target_key in self.factor_memory_instances:
@@ -259,10 +260,10 @@ class FactorCalculator:
                 continue
             try:
                 # vt_symbols should have been aligned in compute_factor_values
-                if instance.params.get_parameter("vt_symbols") != self.vt_symbols:
+                if instance.vt_symbols != self.vt_symbols:
                     self._write_log(
                         f"Warning: vt_symbols mismatch for '{key}' during FactorMemory init. "
-                        f"Expected {self.vt_symbols}, got {instance.params.get_parameter('vt_symbols')}. "
+                        f"Expected {self.vt_symbols}, got {instance.vt_symbols}. "
                         "This might lead to schema issues if schema depends on symbols.",
                         level=WARNING,
                     )
@@ -295,12 +296,12 @@ class FactorCalculator:
         if not self.memory_bar:
             self._write_log("memory_bar empty. Cannot build Dask graph.", level=ERROR)
             return False
-        delayed_ohlcv = dask.delayed(self.memory_bar.copy())()
+
         self.dask_tasks.clear()
         for key in self.sorted_factor_keys:
             try:
                 self._create_dask_task(
-                    key, self.flattened_factors, self.dask_tasks, delayed_ohlcv
+                    key, self.flattened_factors, self.dask_tasks
                 )
             except Exception as e:
                 self._write_log(
@@ -329,7 +330,7 @@ class FactorCalculator:
                     results = dask.compute(
                         *self.dask_tasks.values(),
                         optimize_graph=True,
-                        scheduler="threads",
+                        scheduler="threads"
                     )
                 self._write_log(
                     f"Dask computation finished in {time.time() - start_time:.3f}s.",
@@ -371,10 +372,6 @@ class FactorCalculator:
             finally:
                 self._cleanup_memory_resources()
 
-    # _complete_factor_tree is removed as flattened_factors is now an input
-    # def _complete_factor_tree(self, root_factors: Dict[str, FactorTemplate]) -> Dict[str, FactorTemplate]:
-    #     ...
-
     def _topological_sort(self, graph: dict[str, list[str]]) -> list[str]:
         visited_perm, visited_temp, order = set(), set(), []
         all_nodes = sorted(list(set(graph.keys()).union(*graph.values())))
@@ -401,12 +398,14 @@ class FactorCalculator:
             raise RuntimeError(f"FactorMemory for {factor_key} not found.")
         return self.factor_memory_instances[factor_key]
 
+    def _get_bar_memory_for_dask(self) -> dict[str, pl.DataFrame]:
+        return self.memory_bar.copy()
+
     def _create_dask_task(
         self,
         factor_key: str,
         factors: dict[str, FactorTemplate],
-        tasks: dict[str, Delayed],
-        ohlcv_in: Delayed,
+        tasks: dict[str, Delayed]
     ) -> Delayed:
         if factor_key in tasks:
             return tasks[factor_key]
@@ -418,16 +417,16 @@ class FactorCalculator:
 
         dep_tasks = {
             dep.factor_key: self._create_dask_task(
-                dep.factor_key, factors, tasks, ohlcv_in
+                dep.factor_key, factors, tasks
             )
             for dep in instance.dependencies_factor
         }
-        mem_delayed = dask.delayed(self._get_factor_memory_instance_for_dask)(
+        """mem_delayed = dask.delayed(self._get_factor_memory_instance_for_dask)(
             factor_key
-        )
-        task_in = ohlcv_in if not instance.dependencies_factor else dep_tasks
+        )"""
+        task_in = dask.delayed(self._get_bar_memory_for_dask)() if not instance.dependencies_factor else dep_tasks
         tasks[factor_key] = dask.delayed(instance.calculate)(
-            input_data=task_in, memory=mem_delayed
+            input_data=task_in, memory=None
         )
         return tasks[factor_key]
 
@@ -444,7 +443,7 @@ class FactorCalculator:
             ERROR: logger.error,
         }
         log_func = level_map.get(level, logger.info)
-        log_func(log_msg)
+        log_func(log_msg, gateway_name=self.engine_name)
 
     def close(self) -> None:
         self._write_log("FactorCalculator closed.", level=INFO)
