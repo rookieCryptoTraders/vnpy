@@ -1,30 +1,26 @@
-""""""
+import importlib
 import time
 from collections import defaultdict
-from threading import Thread
-from queue import Queue, Empty
 from copy import deepcopy
+from logging import ERROR, INFO, DEBUG, NOTSET
+from queue import Queue
+from threading import Thread
 from typing import Literal, Optional, Union
-from logging import ERROR, INFO, DEBUG, NOTSET, WARNING
 
 import polars as pl
 
-from vnpy.event.engine import Event
-from vnpy.trader.event import EVENT_LOG, EVENT_CONTRACT, EVENT_BAR, EVENT_FACTOR, EVENT_RECORDER_UPDATE
-from vnpy.trader.engine import BaseEngine, MainEngine, EventEngine
-from vnpy.trader.object import (SubscribeRequest, TickData, BarData, FactorData, ContractData, LogData)
-from vnpy.trader.utility import BarGenerator
 from vnpy.adapters.overview import OverviewHandler
+from vnpy.event.engine import Event
+from vnpy.trader.constant import Interval, Exchange
+from vnpy.trader.engine import BaseEngine, MainEngine, EventEngine
+from vnpy.trader.event import EVENT_LOG, EVENT_CONTRACT, EVENT_BAR, EVENT_FACTOR, EVENT_RECORDER_UPDATE
+from vnpy.trader.object import (SubscribeRequest, TickData, BarData, FactorData, ContractData, LogData)
+from vnpy.trader.setting import SETTINGS
 from vnpy.trader.utility import (
-    generate_vt_symbol,
+    BarGenerator,
     extract_vt_symbol,
-    get_file_path,
     extract_factor_key
 )
-from vnpy.trader.database import (BarOverview, TickOverview, FactorOverview, TV_BaseOverview)
-
-from vnpy.trader.constant import Exchange, Interval
-from vnpy.trader.setting import SETTINGS
 from vnpy_clickhouse.clickhouse_database import ClickhouseDatabase
 
 APP_NAME = "DataRecorder"
@@ -57,13 +53,35 @@ class RecorderEngine(BaseEngine):
         self.put_event()
 
         # database settings
-        self.database_manager = ClickhouseDatabase(event_engine=event_engine)
         self.buffer_bar = defaultdict(list)
         self.buffer_factor = defaultdict(list)
         self.buffer_size = 1  # todo: 调大该数字
 
+        # database init
+        self.database_manager = ClickhouseDatabase(event_engine=event_engine)
+        # self.database_manager = get_database()  # todo: use configured database
+
         # overview. DO NOT USE IT FOR UPDATING OVERVIEW!
         self.overview_handler_for_result_check = OverviewHandler()  # only used for check data consistency.
+
+    def update_schema(self, database_name: str, exchanges: list[Exchange], intervals: Union[Interval, list[Interval]],
+                      factor_keys: Optional[list[str]] = None):
+        """use outer information to update the schema of the database"""
+        database_name = database_name.lower()
+        module = importlib.import_module(f"vnpy_{database_name}")
+        convertor = getattr(module, "outer_str2console_str")  # convert factor keys to database acceptable column names
+        dtype_mapper = module.DTYPE_MAPPER
+        database_name_camelcase = database_name[0].upper() + database_name[1:].lower()
+        for exchange in exchanges:
+            exchange = exchange.value
+            # convert to CamelCase
+            exchange_camelcase = exchange[0].upper() + exchange[1:].lower()
+            factor_schema_class = getattr(module,
+                                          f"{database_name_camelcase}{exchange_camelcase}FactorSchema")
+            factor_keys: dict = {convertor(factor_key): dtype_mapper['float64'] for factor_key in
+                                 factor_keys} if factor_keys else {}
+            schema_factor = factor_schema_class(additional_columns=factor_keys)
+            self.database_manager.update_all_schema(intervals=intervals, schema_factor=schema_factor)
 
     def register_event(self):
         """"""

@@ -101,7 +101,7 @@ class FactorEngine(BaseEngine):
 
         # 2. Flatten the dependency tree
         self.flattened_factors = self.complete_factor_tree(self.stacked_factors)
-        self.write_log(f"Flattened {len(self.flattened_factors)} factors", level=INFO)
+        self.write_log(f"Flattened {len(self.flattened_factors)} factors: {list(self.flattened_factors.keys())}", level=INFO)
 
         # 3. Initialize memory structures (memory_bar and FactorMemory instances)
         self.init_memory(fake=fake) 
@@ -479,7 +479,8 @@ class FactorEngine(BaseEngine):
         # 3. Broadcast the FactorMemory instances directly
         if self.factor_memory_instances:
             # Broadcast FactorMemory instances directly
-            event_data = self.factor_memory_instances
+            event_data = {k:v.get_latest_rows(1) for k,v in self.factor_memory_instances.items()}
+
             self.event_engine.put(Event(EVENT_FACTOR, event_data))
         
         # 4. Maintain memory length for bar data (OHLCV)
@@ -509,7 +510,8 @@ class FactorEngine(BaseEngine):
             # dask.config.set(num_workers=psutil.cpu_count(logical=False)) # Optional: set num_workers
 
             try:
-                with dask.diagnostics.ProgressBar(minimum=0.1), dask.diagnostics.ResourceProfiler(dt=0.25) as rprof:
+                # with dask.diagnostics.ProgressBar(minimum=0.1), dask.diagnostics.ResourceProfiler(dt=0.25) as rprof:
+                with dask.diagnostics.ProgressBar(minimum=0.1):
                     # Compute all tasks. Results will be a list of DataFrames.
                     with dask.config.set(scheduler='single-threaded'):
                         computed_results = dask.compute(*self.tasks.values(), optimize_graph=True)

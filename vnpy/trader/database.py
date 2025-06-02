@@ -175,7 +175,7 @@ database: BaseDatabase = None
 TV_BaseOverview = TypeVar('TV_BaseOverview', bound=BaseOverview)  # TV means TypeVar
 
 
-def get_database() -> BaseDatabase:
+def get_database(*args,**kwargs) -> BaseDatabase:
     """"""
     # Return database object if already inited
     global database
@@ -194,5 +194,5 @@ def get_database() -> BaseDatabase:
         module: ModuleType = import_module("vnpy_sqlite")
 
     # Create database object from module
-    database = module.Database()
+    database = module.Database(args, kwargs)
     return database

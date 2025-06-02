@@ -182,6 +182,7 @@ class DBController(ABC):
 
 
 class KlineDBAdapter(BaseDataAdapter):
+    """database adapter. so it has creating table, altering table, dropping table, selecting data, inserting data, etc."""
     __col_mapper__ = {'open': 'open_', 'close': 'close_'}  # 主要为了解决sqlite中的关键字问题
     __col_mapper_reversed__ = {v: k for k, v in __col_mapper__.items()}
 
@@ -213,8 +214,31 @@ class KlineDBAdapter(BaseDataAdapter):
     def insert(self, data, freq, *args, **kwargs):
         pass
 
+    @abstractmethod
+    def check_schema(self, table_name: str, exp_schema: BaseSchema) -> Optional[dict[str, str]]:
+        """
+        Check if the table schema matches the given schema.
+        Because comment is not supposed to appear in quant trading databases, so we ignore it.
+
+        Parameters
+        ----------
+        table_name : str
+            The name of the table to check.
+        exp_schema : BaseSchema
+            The schema to compare against.
+
+        Returns
+        -------
+        Optional[dict[str, str]]
+            A dictionary of column names and their types if the schema matches, otherwise None.
+
+        """
+        pass
+
 
 class FactorDBAdapter(BaseDataAdapter):
+    """database adapter. so it has creating table, altering table, dropping table, selecting data, inserting data, etc."""
+
     __primary_cols__ = None
 
     def __init__(self, from_: Optional[DataSource] = None, to_: Optional[DataSource] = None,
@@ -243,6 +267,27 @@ class FactorDBAdapter(BaseDataAdapter):
 
     @abstractmethod
     def insert(self, *args, **kwargs):
+        pass
+
+    @abstractmethod
+    def check_schema(self, table_name: str, exp_schema: BaseSchema) -> Optional[dict[str, str]]:
+        """
+        Check if the table schema matches the given schema.
+        Because comment is not supposed to appear in quant trading databases, so we ignore it.
+
+        Parameters
+        ----------
+        table_name : str
+            The name of the table to check.
+        exp_schema : BaseSchema
+            The schema to compare against.
+
+        Returns
+        -------
+        Optional[dict[str, str]]
+            A dictionary of column names and their types if the schema matches, otherwise None.
+
+        """
         pass
 
 
@@ -880,7 +925,11 @@ class FactorDBAdapter(BaseDataAdapter):
 # binance schema definition (without schema type)
 # ====================================================
 class BinanceKlineSchema(BaseSchema):
-    def __init__(self, schema_type: Dict[str, str] = None):
+    """
+    binance data has similar structure, but different databases have different datatypes. so we need to decouple them.
+    """
+
+    def __init__(self, default_schema_type: Dict[str, str] = None, additional_columns: Dict[str, str] = None):
         super().__init__()
         self.datetime: str = ""
         self.ticker: str = ""
@@ -894,18 +943,24 @@ class BinanceKlineSchema(BaseSchema):
         self.taker_buy_base_asset_volume: str = ""
         self.taker_buy_quote_asset_volume: str = ""
 
-        self.assign_schema_type(schema_type=schema_type)
+        default_schema_type.update(additional_columns)
+        self.assign_schema_type(schema_type=default_schema_type)
 
 
 class BinanceFactorSchema(BaseSchema):
+    """
+    binance data has similar structure, but different databases have different datatypes. so we need to decouple them.
+    """
 
-    def __init__(self, schema_type: Dict[str, str] = None):
+    def __init__(self, default_schema_type: Dict[str, str] = None, additional_columns: Dict[str, str] = None):
         super().__init__()
         self.datetime: str = ""
         self.ticker: str = ""
 
-        self.assign_schema_type(schema_type=schema_type)
+        default_schema_type.update(additional_columns)
+        self.assign_schema_type(schema_type=default_schema_type)
 
 # ====================================================
 # see details about clickhouse in package vnpy_clickhouse
 # ====================================================
+
