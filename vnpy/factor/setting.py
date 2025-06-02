@@ -1,9 +1,9 @@
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 # Caching variables
-_CACHED_FACTOR_MODULE_SETTINGS: Dict[str, Any] = None
+_CACHED_FACTOR_MODULE_SETTINGS: dict[str, Any] = None
 _SETTINGS_INITIALIZED: bool = False
 
 if not _SETTINGS_INITIALIZED:
@@ -11,12 +11,12 @@ if not _SETTINGS_INITIALIZED:
         from vnpy.trader.setting import SETTINGS
         from vnpy.trader.utility import load_json as load_json_main
     except ImportError:
-        SETTINGS: Dict[str, Any] = {}
+        SETTINGS: dict[str, Any] = {}
         # Basic load_json fallback for standalone if vnpy.trader.utility.load_json is not available
         def load_json_fallback(filename: str) -> dict:
             filepath = Path(filename)
             if filepath.exists():
-                with open(filepath, 'r', encoding='utf-8') as f:
+                with open(filepath, 'r', encoding='utf-8') as f:  # noqa: UP015
                     try:
                         return json.load(f)
                     except json.JSONDecodeError:
@@ -45,7 +45,7 @@ if not _SETTINGS_INITIALIZED:
         FACTOR_DEFINITIONS_FILEPATH = MODULE_ROOT_PATH / FACTOR_DEFINITIONS_FILEPATH
 
     # Load Factor Module Settings from the JSON file
-    _temp_factor_module_settings: Dict[str, Any] = {}
+    _temp_factor_module_settings: dict[str, Any] = {}
     if _factor_settings_filepath.exists():
         _temp_factor_module_settings = load_json_main(str(_factor_settings_filepath))
         if not isinstance(_temp_factor_module_settings, dict): # Ensure it's a dict if file was empty or malformed
@@ -66,11 +66,11 @@ if not _SETTINGS_INITIALIZED:
         override_value = SETTINGS.get(f"factor.{key}")
         if override_value is not None:
             _temp_factor_module_settings[key] = override_value
-    
+
     _CACHED_FACTOR_MODULE_SETTINGS = _temp_factor_module_settings
     _SETTINGS_INITIALIZED = True
 
-    FACTOR_MODULE_SETTINGS: Dict[str, Any] = _CACHED_FACTOR_MODULE_SETTINGS
+    FACTOR_MODULE_SETTINGS: dict[str, Any] = _CACHED_FACTOR_MODULE_SETTINGS
 
     # Base paths for factor data, cache, etc.
     ROOT_PATH = Path(SETTINGS.get("factor.root_path", Path.cwd() / ".vnpy" / "factor"))
