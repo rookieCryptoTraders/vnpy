@@ -687,7 +687,7 @@ class FactorAnalyser:
             ERROR: logger.error,
         }
         log_func = level_map.get(level, logger.info)
-        log_func(log_msg)
+        log_func(log_msg, gateway_name=self.engine_name)
 
     def close(self) -> None:
         self._write_log("FactorAnalyser closed.", level=INFO)
