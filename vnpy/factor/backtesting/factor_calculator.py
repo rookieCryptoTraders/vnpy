@@ -181,7 +181,6 @@ class FactorCalculator:
             return None
         if not self._execute_batch_dask_graph():
             return None
-        print(13)
 
         target_key = self.target_factor_instance.factor_key
         if target_key in self.factor_memory_instances:
@@ -434,6 +433,13 @@ class FactorCalculator:
         gc.collect()
         self._write_log("GC performed.", level=DEBUG)
 
+    def _clear_memory_instances(self) -> None:
+        self._cleanup_memory_resources()
+        for fm in self.factor_memory_instances.values():
+            fm.clear()
+        self.factor_memory_instances.clear()
+        self._write_log("FactorMemory instances cleared.", level=DEBUG)
+
     def _write_log(self, msg: str, level: int = INFO) -> None:
         log_msg = f"[{self.engine_name}] {msg}"
         level_map = {
@@ -447,4 +453,4 @@ class FactorCalculator:
 
     def close(self) -> None:
         self._write_log("FactorCalculator closed.", level=INFO)
-        self._cleanup_memory_resources()
+        self._clear_memory_instances()

@@ -40,14 +40,14 @@ class FactorAnalyser:
 
     engine_name = APP_NAME + "FactorAnalyser"
 
-    def __init__(self, output_data_dir_for_reports: str | None = None):
+    def __init__(self, vt_symbols: list = [], output_data_dir_for_reports: str | None = None):
         self.output_data_dir: Path = (
             Path(output_data_dir_for_reports)
             if output_data_dir_for_reports
             else get_backtest_report_path()
         )
         self.factor_datetime_col: str = DEFAULT_DATETIME_COL
-        self.vt_symbols: list[str] = []
+        self.vt_symbols: list[str] = vt_symbols
 
         # Analysis results attributes
         self.symbol_returns_df: pl.DataFrame | None = None
@@ -75,101 +75,68 @@ class FactorAnalyser:
             )
 
     def prepare_symbol_returns(
-        self, market_close_prices_df: pl.DataFrame, reference_datetime_series: pl.Series
+        self, market_close_prices_df: pl.DataFrame
     ) -> bool:
-        self._write_log("Preparing symbol forward returns data...", level=INFO)
-        if (
-            market_close_prices_df.is_empty()
-            or self.factor_datetime_col not in market_close_prices_df.columns
-        ):
-            self._write_log(
-                "Market close prices data is invalid or missing datetime column.",
-                level=ERROR,
-            )
-            return False
-        if reference_datetime_series.is_empty():
-            self._write_log("Reference datetime series is empty.", level=ERROR)
-            return False
+        self._write_log("Preparing symbol forward returns data (concise)...", level=INFO)
 
-        # Derive vt_symbols from the market_close_prices_df columns (excluding datetime)
-        # These are the symbols for which returns can potentially be calculated.
-        available_symbols = [
-            col
-            for col in market_close_prices_df.columns
-            if col != self.factor_datetime_col
-        ]
-        if not available_symbols:
+        # 1. Initial Validations
+        if market_close_prices_df.is_empty():
+            self._write_log("Market close prices data is empty.", level=ERROR)
+            return False
+        if self.factor_datetime_col not in market_close_prices_df.columns:
             self._write_log(
-                "No symbols found in market_close_prices_df (excluding datetime column).",
+                f"Market close prices missing '{self.factor_datetime_col}' column.",
                 level=ERROR,
             )
             return False
 
-        # Align close_prices_df with the reference_datetime_series
-        # This ensures returns are calculated only for timestamps present in the factor data.
-        aligned_close_prices = market_close_prices_df.join(
-            reference_datetime_series.to_frame(
-                self.factor_datetime_col
-            ),  # Ensure reference is a frame for join
-            on=self.factor_datetime_col,
-            how="inner",  # Keep only common datetimes
-        )
-        if aligned_close_prices.is_empty():
-            self._write_log(
-                "Close prices DataFrame empty after aligning with reference datetimes. Cannot prepare returns.",
-                level=ERROR,
-            )
-            return False
-
-        # Use symbols that are actually present in the aligned_close_prices for returns calculation
-        self.vt_symbols = [
-            col
-            for col in aligned_close_prices.columns
-            if col != self.factor_datetime_col
-        ]
-        if not self.vt_symbols:
-            self._write_log(
-                "No symbols remaining in aligned_close_prices_df after join. Cannot prepare returns.",
-                level=ERROR,
-            )
-            return False
-
-        returns_cols = [pl.col(self.factor_datetime_col)]
-        for symbol in self.vt_symbols:
-            # Check if symbol column exists (it should, due to how vt_symbols is now derived)
-            if symbol not in aligned_close_prices.columns:
-                continue
-            returns_cols.append(
-                ((pl.col(symbol).shift(-1) / pl.col(symbol)) - 1)
-                .fill_nan(0.0)
-                .fill_null(0.0)
-                .alias(symbol)
-            )
-        if (
-            len(returns_cols) <= 1
-        ):  # Only datetime column means no symbols were processed
-            self._write_log(
-                "No symbols were processed for returns calculation (returns_cols only has datetime).",
-                level=ERROR,
-            )
-            self.symbol_returns_df = None
-            return False
         try:
-            self.symbol_returns_df = aligned_close_prices.select(returns_cols).sort(
-                self.factor_datetime_col
-            )
+
+            if not self.vt_symbols:
+                self._write_log("No symbol columns found in aligned data.", level=ERROR)
+                self.symbol_returns_df = None
+                return False
+
+            # 4. Calculate forward returns for all symbol columns and select
+            self.symbol_returns_df = market_close_prices_df.select(
+                [pl.col(self.factor_datetime_col)] + # Start with the datetime column
+                [
+                    (
+                        pl.col(symbol).pct_change().shift(-1)
+                        .otherwise(0.0)
+                        .fill_null(0.0) # Handles nulls from shift(-1) or original pct_change if any
+                        .alias(symbol)
+                    )
+                    for symbol in self.vt_symbols
+                ]
+            ).sort(self.factor_datetime_col)
+
+
             self._write_log(
                 f"Symbol forward returns prepared. Shape: {self.symbol_returns_df.shape}",
                 level=INFO,
             )
             return True
+
         except Exception as e:
-            self._write_log(
-                f"Error calculating symbol forward returns: {e}", level=ERROR
-            )
+            # Log the full traceback for debugging if needed
+            # import traceback
+            # self._write_log(f"Error calculating symbol forward returns: {e}\n{traceback.format_exc()}", level=ERROR)
+            self._write_log(f"Error calculating symbol forward returns: {e}", level=ERROR)
             self.symbol_returns_df = None
             return False
+        
+    def align_factor_data(
+        self, factor_data_df: pl.DataFrame, market_close_prices_df: pl.DataFrame
+    ) -> pl.DataFrame | None:
+        """
+        Aligns factor data with market close prices based on the datetime column.
+        Returns a DataFrame with aligned data or None if alignment fails.
+        """
+        self._write_log("Aligning factor data with market close prices...", level=INFO)
 
+        pass
+        
     def perform_quantile_analysis(
         self,
         factor_data_df: pl.DataFrame,
@@ -314,20 +281,20 @@ class FactorAnalyser:
             )
 
         factor_long_df = (
-            factor_data_df.select([self.factor_datetime_col] + symbols_for_analysis)
+            factor_data_df.select([self.factor_datetime_col] + self.vt_symbols)
             .melt(
                 id_vars=[self.factor_datetime_col],
-                value_vars=symbols_for_analysis,
+                value_vars=self.vt_symbols,
                 variable_name="symbol",
                 value_name="factor_value",
             )
             .drop_nulls(subset=["factor_value"])
         )
         returns_long_df = self.symbol_returns_df.select(
-            [self.factor_datetime_col] + symbols_for_analysis
+            [self.factor_datetime_col] + self.vt_symbols
         ).melt(
             id_vars=[self.factor_datetime_col],
-            value_vars=symbols_for_analysis,
+            value_vars=self.vt_symbols,
             variable_name="symbol",
             value_name="forward_return",
         )
@@ -617,23 +584,19 @@ class FactorAnalyser:
             return None
 
         # Use symbols from factor_data_df for analysis consistency, as it's the primary subject
-        self.vt_symbols = [
-            col for col in factor_data_df.columns if col != self.factor_datetime_col
-        ]
         if not self.vt_symbols:
             self._write_log(
                 "No symbols found in factor_data_df (excluding datetime column). Cannot perform analysis.",
                 level=ERROR,
             )
             return None
+        
         self._write_log(
             f"Analyser using symbols derived from factor data: {self.vt_symbols}",
             level=DEBUG,
         )
 
-        reference_dt_series = factor_data_df[self.factor_datetime_col]
-
-        if not self.prepare_symbol_returns(market_close_prices_df, reference_dt_series):
+        if not self.prepare_symbol_returns(market_close_prices_df):
             self._write_log(
                 "Preparing symbol returns failed. Subsequent analyses might be affected or skipped.",
                 level=ERROR,
