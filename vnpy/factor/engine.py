@@ -644,7 +644,7 @@ class FactorEngine(BaseEngine):
         # 3. Broadcast the FactorMemory instances directly
         if self.factor_memory_instances:
             # Broadcast FactorMemory instances directly
-            event_data = self.factor_memory_instances
+            event_data = {k:v.get_latest_rows(1) for k,v in self.factor_memory_instances.items()}
             self.event_engine.put(Event(EVENT_FACTOR, event_data))
 
         # 4. Maintain memory length for bar data (OHLCV)
