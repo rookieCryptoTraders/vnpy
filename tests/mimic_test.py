@@ -57,12 +57,12 @@ def run_child():
     main_engine.subscribe_all(gateway_name='MIMIC')
 
     # start data recorder
-    data_recorder_engine = main_engine.add_app(DataRecorderApp)
-    main_engine.write_log(f"启动[{data_recorder_engine.__class__.__name__}]")
-    data_recorder_engine.update_schema(database_name=data_recorder_engine.database_manager.database_name,
+    #data_recorder_engine = main_engine.add_app(DataRecorderApp)
+    #main_engine.write_log(f"启动[{data_recorder_engine.__class__.__name__}]")
+"""    data_recorder_engine.update_schema(database_name=data_recorder_engine.database_manager.database_name,
                                        exchanges=main_engine.exchanges,
                                        intervals=main_engine.intervals,
-                                       factor_keys=[key for key in factor_maker_engine.flattened_factors.keys()])
+                                       factor_keys=[key for key in factor_maker_engine.flattened_factors.keys()])"""
 
 
 def run_parent():

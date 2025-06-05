@@ -433,7 +433,6 @@ class BacktestEngine:
         """Uses the analyser to process results and generate a report."""
         self._write_log("Starting factor analysis phase...", level=INFO)
         analyser = FactorAnalyser(
-            vt_symbols=target_factor_instance.vt_symbols,
             output_data_dir_for_reports=self.output_data_dir_for_analyser_reports
         )
 
@@ -444,10 +443,6 @@ class BacktestEngine:
             )
             analyser.close()
             return None
-        
-        print(market_close_prices_df)
-        analyser.prepare_symbol_returns(market_close_prices_df)
-        print(analyser.symbol_returns_df)
 
         report_path = analyser.run_analysis_and_report(
             factor_data_df=factor_df,
@@ -456,9 +451,7 @@ class BacktestEngine:
             analysis_start_dt=analysis_start_dt,
             analysis_end_dt=analysis_end_dt,
             num_quantiles=num_quantiles,
-            returns_look_ahead_period=returns_look_ahead_period,
-            long_percentile_threshold=long_percentile_threshold,
-            short_percentile_threshold=short_percentile_threshold,
+            long_short_percentile=long_percentile_threshold,
             report_filename_prefix=report_filename_prefix,
         )
 
