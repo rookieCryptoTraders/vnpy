@@ -288,10 +288,25 @@ class FactorMemory:
             return df.head(n)
 
     def clear(self) -> None:
+        """
+        Clears all data from the FactorMemory by deleting the underlying file.
+        The file will be re-initialized with an empty schema if methods like
+        update_data or get_data are called subsequently, or if a new
+        FactorMemory instance is created for this path.
+        """
         with self._lock:
-            empty_df = pl.DataFrame(data={}, schema=self.schema)
-            self._save_data(empty_df)
-        print(f"Factor memory file cleared and re-initialized: {self.file_path}")
+            try:
+                if self.file_path.exists():
+                    self.file_path.unlink(missing_ok=True) # missing_ok for safety if already gone
+                    print(f"Factor memory file deleted: {self.file_path}")
+                else:
+                    # If the file doesn't exist, it's already "clear" in that sense.
+                    print(f"Factor memory file already deleted or does not exist: {self.file_path}")
+            except Exception as e:
+                print(f"Error during clear (delete) operation for {self.file_path}: {e}")
+                # No explicit re-initialization here as per user request.
+                # Subsequent operations will rely on _initialize_if_empty (for new instances)
+                # or _load_data/_save_data to handle the missing file.
 
     @property
     def is_empty(self) -> bool:
