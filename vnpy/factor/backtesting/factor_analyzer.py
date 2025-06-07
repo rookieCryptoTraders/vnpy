@@ -1,9 +1,11 @@
 import json
+from dataclasses import dataclass, asdict
 from datetime import datetime
 from logging import INFO, DEBUG, WARNING, ERROR
-from typing import Any
 from pathlib import Path
 import re
+from typing import Any
+import webbrowser
 
 # Third-party imports
 import numpy as np
@@ -22,256 +24,625 @@ try:
     from loguru import logger
 except ImportError:
     import logging
+
     logger = logging.getLogger(APP_NAME + "_FactorAnalyser")
 
+
 def safe_filename(name: str) -> str:
-    name = re.sub(r"[^\w\.\-@]", "_", name)
-    return name
+    """Sanitizes a string to be used as a valid filename."""
+    return re.sub(r"[^\w\.\-@]", "_", name)
+
+
+# --- Data Structures for Configuration and Results ---
+
+
+@dataclass
+class AnalysisConfig:
+    """Configuration for factor analysis parameters."""
+
+    num_quantiles: int = 5
+    long_short_percentile: float = 0.3
+    annualization_factor: int = 1440  # Assumes minutes data
+    risk_free_rate: float = 0.0
+
+
+@dataclass
+class QuantileResults:
+    """Container for quantile analysis results."""
+
+    by_time: pl.DataFrame
+    overall_average: pl.DataFrame
+
+
+@dataclass
+class LongShortStats:
+    """Container for script-calculated long-short portfolio statistics."""
+
+    mean_return: float | None = None
+    std_return: float | None = None
+    sharpe_ratio: float | None = None
+    t_stat: float | None = None
+
+
+# --- Main Analyser Class ---
+
 
 class FactorAnalyser:
+    """
+    An advanced factor performance analyser.
+
+    This class performs quantile and long-short portfolio analysis,
+    calculates extensive performance metrics using QuantStats, and
+    generates comprehensive JSON and interactive HTML reports.
+    """
+
     engine_name = APP_NAME + "FactorAnalyser"
 
-    def __init__(self, output_data_dir_for_reports: str | None = None):
+    def __init__(
+        self,
+        output_data_dir_for_reports: str | None = None,
+        config: AnalysisConfig | None = None,
+    ):
+        """
+        Initializes the FactorAnalyser.
+
+        Args:
+            output_data_dir_for_reports (Optional[str]): Directory to save reports. Defaults to vnpy's backtest path.
+            config (Optional[AnalysisConfig]): A configuration object for analysis parameters.
+        """
         self.output_data_dir: Path = (
             Path(output_data_dir_for_reports)
             if output_data_dir_for_reports
             else get_backtest_report_path()
         )
         self.factor_datetime_col: str = DEFAULT_DATETIME_COL
-        self.quantile_analysis_results: dict[str, pl.DataFrame] | None = None
+        self.config = config or AnalysisConfig()
+
+        # --- Result attributes ---
+        self.quantile_analysis_results: QuantileResults | None = None
         self.long_short_portfolio_returns_df: pl.DataFrame | None = None
-        self.long_short_stats: dict[str, float | None] | None = None
+        self.long_short_stats: LongShortStats | None = None
         self.performance_metrics: dict[str, Any] | None = None
-        self._write_log(f"FactorAnalyser initialized. Report dir: {self.output_data_dir}", level=INFO)
+
         self._prepare_output_directory()
+        self._write_log(
+            f"FactorAnalyser initialized. Reports will be saved in: {self.output_data_dir}",
+            level=INFO,
+        )
 
     def _prepare_output_directory(self) -> None:
+        """Ensures the output directory and its subdirectories exist."""
         try:
-            self.output_data_dir.mkdir(parents=True, exist_ok=True)
+            (self.output_data_dir / "json_reports").mkdir(parents=True, exist_ok=True)
+            (self.output_data_dir / "html_reports").mkdir(parents=True, exist_ok=True)
+            (self.output_data_dir / "plots").mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            self._write_log(f"Error creating report directory {self.output_data_dir}: {e}.", level=ERROR)
+            self._write_log(f"Error creating report directories: {e}", level=ERROR)
+            raise
 
-    def _prepare_symbol_returns(self, market_close_prices_df: pl.DataFrame, symbols_of_interest: list[str]) -> pl.DataFrame | None:
-        self._write_log("Preparing 1-period symbol forward returns data...", level=INFO)
-        if market_close_prices_df.is_empty() or self.factor_datetime_col not in market_close_prices_df.columns:
-            self._write_log("Invalid market close prices data.", level=ERROR)
-            return None
+    def _prepare_symbol_returns(
+        self,
+        market_close_prices_df: pl.DataFrame,
+        symbols_of_interest: list[str]
+    ) -> pl.DataFrame:
+        """
+        Calculate 1-period forward returns for symbols.
+
+        Args:
+            market_close_prices_df: DataFrame with datetime and symbol columns
+            symbols_of_interest: List of symbol columns to calculate returns for
+
+        Returns:
+            DataFrame with forward returns
+        """
         if not symbols_of_interest:
-            self._write_log("No symbols provided for returns calculation.", level=WARNING)
-            return None
-        try:
-            forward_returns_expressions = []
-            for symbol in symbols_of_interest:
-                fwd_ret = (pl.col(symbol).shift(-1) - pl.col(symbol)) / pl.col(symbol)
-                fwd_ret = pl.when(fwd_ret.is_nan() | fwd_ret.is_infinite()).then(None).otherwise(fwd_ret)
-                forward_returns_expressions.append(fwd_ret.alias(symbol))
+            self._write_log("No symbols provided for returns", level=WARNING)
+            return pl.DataFrame()
 
-            calculated_returns_df = market_close_prices_df.select(
-                [pl.col(self.factor_datetime_col)] + forward_returns_expressions
+        # Vectorized calculation of all forward returns
+        forward_returns = [
+            (pl.col(symbol).shift(-1) - pl.col(symbol))
+            .truediv(pl.col(symbol))
+            .fill_nan(None)
+            .alias(symbol)
+            for symbol in symbols_of_interest
+        ]
+
+        returns_df = market_close_prices_df.select(
+            [pl.col(self.factor_datetime_col)] + forward_returns
+        ).drop_nulls()  # Automatically drops last row with null returns
+
+        if returns_df.is_empty():
+            self._write_log("Calculated returns DataFrame is empty", level=WARNING)
+
+        return returns_df
+
+    def _prepare_analysis_data(
+        self, aligned_factor_df: pl.DataFrame, aligned_symbol_returns_df: pl.DataFrame
+    ) -> pl.DataFrame | None:
+        """Merges factor and return data into a tidy 'long' format for analysis."""
+        self._write_log(
+            "Preparing and aligning factor and returns data...", level=DEBUG
+        )
+        symbols = [
+            col for col in aligned_factor_df.columns if col != self.factor_datetime_col
+        ]
+
+        factor_long = aligned_factor_df.melt(
+            id_vars=[self.factor_datetime_col],
+            value_vars=symbols,
+            variable_name="symbol",
+            value_name="factor_value",
+        )
+        returns_long = aligned_symbol_returns_df.melt(
+            id_vars=[self.factor_datetime_col],
+            value_vars=symbols,
+            variable_name="symbol",
+            value_name="forward_return",
+        )
+
+        # Join and filter out any rows with missing data needed for analysis
+        analysis_data = factor_long.join(
+            returns_long, on=[self.factor_datetime_col, "symbol"], how="inner"
+        ).filter(
+            pl.col("factor_value").is_not_null()
+            & pl.col("forward_return").is_not_null()
+        )
+
+        if analysis_data.is_empty():
+            self._write_log(
+                "Analysis data is empty after joining factors and returns.", level=ERROR
             )
-
-            # Truncate last row if it contains nulls due to shift
-            if calculated_returns_df.select(pl.col(symbols_of_interest[0]).tail(1).is_null()).item():
-                calculated_returns_df = calculated_returns_df[:-1]
-
-            if calculated_returns_df.is_empty():
-                self._write_log("Calculated returns DataFrame is empty.", level=WARNING)
-                return None
-
-            self._write_log(f"Symbol forward returns prepared for {len(symbols_of_interest)} symbols.", level=INFO)
-            return calculated_returns_df
-        except Exception as e:
-            self._write_log(f"Error calculating symbol forward returns: {e}", level=ERROR)
-            return None
-
-    def _prepare_analysis_data(self, aligned_factor_df: pl.DataFrame, aligned_symbol_returns_df: pl.DataFrame) -> pl.DataFrame | None:
-        self._write_log("Preparing analysis data...", level=INFO)
-        symbols = [col for col in aligned_factor_df.columns if col != self.factor_datetime_col]
-        if not symbols:
-            self._write_log("No symbols available for analysis data preparation.", level=ERROR)
-            return None
-        factor_long = aligned_factor_df.select([self.factor_datetime_col] + symbols).melt(
-            id_vars=[self.factor_datetime_col], value_vars=symbols, variable_name="symbol", value_name="factor_value"
-        )
-        returns_long = aligned_symbol_returns_df.select([self.factor_datetime_col] + symbols).melt(
-            id_vars=[self.factor_datetime_col], value_vars=symbols, variable_name="symbol", value_name="forward_return"
-        )
-        data = factor_long.join(returns_long, on=["datetime", "symbol"], how="inner")
-        data = data.filter(pl.col("factor_value").is_not_null() & pl.col("forward_return").is_not_null())
-        if data.is_empty():
-            self._write_log("Analysis data empty after preparation.", level=ERROR)
             return None
         self._write_log("Analysis data prepared successfully.", level=INFO)
-        return data
+        return analysis_data
 
-    def perform_quantile_analysis(self, analysis_data: pl.DataFrame, num_quantiles: int = 5) -> bool:
-        self._write_log(f"Performing quantile analysis ({num_quantiles} quantiles)...", level=INFO)
-        if analysis_data.is_empty():
-            self._write_log("Analysis data is empty for quantile analysis.", level=ERROR)
-            return False
-        data = analysis_data.sort(["datetime", "factor_value"])
-        n_assets_df = data.group_by("datetime").agg(pl.count("symbol").alias("n_assets"))
-        data = data.join(n_assets_df, on="datetime").with_columns(
-            pl.arange(0, pl.count()).over("datetime").alias("row_num")
-        ).with_columns(
-            (((pl.col("row_num") + 1) * num_quantiles / pl.col("n_assets")).ceil().cast(pl.Int8)).alias("quantile")
+    def perform_quantile_analysis(self, analysis_data: pl.DataFrame) -> bool:
+        """Performs quantile analysis on the prepared data."""
+        self._write_log(
+            f"Performing quantile analysis ({self.config.num_quantiles} quantiles)...",
+            level=INFO,
         )
-        quantile_returns_by_time_df = data.group_by(["datetime", "quantile"]).agg(
-            pl.col("forward_return").mean().alias("mean_quantile_return")
-        ).sort(["datetime", "quantile"])
-        average_quantile_returns_overall_df = quantile_returns_by_time_df.group_by("quantile").agg(
-            pl.col("mean_quantile_return").mean().alias("avg_return"),
-            pl.col("mean_quantile_return").std().alias("std_return"),
-            pl.col("mean_quantile_return").count().alias("count_periods")
-        ).sort("quantile")
-        self.quantile_analysis_results = {
-            "by_time": quantile_returns_by_time_df,
-            "overall_average": average_quantile_returns_overall_df
-        }
+        if analysis_data.is_empty():
+            self._write_log(
+                "Analysis data is empty for quantile analysis.", level=ERROR
+            )
+            return False
+
+        # Assign assets to quantiles based on their factor value for each time period
+        data_with_quantiles = analysis_data.with_columns(
+            pl.col("factor_value")
+            .qcut(
+                self.config.num_quantiles,
+                labels=[f"Q{i + 1}" for i in range(self.config.num_quantiles)],
+            )
+            .over(self.factor_datetime_col)
+            .alias("quantile")
+        )
+
+        # Calculate mean return for each quantile at each time period
+        quantile_returns_by_time = (
+            data_with_quantiles.group_by([self.factor_datetime_col, "quantile"])
+            .agg(pl.col("forward_return").mean().alias("mean_quantile_return"))
+            .sort([self.factor_datetime_col, "quantile"])
+        )
+
+        # Calculate the overall average return and std dev for each quantile
+        average_quantile_returns_overall = (
+            quantile_returns_by_time.group_by("quantile")
+            .agg(
+                pl.col("mean_quantile_return").mean().alias("avg_return"),
+                pl.col("mean_quantile_return").std().alias("std_dev"),
+                pl.col("mean_quantile_return").count().alias("count_periods"),
+            )
+            .sort("quantile")
+        )
+
+        self.quantile_analysis_results = QuantileResults(
+            by_time=quantile_returns_by_time,
+            overall_average=average_quantile_returns_overall,
+        )
         self._write_log("Quantile analysis completed.", level=INFO)
         return True
 
-    def perform_long_short_analysis(self, analysis_data: pl.DataFrame, long_short_percentile: float = 0.3) -> bool:
-        self._write_log(f"Performing L/S analysis (top/bottom {long_short_percentile * 100:.0f}%)...", level=INFO)
+    def perform_long_short_analysis(self, analysis_data: pl.DataFrame) -> bool:
+        """Performs long-short portfolio analysis."""
+        percentile = self.config.long_short_percentile
+        self._write_log(
+            f"Performing L/S analysis (top/bottom {percentile * 100:.0f}%)...",
+            level=INFO,
+        )
         if analysis_data.is_empty():
             self._write_log("Analysis data is empty for L/S analysis.", level=ERROR)
             return False
-        data = analysis_data.sort(["datetime", "factor_value"])
-        n_assets_df = data.group_by("datetime").agg(pl.count("symbol").alias("n_assets"))
-        data = data.join(n_assets_df, on="datetime").with_columns(
-            pl.arange(0, pl.count()).over("datetime").alias("row_num")
+
+        # Identify long (top percentile) and short (bottom percentile) legs
+        data_with_legs = analysis_data.with_columns(
+            pl.col("factor_value")
+            .rank(method="ordinal")
+            .over(self.factor_datetime_col)
+            .alias("rank"),
+            pl.count().over(self.factor_datetime_col).alias("n_assets"),
         ).with_columns(
-            (pl.col("row_num") >= (pl.col("n_assets") * (1 - long_short_percentile))).alias("is_long"),
-            (pl.col("row_num") < (pl.col("n_assets") * long_short_percentile)).alias("is_short")
+            pl.when(pl.col("rank") > pl.col("n_assets") * (1 - percentile))
+            .then(True)
+            .otherwise(False)
+            .alias("is_long"),
+            pl.when(pl.col("rank") <= pl.col("n_assets") * percentile)
+            .then(True)
+            .otherwise(False)
+            .alias("is_short"),
         )
-        ls_returns_df = data.group_by("datetime").agg(
-            pl.col("forward_return").filter(pl.col("is_long")).mean().alias("long_return").fill_null(0.0),
-            pl.col("forward_return").filter(pl.col("is_short")).mean().alias("short_return").fill_null(0.0)
-        ).with_columns(
-            (pl.col("long_return") - pl.col("short_return")).alias("ls_return")
-        ).sort("datetime")
+
+        # Calculate returns for the long, short, and long-short portfolios
+        ls_returns_df = (
+            data_with_legs.group_by(self.factor_datetime_col)
+            .agg(
+                pl.col("forward_return")
+                .filter(pl.col("is_long"))
+                .mean()
+                .alias("long_return")
+                .fill_null(0.0),
+                pl.col("forward_return")
+                .filter(pl.col("is_short"))
+                .mean()
+                .alias("short_return")
+                .fill_null(0.0),
+            )
+            .with_columns(
+                (pl.col("long_return") - pl.col("short_return")).alias("ls_return")
+            )
+            .sort(self.factor_datetime_col)
+        )
+
         self.long_short_portfolio_returns_df = ls_returns_df
-        if ls_returns_df.is_empty() or ls_returns_df.height < 2:
-            self._write_log("L/S portfolio returns series too short.", level=WARNING)
-            self.long_short_stats = {"mean_return": None, "std_return": None, "sharpe_ratio": None, "t_stat": None}
+
+        # Calculate basic portfolio statistics
+        if ls_returns_df.height < 2:
+            self._write_log(
+                "L/S portfolio returns series is too short for meaningful stats.",
+                level=WARNING,
+            )
+            self.long_short_stats = LongShortStats()
             return True
-        mean_ls_ret = ls_returns_df.get_column("ls_return").mean()
-        std_ls_ret = ls_returns_df.get_column("ls_return").std()
-        sharpe_ratio = (mean_ls_ret / std_ls_ret) * (252**0.5) if std_ls_ret else None
-        t_stat = (mean_ls_ret / (std_ls_ret / (ls_returns_df.shape[0]**0.5))) if std_ls_ret else None
-        self.long_short_stats = {"mean_return": mean_ls_ret, "std_return": std_ls_ret, "sharpe_ratio": sharpe_ratio, "t_stat": t_stat}
+
+        ls_return_col = ls_returns_df.get_column("ls_return")
+        mean_ret = ls_return_col.mean()
+        std_ret = ls_return_col.std()
+
+        # Avoid division by zero
+        if std_ret is not None and std_ret > 0:
+            sharpe = (
+                (mean_ret / std_ret) * (self.config.annualization_factor**0.5)
+                if mean_ret is not None
+                else None
+            )
+            t_stat = (
+                (mean_ret / (std_ret / (ls_returns_df.height**0.5)))
+                if mean_ret is not None
+                else None
+            )
+        else:
+            sharpe = None
+            t_stat = None
+
+        self.long_short_stats = LongShortStats(
+            mean_return=mean_ret, std_return=std_ret, sharpe_ratio=sharpe, t_stat=t_stat
+        )
         self._write_log(f"L/S Portfolio Stats: {self.long_short_stats}", level=INFO)
         return True
 
-    def calculate_performance_metrics(self) -> bool:
-        self._write_log("Calculating L/S portfolio performance metrics...", level=INFO)
-        if not self.long_short_portfolio_returns_df or self.long_short_portfolio_returns_df.is_empty():
-            self._write_log("L/S portfolio returns empty.", level=ERROR)
-            self.performance_metrics = None
+    def calculate_performance_metrics(
+        self,
+        benchmark_prices_df: pl.DataFrame | None = None,
+        benchmark_symbol: str | None = None,
+    ) -> bool:
+        """Calculates a comprehensive suite of performance metrics using QuantStats."""
+        self._write_log(
+            "Calculating full suite of performance metrics with QuantStats...",
+            level=INFO,
+        )
+        if (
+            self.long_short_portfolio_returns_df is None
+            or self.long_short_portfolio_returns_df.is_empty()
+        ):
+            self._write_log(
+                "L/S portfolio returns are not available. Cannot calculate metrics.",
+                level=ERROR,
+            )
             return False
+
+        # Convert portfolio returns to a pandas Series, required by QuantStats
+        returns_pd = (
+            self.long_short_portfolio_returns_df.select(
+                [self.factor_datetime_col, "ls_return"]
+            )
+            .to_pandas()
+            .set_index(self.factor_datetime_col)["ls_return"]
+            .fillna(0.0)
+        )
+
+        # Prepare benchmark returns if provided
+        benchmark_pd = None
+        if benchmark_prices_df is not None and benchmark_symbol:
+            benchmark_returns_df = self._prepare_symbol_returns(
+                benchmark_prices_df, [benchmark_symbol]
+            )
+            if benchmark_returns_df is not None:
+                benchmark_pd = (
+                    benchmark_returns_df.select(
+                        [self.factor_datetime_col, benchmark_symbol]
+                    )
+                    .to_pandas()
+                    .set_index(self.factor_datetime_col)[benchmark_symbol]
+                    .fillna(0.0)
+                )
+                # Align benchmark and strategy returns
+                returns_pd, benchmark_pd = returns_pd.align(
+                    benchmark_pd, join="left", axis=0
+                )
+                benchmark_pd = benchmark_pd.fillna(0.0)
+
         try:
-            returns_series_pd = self.long_short_portfolio_returns_df.select(
-                [self.factor_datetime_col, pl.col("ls_return").fill_null(0.0)]
-            ).sort(self.factor_datetime_col).to_pandas().set_index(self.factor_datetime_col)["ls_return"].astype(float)
-            returns_series_pd = returns_series_pd.replace([np.inf, -np.inf], np.nan).fillna(0.0)
-            metrics = {
-                "sharpe_qs": qs.stats.sharpe(returns_series_pd, smart=True),
-                "max_drawdown": qs.stats.max_drawdown(returns_series_pd),
-                "cumulative_returns_total": qs.stats.comp(returns_series_pd).iloc[-1] if not qs.stats.comp(returns_series_pd).empty else 0.0,
-                "cagr": qs.stats.cagr(returns_series_pd),
-                "volatility_annualized": qs.stats.volatility(returns_series_pd, annualize=True),
-                "win_rate": qs.stats.win_rate(returns_series_pd),
-                "avg_win_return": qs.stats.avg_win(returns_series_pd),
-                "avg_loss_return": qs.stats.avg_loss(returns_series_pd),
-                "sortino_qs": qs.stats.sortino(returns_series_pd, smart=True),
-                "calmar": qs.stats.calmar(returns_series_pd)
+            # Generate a dictionary of all QuantStats metrics
+            self.performance_metrics = qs.reports.metrics(
+                returns=returns_pd,
+                benchmark=benchmark_pd,
+                rf=self.config.risk_free_rate,
+                display=False,
+                mode="full",
+            )
+            # Clean up NaN/inf values for JSON serialization
+            self.performance_metrics = {
+                k: (
+                    None if isinstance(v, float) and (np.isnan(v) or np.isinf(v)) else v
+                )
+                for k, v in self.performance_metrics.to_dict().items()
             }
-            self.performance_metrics = {k: None if isinstance(v, float) and (np.isnan(v) or np.isinf(v)) else v for k, v in metrics.items()}
-            self._write_log("Performance metrics calculated.", level=INFO)
+            self._write_log("QuantStats performance metrics calculated.", level=INFO)
             return True
         except Exception as e:
-            self._write_log(f"Error during QuantStats calculation: {e}", level=ERROR)
+            self._write_log(
+                f"Error during QuantStats metrics calculation: {e}", level=ERROR
+            )
             self.performance_metrics = None
             return False
 
-    def generate_report_data(self, factor_key: str, factor_class_name: str, factor_parameters: dict[str, Any], analysis_start_dt: datetime, analysis_end_dt: datetime, tested_vt_symbols: list[str]) -> dict[str, Any]:
-        self._write_log("Generating report data...", level=INFO)
+    def generate_report_data(
+        self,
+        factor_instance: FactorTemplate,
+        analysis_start_dt: datetime,
+        analysis_end_dt: datetime,
+        tested_vt_symbols: list[str],
+    ) -> dict[str, Any]:
+        """Compiles all analysis results into a single dictionary for reporting."""
+        self._write_log("Generating consolidated report data...", level=DEBUG)
         report_data = {
-            "factor_key": factor_key,
-            "factor_class_name": factor_class_name,
-            "factor_parameters": factor_parameters,
-            "backtest_run_datetime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "factor_key": factor_instance.factor_key,
+            "factor_class_name": factor_instance.__class__.__name__,
+            "factor_parameters": factor_instance.get_nested_params_for_optimizer(),
+            "analysis_run_datetime": datetime.now().isoformat(),
             "vt_symbols_tested": tested_vt_symbols,
             "data_period_analyzed": {
-                "start_datetime": analysis_start_dt.strftime("%Y-%m-%d %H:%M:%S"),
-                "end_datetime": analysis_end_dt.strftime("%Y-%m-%d %H:%M:%S")
+                "start_datetime": analysis_start_dt.isoformat(),
+                "end_datetime": analysis_end_dt.isoformat(),
             },
-            "analysis_results": {}
+            "analysis_config": asdict(self.config),
+            "analysis_results": {},
         }
+
         if self.quantile_analysis_results:
             report_data["analysis_results"]["quantile_analysis"] = {
-                "overall_average_returns_per_quantile": self.quantile_analysis_results["overall_average"].to_dicts()
-                if not self.quantile_analysis_results["overall_average"].is_empty() else None
+                "overall_average": self.quantile_analysis_results.overall_average.to_dicts()
             }
         if self.long_short_stats:
-            report_data["analysis_results"]["long_short_portfolio_statistics_script"] = self.long_short_stats
+            report_data["analysis_results"][
+                "long_short_portfolio_statistics_script"
+            ] = asdict(self.long_short_stats)
         if self.performance_metrics:
-            report_data["analysis_results"]["performance_metrics_quantstats"] = self.performance_metrics
+            report_data["analysis_results"]["performance_metrics_quantstats"] = (
+                self.performance_metrics
+            )
+
         return report_data
 
-    def save_report(self, report_data: dict[str, Any], report_filename_prefix: str = "factor_analysis_report") -> Path | None:
-        if not report_data or not self.output_data_dir.exists():
-            self._write_log("Report data empty or directory issue.", level=WARNING)
+    def save_json_report(
+        self, report_data: dict[str, Any], report_filename_prefix: str
+    ) -> Path | None:
+        """Saves the report data dictionary as a JSON file."""
+        if not report_data:
+            self._write_log(
+                "Report data is empty, skipping JSON report.", level=WARNING
+            )
             return None
+
         factor_key_safe = safe_filename(report_data.get("factor_key", "unknown_factor"))
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{report_filename_prefix}_{factor_key_safe}_{timestamp}.json"
-        filepath = self.output_data_dir.joinpath(filename)
+        filepath = self.output_data_dir / "json_reports" / filename
+
         try:
             with open(filepath, "w", encoding="utf-8") as f:
-                json.dump(report_data, f, indent=4, ensure_ascii=False, default=lambda o: o.isoformat() if isinstance(o, datetime) else None)
-            self._write_log(f"Report saved: {filepath}", level=INFO)
+                json.dump(report_data, f, indent=4, ensure_ascii=False)
+            self._write_log(f"JSON report saved successfully: {filepath}", level=INFO)
             return filepath
         except Exception as e:
-            self._write_log(f"Error saving report: {e}", level=ERROR)
+            self._write_log(f"Error saving JSON report: {e}", level=ERROR)
             return None
 
-    def run_analysis_and_report(self, factor_data_df: pl.DataFrame, market_close_prices_df: pl.DataFrame, factor_instance: FactorTemplate, analysis_start_dt: datetime, analysis_end_dt: datetime, num_quantiles: int = 5, long_short_percentile: float = 0.3, report_filename_prefix: str = "factor_analysis_report") -> Path | None:
-        self._write_log(f"Starting analysis for factor: {factor_instance.factor_key}", level=INFO)
-        if factor_data_df.is_empty() or market_close_prices_df.is_empty() or self.factor_datetime_col not in factor_data_df.columns or self.factor_datetime_col not in market_close_prices_df.columns:
-            self._write_log("Invalid input data.", level=ERROR)
+    def generate_html_report(
+        self,
+        factor_key: str,
+        benchmark_prices_df: pl.DataFrame | None = None,
+        benchmark_symbol: str | None = None,
+    ) -> Path | None:
+        """Generates and saves a comprehensive HTML report using QuantStats."""
+        self._write_log("Generating interactive HTML report...", level=INFO)
+        if self.long_short_portfolio_returns_df is None:
+            self._write_log(
+                "L/S portfolio returns not available for HTML report.", level=ERROR
+            )
             return None
-        symbols_of_interest = [col for col in factor_data_df.columns if col != self.factor_datetime_col]
-        if not symbols_of_interest:
-            self._write_log("No symbols in factor data.", level=ERROR)
-            return None
-        local_symbol_returns_df = self._prepare_symbol_returns(market_close_prices_df, symbols_of_interest)
-        if local_symbol_returns_df.is_empty():
-            self._write_log("Symbol returns preparation failed.", level=ERROR)
-            return None
-        factor_data_df_truncated = factor_data_df[:-1] if not factor_data_df.is_empty() else factor_data_df
-        aligned_frames = pl.align_frames(factor_data_df_truncated, local_symbol_returns_df, on=self.factor_datetime_col, how="inner")
-        aligned_factor_df, aligned_symbol_returns_df = aligned_frames[0], aligned_frames[1]
-        if aligned_factor_df.is_empty():
-            self._write_log("Data empty after alignment.", level=WARNING)
-            return None
-        analysis_data = self._prepare_analysis_data(aligned_factor_df, aligned_symbol_returns_df)
-        if analysis_data.is_empty():
-            self._write_log("Analysis data preparation failed.", level=ERROR)
-            return None
-        self.perform_quantile_analysis(analysis_data, num_quantiles)
-        self.perform_long_short_analysis(analysis_data, long_short_percentile)
-        if self.long_short_portfolio_returns_df.is_empty():
-            self.calculate_performance_metrics()
-        report_content = self.generate_report_data(
-            factor_key=factor_instance.factor_key,
-            factor_class_name=factor_instance.__class__.__name__,
-            factor_parameters=factor_instance.get_nested_params_for_optimizer(),
-            analysis_start_dt=aligned_factor_df.get_column(self.factor_datetime_col).min() or analysis_start_dt,
-            analysis_end_dt=aligned_factor_df.get_column(self.factor_datetime_col).max() or analysis_end_dt,
-            tested_vt_symbols=[col for col in aligned_factor_df.columns if col != self.factor_datetime_col]
+
+        returns_pd = (
+            self.long_short_portfolio_returns_df.to_pandas()
+            .set_index(self.factor_datetime_col)["ls_return"]
+            .fillna(0.0)
         )
-        return self.save_report(report_content, report_filename_prefix)
+
+        benchmark_pd = None
+        if benchmark_prices_df is not None and benchmark_symbol:
+            benchmark_returns_df = self._prepare_symbol_returns(
+                benchmark_prices_df, [benchmark_symbol]
+            )
+            if benchmark_returns_df is not None:
+                benchmark_pd = (
+                    benchmark_returns_df.to_pandas()
+                    .set_index(self.factor_datetime_col)[benchmark_symbol]
+                    .fillna(0.0)
+                )
+
+        factor_key_safe = safe_filename(factor_key)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"report_{factor_key_safe}_{timestamp}.html"
+        filepath = self.output_data_dir / "html_reports" / filename
+
+        try:
+            qs.reports.html(
+                returns=returns_pd,
+                benchmark=benchmark_pd,
+                rf=self.config.risk_free_rate,
+                periods_per_year=365* self.config.annualization_factor,
+                title=f"Factor Analysis Report: {factor_key}",
+                output=str(filepath),
+                download_filename=filename,
+            )
+            # https://github.com/ranaroussi/quantstats/issues/381
+            self._write_log(f"HTML report saved successfully: {filepath}", level=INFO)
+            webbrowser.open(f"file://{filepath.resolve()}")
+            return filepath
+        except Exception as e:
+            self._write_log(
+                f"Error generating HTML report with QuantStats: {e}", level=ERROR
+            )
+            return None
+
+    def run_analysis_and_report(
+        self,
+        factor_data_df: pl.DataFrame,
+        market_close_prices_df: pl.DataFrame,
+        factor_instance: FactorTemplate,
+        analysis_start_dt: datetime,
+        analysis_end_dt: datetime,
+        num_quantiles: int = 5,
+        long_short_percentile: float = 0.3,
+        report_filename_prefix: str = "factor_analysis_report",
+        # New optional parameters for enhanced functionality
+        benchmark_prices_df: pl.DataFrame | None = None,
+        benchmark_symbol: str | None = None,
+    ) -> Path | None:
+        """
+        Runs the full analysis pipeline and generates JSON and HTML reports.
+
+        This method maintains the original API but adds optional parameters
+        for benchmark analysis.
+
+        Args:
+            factor_data_df (pl.DataFrame): DataFrame with datetime index and factor values for symbols.
+            market_close_prices_df (pl.DataFrame): DataFrame with market close prices.
+            factor_instance (FactorTemplate): The factor instance for metadata.
+            analysis_start_dt (datetime): Start datetime for the analysis period.
+            analysis_end_dt (datetime): End datetime for the analysis period.
+            num_quantiles (int): Number of quantiles for quantile analysis.
+            long_short_percentile (float): Percentile for long/short portfolio construction.
+            report_filename_prefix (str): Prefix for the saved report files.
+            benchmark_prices_df (Optional[pl.DataFrame]): Optional DataFrame of benchmark prices.
+            benchmark_symbol (Optional[str]): The column name of the benchmark in benchmark_prices_df.
+
+        Returns:
+            Optional[Path]: The path to the saved JSON report, or None if failed.
+        """
+        self._write_log(
+            f"--- Starting Full Analysis for Factor: {factor_instance.factor_key} ---",
+            level=INFO,
+        )
+
+        # Update config with parameters from this specific run
+        self.config.num_quantiles = num_quantiles
+        self.config.long_short_percentile = long_short_percentile
+
+        # --- 1. Data Validation and Preparation ---
+        if factor_data_df.is_empty() or market_close_prices_df.is_empty():
+            self._write_log(
+                "Input factor or market price data is empty. Aborting.", level=ERROR
+            )
+            return None
+
+        symbols_of_interest = [
+            col for col in factor_data_df.columns if col != self.factor_datetime_col
+        ]
+        if not symbols_of_interest:
+            self._write_log("No symbols found in factor data. Aborting.", level=ERROR)
+            return None
+
+        # --- 2. Calculate Forward Returns ---
+        symbol_returns_df = self._prepare_symbol_returns(
+            market_close_prices_df, symbols_of_interest
+        )
+        if symbol_returns_df is None or symbol_returns_df.is_empty():
+            self._write_log(
+                "Symbol returns preparation failed. Aborting analysis.", level=ERROR
+            )
+            return None
+
+        # --- 3. Align DataFrames ---
+        # Align factor data with forward returns to ensure correct time matching
+        aligned_factor_df, aligned_returns_df = pl.align_frames(
+            factor_data_df, symbol_returns_df, on=self.factor_datetime_col, how="inner"
+        )
+
+        if aligned_factor_df.is_empty():
+            self._write_log(
+                "Data is empty after aligning factors and returns. Check for datetime mismatches.",
+                level=WARNING,
+            )
+            return None
+
+        actual_start_dt = aligned_factor_df.get_column(self.factor_datetime_col).min()
+        actual_end_dt = aligned_factor_df.get_column(self.factor_datetime_col).max()
+
+        # --- 4. Prepare Final Analysis DataFrame ---
+        analysis_data = self._prepare_analysis_data(
+            aligned_factor_df, aligned_returns_df
+        )
+        if analysis_data is None or analysis_data.is_empty():
+            self._write_log("Analysis data preparation failed. Aborting.", level=ERROR)
+            return None
+
+        # --- 5. Perform Core Analyses ---
+        self.perform_quantile_analysis(analysis_data)
+        self.perform_long_short_analysis(analysis_data)
+        self.calculate_performance_metrics(benchmark_prices_df, benchmark_symbol)
+
+        # --- 6. Generate and Save Reports ---
+        report_content = self.generate_report_data(
+            factor_instance=factor_instance,
+            analysis_start_dt=actual_start_dt or analysis_start_dt,
+            analysis_end_dt=actual_end_dt or analysis_end_dt,
+            tested_vt_symbols=symbols_of_interest,
+        )
+
+        json_report_path = self.save_json_report(report_content, report_filename_prefix)
+        self.generate_html_report(
+            factor_instance.factor_key, benchmark_prices_df, benchmark_symbol
+        )
+
+        self._write_log(
+            f"--- Analysis for {factor_instance.factor_key} Complete. ---", level=INFO
+        )
+
+        # Return path to JSON report for backward compatibility
+        return json_report_path
 
     def _write_log(self, msg: str, level: int = INFO) -> None:
         log_msg = f"[{self.engine_name}] {msg}"
