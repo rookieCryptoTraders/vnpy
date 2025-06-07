@@ -39,7 +39,7 @@ def run_child():
 
     gateway_settings = {
         "symbols": [],
-        "simulation_interval_seconds": 60.0,  # Bars every second for each symbol
+        "simulation_interval_seconds": 2,  # Bars every second for each symbol
         "open_price_range_min": 100,
         "open_price_range_max": 105,
         "price_change_range_min": -1,
@@ -57,12 +57,12 @@ def run_child():
     main_engine.subscribe_all(gateway_name='MIMIC')
 
     # start data recorder
-    #data_recorder_engine = main_engine.add_app(DataRecorderApp)
-    #main_engine.write_log(f"启动[{data_recorder_engine.__class__.__name__}]")
-"""    data_recorder_engine.update_schema(database_name=data_recorder_engine.database_manager.database_name,
+    data_recorder_engine = main_engine.add_app(DataRecorderApp)
+    main_engine.write_log(f"启动[{data_recorder_engine.__class__.__name__}]")
+    data_recorder_engine.update_schema(database_name=data_recorder_engine.database_manager.database_name,
                                        exchanges=main_engine.exchanges,
                                        intervals=main_engine.intervals,
-                                       factor_keys=[key for key in factor_maker_engine.flattened_factors.keys()])"""
+                                       factor_keys=[key for key in factor_maker_engine.flattened_factors.keys()])
 
 
 def run_parent():
