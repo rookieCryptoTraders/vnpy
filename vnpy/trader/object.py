@@ -4,7 +4,6 @@ Basic data structure used for general trading function in the trading platform.
 from dataclasses import dataclass, field
 from datetime import datetime as Datetime
 from logging import INFO
-from typing import Optional
 
 from .constant import Direction, Exchange, Interval, Offset, Status, Product, OptionType, OrderType
 from ..config import VTSYMBOL_BARDATA, VTSYMBOL_FACTORDATA, VTSYMBOL_TICKDATA
@@ -376,7 +375,7 @@ class OrderRequest:
         """"""
         self.vt_symbol: str = f"{self.symbol}.{self.exchange.value}"
 
-    def create_order_data(self, orderid: Optional[str], gateway_name: Optional[str]) -> OrderData:
+    def create_order_data(self, orderid: str | None, gateway_name: str | None) -> OrderData:
         """
         Create order data from request.
         """

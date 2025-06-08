@@ -1,47 +1,27 @@
-# -*- coding=utf-8 -*-
 # @FilePath : utils
 # @File     : datetimes.py
 # @Time     : 2024/3/12 13:22
 # @Author   : EvanHong
 # @Email    : 939778128@qq.com
-# @Description:
-from typing import Union, Optional, Tuple
+# @Description: Date and time utility functions.
 
-from enum import Enum as EEnum
+from enum import Enum
 import datetime
 import polars as pl
 import os
 
-from vnpy.trader.constant import Exchange, Interval
+# Assuming vnpy is installed in the environment.
+# If Interval does not have TICK, the functions will still work safely.
+from vnpy.trader.constant import Interval
 
 
-# from aenum import Enum as AEnum, NoAlias
-# class TimeFreq(AEnum):
-#     """Deprecated because of the inconvenience of using aenum
-#     用于表示时间频率，最小频率为ms. The values are in milliseconds and just are indicators, not the true values. Because something like months and years are not fixed in milliseconds.
-# 
-#     References
-#     ----------
-#     - https://pandas.pydata.org/pandas-docs/stable/user_guide/timeseries.html#offset-aliases
-#     """
-#     _settings_ = NoAlias
-# 
-#     unknown = 0
-#     ms = 1
-#     s = 1000
-#     m = s * 60  # minutes
-#     min = s * 60  # minutes
-#     h = m * 60  # hours
-#     d = h * 24  # days
-#     W = d * 7  # weeks
-#     M = d * 30  # months
-#     Y = d * 365  # years
-
-class TimeFreq(EEnum):
-    """用于表示时间频率，最小频率为ms. 
-    The values are in milliseconds and just are indicators, not the true values. 
-    Because something like months and years are not fixed in milliseconds.
+class TimeFreq(Enum):
     """
+    Represents time frequency. The minimum frequency is milliseconds (ms).
+    The enum values are indicative and used for calculations. Note that 'months'
+    and 'years' are approximations and do not have a fixed duration in milliseconds.
+    """
+
     unknown = 0
     ms = 1  # milliseconds
     s = ms * 1000  # seconds
@@ -49,320 +29,395 @@ class TimeFreq(EEnum):
     h = m * 60  # hours
     d = h * 24  # days
     W = d * 7  # weeks
-    M = d * 30  # months
-    Y = d * 365  # years
+    M = d * 30  # months (approximated as 30 days)
+    Y = d * 365  # years (approximated as 365 days)
 
 
 class DatetimeUtils:
+    """
+    A utility class providing static methods for date and time manipulation.
+
+    Note on Timezones:
+    Some methods accept a 'tz' parameter. The `set_tz` method changes the timezone
+    globally by setting the 'TZ' environment variable. For applications requiring
+    stable timezone behavior, it is recommended to call `set_tz` once at startup
+    rather than per-operation.
+    """
+
+    # A pre-sorted list of frequency suffixes for efficient parsing.
+    # Sorted by length descending to handle 'ms' before 'm' or 's'.
+    _FREQ_SUFFIXES = sorted(
+        [(member.name, member) for member in TimeFreq if member != TimeFreq.unknown],
+        key=lambda item: len(item[0]),
+        reverse=True,
+    )
+
     @classmethod
-    def set_tz(cls, tz: str = 'UTC'):
-        os.environ['TZ'] = tz
+    def set_tz(cls, tz: str = "UTC"):
+        """
+        Sets the global timezone for the process by setting the TZ environment variable.
+
+        Warning: This has global side effects and may not be safe in multi-threaded contexts.
+
+        Parameters
+        ----------
+        tz : str
+            The timezone identifier, e.g., 'UTC' or 'America/New_York'.
+        """
+        os.environ["TZ"] = tz
 
     @classmethod
     def normalize_time_str(cls, time_str: str) -> str:
         """
-        ``min`` will be converted into ``m``
+        Normalizes a time frequency string for consistency.
+        Specifically, 'min' is converted to 'm'.
 
         Parameters
         ----------
-        time_str : str,
-            something like '1m', '1s', '1ms'
+        time_str : str
+            A string representing a time frequency, e.g., '1min', '1m', '1s'.
 
         Returns
         -------
         str
+            The normalized time string.
         """
-        if time_str == 'min':
-            time_str = 'm'
+        if time_str == "min":
+            return "m"
         return time_str
 
     @classmethod
-    def normalize_unix(cls, unix: Union[int, float], to_precision: str = 's') -> Union[float, int]:
+    def normalize_unix(
+        cls, unix: int | float, to_precision: str = "s"
+    ) -> float | int:
         """
-        将unix时间戳转换为指定精度
+        Converts a Unix timestamp to the specified precision (seconds or milliseconds).
+        This function infers the source precision based on the magnitude of the timestamp.
+
+        Warning: The heuristic assumes timestamps with more than 10 digits (i.e., after
+        Nov 20, 2286) are in milliseconds. This may not be accurate for all use cases.
+
         Parameters
         ----------
-        unix : int,
-            unix时间戳
+        unix : int or float
+            The Unix timestamp.
         to_precision : str
-            's'表示转换为秒，'ms'表示转换为毫秒
+            The target precision: 's' for seconds or 'ms' for milliseconds.
 
         Returns
         -------
-        int
+        int or float
+            The timestamp converted to the target precision.
         """
-        if to_precision == 's':
-            if unix > 9999999999:
+        is_ms = unix > 9999999999  # Heuristic: 10 digits for seconds.
+
+        if to_precision == "s":
+            if is_ms:
                 unix /= 1000
-        elif to_precision == 'ms':
-            if unix < 9999999999:
+        elif to_precision == "ms":
+            if not is_ms:
                 unix *= 1000
         else:
-            raise NotImplementedError("invalid to_precision, please check the input string.")
+            raise NotImplementedError("Invalid 'to_precision'; use 's' or 'ms'.")
 
         return unix
 
     @classmethod
-    def split_time_str(cls, time_str: str) -> Tuple[Union[int, float], TimeFreq]:
+    def split_time_str(cls, time_str: str) -> tuple[int | float, TimeFreq]:
         """
-        从时间字符串中提取数字和freq单位
+        Parses a time string into its numerical value and frequency unit.
+        Defaults to 1 if the numerical part is missing (e.g., 'm' -> 1, TimeFreq.m).
+
         Parameters
         ----------
-        time_str : str,
-            something like '1m', '1s', '1ms'
+        time_str : str
+            The time string to parse, e.g., '1m', '30s', '100ms'.
 
         Returns
         -------
-        tuple, (int, TimeFreq)
+        tuple of (int or float, TimeFreq)
+            A tuple containing the number and the corresponding TimeFreq enum.
         """
-
-        # note that the order of if-elif-else is important, the longer the freq string is, the higher priority it has to be
         time_str = cls.normalize_time_str(time_str)
-        if time_str.endswith(TimeFreq.ms.name):
-            time_number = float(time_str[:-2])
-            if time_number.is_integer():
-                time_number = int(time_number)
-            return time_number, TimeFreq.ms
-        elif time_str.endswith(TimeFreq.s.name):
-            time_number = float(time_str[:-1])
-            if time_number.is_integer():
-                time_number = int(time_number)
-            return time_number, TimeFreq.s
-        elif time_str.endswith(TimeFreq.m.name):
-            time_number = float(time_str[:-1])
-            if time_number.is_integer():
-                time_number = int(time_number)
-            return time_number, TimeFreq.m
-        elif time_str.endswith(TimeFreq.d.name):
-            time_number = float(time_str[:-1])
-            if time_number.is_integer():
-                time_number = int(time_number)
-            return time_number, TimeFreq.d
-        else:
-            raise NotImplementedError("invalid time_str, please check the input string.")
+        for suffix, freq_enum in cls._FREQ_SUFFIXES:
+            if time_str.endswith(suffix):
+                num_str = time_str[: -len(suffix)]
+                if not num_str:
+                    return 1, freq_enum  # Default to 1 if no number is specified
+
+                number = float(num_str)
+                return int(number) if number.is_integer() else number, freq_enum
+
+        raise NotImplementedError(
+            f"Invalid time_str '{time_str}', please check the input string."
+        )
 
     @classmethod
-    def str2freq(cls, time_str: str, ret_unit: Union[TimeFreq, str]) -> Tuple[int, TimeFreq]:
+    def str2freq(
+        cls, time_str: str, ret_unit: TimeFreq | str
+    ) -> tuple[int, TimeFreq]:
         """
-        将time_str转换为最小单位freq的int倍数
+        Converts a time string into an integer multiple of a specified return unit.
+
         Parameters
         ----------
-        time_str : str,
-            something like '1m', '1s', '1ms'
-        ret_unit : TimeFreq,
-            返回的时间单位
-
-
-        Notes
-        -----
-        ``min`` will be converted into ``m``
+        time_str : str
+            The time string to convert, e.g., '1m', '1s', '1ms'.
+        ret_unit : TimeFreq or str
+            The target time unit for the return value.
 
         Returns
         -------
-        Union[int, TimeFreq]
+        tuple of (int, TimeFreq)
+            The converted integer value and the target time unit.
         """
         if isinstance(ret_unit, str):
-            ret_unit = TimeFreq[ret_unit]
+            ret_unit = TimeFreq[cls.normalize_time_str(ret_unit)]
 
-        time_str = cls.normalize_time_str(time_str)
         number, freq = cls.split_time_str(time_str)
-        number = number * freq.value / ret_unit.value
-        if not number.is_integer():
-            raise ValueError(f"{time_str} cannot be converted to {ret_unit}")
-        number = int(number)
-        return number, ret_unit
+        converted_number = (number * freq.value) / ret_unit.value
+
+        if not converted_number.is_integer():
+            raise ValueError(
+                f"'{time_str}' cannot be converted cleanly to an integer of '{ret_unit.name}'."
+            )
+
+        return int(converted_number), ret_unit
 
     @classmethod
-    def freq2str(cls, freq: TimeFreq, ret_unit: Optional[Union[TimeFreq, str]] = TimeFreq.m) -> str:
+    def freq2str(
+        cls, freq: TimeFreq, ret_unit: TimeFreq | str | None = TimeFreq.m
+    ) -> str:
         """
-        将freq转换为时间字符串
+        Converts a TimeFreq enum member into a string relative to a return unit.
+        Example: freq2str(TimeFreq.h, ret_unit='m') -> '60m'
+
         Parameters
         ----------
-        freq : TimeFreq,
-            时间频率
-        ret_unit : TimeFreq,
-            返回的时间单位
+        freq : TimeFreq
+            The input time frequency.
+        ret_unit : TimeFreq or str
+            The desired unit for the output string. Defaults to minutes ('m').
 
         Returns
         -------
         str
+            The formatted time string.
         """
-        # raise NotImplementedError("尚未想好单位怎么正确表示")
         if isinstance(ret_unit, str):
-            ret_unit = cls.normalize_time_str(ret_unit)
-            ret_unit = TimeFreq[ret_unit]
+            ret_unit = TimeFreq[cls.normalize_time_str(ret_unit)]
         if ret_unit is None:
             ret_unit = TimeFreq.ms
 
-        pre = freq.value / (TimeFreq.ms.value * ret_unit.value)  # the number part of freq string
-        assert pre.is_integer(), f"freq {freq} cannot be converted to {ret_unit}"
-        pre = int(pre)
-        return f"{pre}{ret_unit.name}"
+        # The ratio of the two frequencies' millisecond values gives the numeric prefix.
+        prefix = freq.value / ret_unit.value
+        if not prefix.is_integer():
+            raise ValueError(
+                f"Frequency '{freq.name}' cannot be converted cleanly to unit '{ret_unit.name}'."
+            )
+
+        return f"{int(prefix)}{ret_unit.name}"
 
     @classmethod
-    def unix2datetime(cls, unix: Union[int, float], tz='UTC') -> datetime.datetime:
+    def unix2datetime(
+        cls, unix: int | float, tz: str = "UTC"
+    ) -> datetime.datetime:
         """
-        将unix时间戳转换为datetime对象
+        Converts a Unix timestamp to a naive datetime object relative to a specified timezone.
+        It uses the global 'TZ' environment variable for the conversion.
+
         Parameters
         ----------
-        unix : int,
-            unix时间戳
-        tz : str,
-            时区
+        unix : int or float
+            The Unix timestamp (in seconds or milliseconds).
+        tz : str
+            The timezone to interpret the timestamp in.
+
         Returns
         -------
         datetime.datetime
+            The corresponding naive datetime object.
         """
         cls.set_tz(tz)
-        unix = cls.normalize_unix(unix, to_precision='s')
-        return datetime.datetime.fromtimestamp(unix)
+        unix_seconds = cls.normalize_unix(unix, to_precision="s")
+        return datetime.datetime.fromtimestamp(unix_seconds)
 
     @classmethod
-    def unix2ymd(cls, unix: int, tz='UTC') -> str:
+    def unix2ymd(cls, unix: int, tz="UTC") -> str:
         """
-        将unix时间戳转换为年月日字符串
+        Converts a Unix timestamp to a 'YYYY-MM-DD' string.
+
         Parameters
         ----------
-        unix : int,
-            unix时间戳
-        tz : str,
-            时区
+        unix : int
+            The Unix timestamp.
+        tz : str
+            The timezone for the conversion.
 
         Returns
         -------
         str
+            The formatted date string.
         """
-        cls.set_tz(tz)
-
-        return cls.unix2datetime(unix).strftime('%Y-%m-%d')
+        dt = cls.unix2datetime(unix, tz)
+        return dt.strftime("%Y-%m-%d")
 
     @classmethod
-    def unix2datetime_polars(cls, df: pl.DataFrame, col: str = 'datetime', tz='UTC'):
+    def unix2datetime_polars(
+        cls, df: pl.DataFrame, col: str = "datetime", tz: str = "UTC"
+    ) -> pl.DataFrame:
         """
-        将unix时间戳转换为datetime对象
+        Converts a Polars DataFrame column of Unix timestamps to a timezone-aware datetime column.
+        Assumes the source timestamps are in UTC.
+
         Parameters
         ----------
         df : polars.DataFrame
-        col : str,
-            时间戳所在列名
-        tz : str,
-            时区
-        Returns
-        -------
-        """
+            The input DataFrame.
+        col : str
+            The name of the column with Unix timestamps.
+        tz : str
+            The target timezone for the datetime column.
 
-        cls.set_tz(tz)
-
-        if df[col][0] < 9999999999:  # unixtime是s级
-            df = df.with_columns(
-                pl.from_epoch(col, time_unit='s')
-            )
-        else:
-            df = df.with_columns(
-                pl.from_epoch(col, time_unit='ms')
-            )
-        return df
-
-    @classmethod
-    def datetime2unix(cls, dt: datetime.datetime, tz='UTC') -> int:
-        """
-        将datetime对象转换为unix时间戳
-        Parameters
-        ----------
-        dt : datetime.datetime
-        tz : str,
-            时区
-        Returns
-        -------
-        int
-        """
-        cls.set_tz(tz)
-
-        return int(dt.timestamp() * 1000)
-
-    @classmethod
-    def datetime2unix_polars(cls, df: pl.DataFrame, col: str, time_unit='ms', tz='UTC') -> pl.DataFrame:
-        """
-        将datetime对象转换为unix时间戳
-        Parameters
-        ----------
-        df : polars.DataFrame
-        col : str,
-            时间戳所在列名
-        tz : str,
-            时区
-        time_unit : str,
-            时间单位，'s'表示秒，'ms'表示毫秒
         Returns
         -------
         pl.DataFrame
+            DataFrame with the converted, timezone-aware datetime column.
         """
-        cls.set_tz(tz)
+        time_unit = "ms" if df[col][0] > 9999999999 else "s"
 
-        return df.with_columns(pl.col(col).dt.epoch(time_unit=time_unit))
+        # Convert from epoch (assumed UTC) to a timezone-aware datetime.
+        return df.with_columns(
+            pl.from_epoch(pl.col(col), time_unit=time_unit).dt.convert_time_zone(tz)
+        )
 
     @classmethod
-    def interval2unix(cls, interval: Interval,
-                      ret_unit: Optional[Union[TimeFreq, str]] = TimeFreq.ms) -> Union[int, float]:
+    def datetime2unix(cls, dt: datetime.datetime, tz: str = "UTC") -> int:
         """
-        Get the timedelta for a given interval.
+        Converts a datetime object to a Unix timestamp in milliseconds.
+
+        Parameters
+        ----------
+        dt : datetime.datetime
+            The input datetime object.
+        tz : str
+            The timezone to use for the conversion.
+
+        Returns
+        -------
+        int
+            The Unix timestamp in milliseconds.
+        """
+        cls.set_tz(tz)
+        return int(dt.timestamp() * 1000)
+
+    @classmethod
+    def datetime2unix_polars(
+        cls, df: pl.DataFrame, col: str, time_unit: str = "ms", tz: str = "UTC"
+    ) -> pl.DataFrame:
+        """
+        Converts a naive datetime column in a Polars DataFrame to a Unix timestamp.
+        The function localizes the naive datetime to the specified timezone first.
+
+        Parameters
+        ----------
+        df : pl.DataFrame
+            The input DataFrame.
+        col : str
+            The name of the datetime column.
+        time_unit : str
+            The unit for the output timestamp ('s' or 'ms').
+        tz : str
+            The timezone of the source naive datetime column.
+
+        Returns
+        -------
+        pl.DataFrame
+            DataFrame with the converted Unix timestamp column.
+        """
+        # Localize the naive datetime to the specified timezone before getting the epoch value.
+        return df.with_columns(
+            pl.col(col).dt.replace_time_zone(tz).dt.epoch(time_unit=time_unit)
+        )
+
+    @classmethod
+    def interval2unix(
+        cls, interval: Interval, ret_unit: TimeFreq | str = TimeFreq.ms
+    ) -> int | float:
+        """
+        Get the time duration in specified units for a given vnpy Interval.
 
         Parameters:
-            interval (Interval): Candlestick interval (e.g., 1m, 1h, 1d).
+            interval (Interval): A vnpy candlestick interval.
+            ret_unit (TimeFreq or str): The desired return unit.
 
         Returns:
-            timedelta: Time delta corresponding to the interval.
+            int or float: The time duration corresponding to the interval.
         """
         if isinstance(ret_unit, str):
-            ret_unit = cls.normalize_time_str(ret_unit)
-        ret_unit = TimeFreq[ret_unit]
+            ret_unit = TimeFreq[cls.normalize_time_str(ret_unit)]
 
         interval_map = {
             Interval.MINUTE: datetime.timedelta(minutes=1),
             Interval.HOUR: datetime.timedelta(hours=1),
             Interval.DAILY: datetime.timedelta(days=1),
-            Interval.WEEKLY: datetime.timedelta(weeks=1)
+            Interval.WEEKLY: datetime.timedelta(weeks=1),
         }
+        # Safely handle if Interval.TICK exists and map it to 1 second.
+        if hasattr(Interval, "TICK") and interval == Interval.TICK:
+            interval_map[Interval.TICK] = datetime.timedelta(seconds=1)
+
         delta = interval_map.get(interval)
+        if delta is None:
+            raise NotImplementedError(f"Interval '{interval}' is not supported.")
+
+        total_seconds = delta.total_seconds()
         if ret_unit == TimeFreq.ms:
-            delta = delta.total_seconds() * 1000
+            return total_seconds * 1000
         elif ret_unit == TimeFreq.s:
-            delta = delta.total_seconds()
+            return total_seconds
         else:
-            raise NotImplementedError("not supported yet")
-        return delta
+            # For other units, convert via milliseconds
+            return (total_seconds * 1000) / ret_unit.value
 
     @classmethod
     def interval2freq(cls, interval: Interval) -> TimeFreq:
         """
-        Convert an interval to a TimeFreq enum.
+        Convert a vnpy Interval to a TimeFreq enum.
 
         Parameters:
-            interval (Interval): Candlestick interval (e.g., 1m, 1h, 1d).
+            interval (Interval): A vnpy candlestick interval.
 
         Returns:
-            TimeFreq: Time frequency corresponding to the interval.
+            TimeFreq: The corresponding time frequency enum.
         """
-
-        return TimeFreq(cls.interval2unix(interval, ret_unit='ms'))
+        ms = cls.interval2unix(interval, ret_unit="ms")
+        return TimeFreq(ms)
 
     @classmethod
     def interval2str(cls, interval: Interval) -> str:
         """
-        Convert an interval to a TimeFreq enum.
+        Convert a vnpy Interval to a simple time string (e.g., '1m', '1h').
+        This is an optimized, direct mapping.
 
         Parameters:
-            interval (Interval): Candlestick interval (e.g., 1m, 1h, 1d).
+            interval (Interval): A vnpy candlestick interval.
 
         Returns:
-            TimeFreq: Time frequency corresponding to the interval.
+            str: The corresponding time string.
         """
-        mapper = {
-            "MINUTE": "m",
-            "HOUR": "h",
-            "DAILY": "d",
-            "WEEKLY": "W",
-            "TICK": "s",
+        interval_map = {
+            Interval.MINUTE: "1m",
+            Interval.HOUR: "1h",
+            Interval.DAILY: "1d",
+            Interval.WEEKLY: "1W",
         }
+        if hasattr(Interval, "TICK"):
+            interval_map[Interval.TICK] = "1s"
 
-        return cls.freq2str(cls.interval2freq(interval), ret_unit=mapper[interval.name])
+        if interval in interval_map:
+            return interval_map[interval]
+        else:
+            raise NotImplementedError(
+                f"Interval '{interval.name}' cannot be converted to a string."
+            )
