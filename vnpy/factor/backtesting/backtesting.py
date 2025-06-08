@@ -425,9 +425,7 @@ class BacktestEngine:
         analysis_start_dt: datetime,
         analysis_end_dt: datetime,
         num_quantiles: int,
-        returns_look_ahead_period: int,
-        long_percentile_threshold: float,
-        short_percentile_threshold: float,
+        long_short_percentile: float,
         report_filename_prefix: str,
     ) -> Path | None:
         """Uses the analyser to process results and generate a report."""
@@ -451,7 +449,7 @@ class BacktestEngine:
             analysis_start_dt=analysis_start_dt,
             analysis_end_dt=analysis_end_dt,
             num_quantiles=num_quantiles,
-            long_short_percentile=long_percentile_threshold,
+            long_short_percentile=long_short_percentile,
             report_filename_prefix=report_filename_prefix,
         )
 

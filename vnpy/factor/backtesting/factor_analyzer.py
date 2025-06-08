@@ -42,7 +42,7 @@ class AnalysisConfig:
 
     num_quantiles: int = 5
     long_short_percentile: float = 0.3
-    annualization_factor: int = 1440  # Assumes minutes data
+    annualization_factor: int = 24*365  # Assumes hours data
     risk_free_rate: float = 0.0
 
 
@@ -209,15 +209,11 @@ class FactorAnalyser:
             )
             return False
 
-        # Assign assets to quantiles based on their factor value for each time period
+        # Assign assets to quantiles using ntile
         data_with_quantiles = analysis_data.with_columns(
-            pl.col("factor_value")
-            .qcut(
-                self.config.num_quantiles,
-                labels=[f"Q{i + 1}" for i in range(self.config.num_quantiles)],
-            )
-            .over(self.factor_datetime_col)
-            .alias("quantile")
+            pl.col("factor_value").qcut(
+                self.config.num_quantiles, labels=[f"Q{i+1}" for i in range(self.config.num_quantiles)]
+            ).alias("quantile")
         )
 
         # Calculate mean return for each quantile at each time period
@@ -258,40 +254,31 @@ class FactorAnalyser:
 
         # Identify long (top percentile) and short (bottom percentile) legs
         data_with_legs = analysis_data.with_columns(
-            pl.col("factor_value")
-            .rank(method="ordinal")
-            .over(self.factor_datetime_col)
-            .alias("rank"),
-            pl.count().over(self.factor_datetime_col).alias("n_assets"),
-        ).with_columns(
-            pl.when(pl.col("rank") > pl.col("n_assets") * (1 - percentile))
-            .then(True)
-            .otherwise(False)
-            .alias("is_long"),
-            pl.when(pl.col("rank") <= pl.col("n_assets") * percentile)
-            .then(True)
-            .otherwise(False)
-            .alias("is_short"),
+            pl.col("factor_value").qcut(
+                [percentile], labels=['is_long', 'is_short']
+            ).alias("pos")
         )
 
-        # Calculate returns for the long, short, and long-short portfolios
+        data_with_legs = data_with_legs.group_by(
+            [self.factor_datetime_col, "pos"]
+        ).agg(
+            pl.col("forward_return").mean().alias("forward_return")
+        ).filter(
+            pl.col("pos").is_in(["is_long", "is_short"])
+        )
+
+        data_with_legs = data_with_legs.pivot(
+            index=self.factor_datetime_col,
+            columns="pos",
+            values="forward_return"
+        ).fill_null(0.0)
+
+        # Calculate long-short returns
         ls_returns_df = (
-            data_with_legs.group_by(self.factor_datetime_col)
-            .agg(
-                pl.col("forward_return")
-                .filter(pl.col("is_long"))
-                .mean()
-                .alias("long_return")
-                .fill_null(0.0),
-                pl.col("forward_return")
-                .filter(pl.col("is_short"))
-                .mean()
-                .alias("short_return")
-                .fill_null(0.0),
+            data_with_legs.with_columns(
+                (pl.col("is_long") - pl.col("is_short")).alias("ls_return")
             )
-            .with_columns(
-                (pl.col("long_return") - pl.col("short_return")).alias("ls_return")
-            )
+            .select([self.factor_datetime_col, "ls_return"])
             .sort(self.factor_datetime_col)
         )
 
@@ -512,7 +499,7 @@ class FactorAnalyser:
                 returns=returns_pd,
                 benchmark=benchmark_pd,
                 rf=self.config.risk_free_rate,
-                periods_per_year=365* self.config.annualization_factor,
+                periods_per_year=self.config.annualization_factor,
                 title=f"Factor Analysis Report: {factor_key}",
                 output=str(filepath),
                 download_filename=filename,
