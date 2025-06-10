@@ -294,7 +294,7 @@ class FactorAnalyser:
             return True
 
         ls_return_col = ls_returns_df.get_column("ls_return")
-        mean_ret = ls_return_col.mean()
+        mean_ret = ls_return_col.mean() - self.config.risk_free_rate
         std_ret = ls_return_col.std()
 
         # Avoid division by zero
