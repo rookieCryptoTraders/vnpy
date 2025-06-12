@@ -147,6 +147,7 @@ class StrategyTemplate(ABC):
         # --- Engine Access ---
         self.get_tick: Callable[[str], Optional[TickData]] = self.strategy_engine.get_tick
         self.get_contract: Callable[[str], Optional[ContractData]] = self.strategy_engine.get_contract
+        self.get_latest_bar: Callable[[str], Optional[BarData]] = self.strategy_engine.get_latest_bar
 
         # --- Configuration Objects ---
         # Initialize from nested dicts within 'settings'

@@ -1,7 +1,39 @@
 [
   {
-    "class_name": "MimicDummyFactor",
+    "class_name": "EMAFactor",
+    "factor_name": "fast_ema",
     "freq": "1m",
-    "params": {}
+    "params": {"period": 12},
+    "vt_symbols": ["SYM1.LOCAL", "SYM2.LOCAL", "SYM3.LOCAL", "SYM4.LOCAL"]
+  },
+  {
+    "class_name": "EMAFactor",
+    "factor_name": "slow_ema",
+    "freq": "1m",
+    "params": {"period": 26},
+    "vt_symbols": ["SYM1.LOCAL", "SYM2.LOCAL", "SYM3.LOCAL", "SYM4.LOCAL"]
+  },
+  {
+    "class_name": "MACDFactor",
+    "factor_name": "MACD_MAIN_FOR_STRATEGY",
+    "freq": "1m",
+    "params": {"signal_period": 9},
+    "vt_symbols": ["SYM1.LOCAL", "SYM2.LOCAL", "SYM3.LOCAL", "SYM4.LOCAL"],
+    "dependencies_factor": [
+      {
+        "class_name": "EMAFactor",
+        "factor_name": "fast_ema",
+        "freq": "1m",
+        "params": {"period": 12},
+        "vt_symbols": ["SYM1.LOCAL", "SYM2.LOCAL", "SYM3.LOCAL", "SYM4.LOCAL"]
+      },
+      {
+        "class_name": "EMAFactor",
+        "factor_name": "slow_ema",
+        "freq": "1m",
+        "params": {"period": 26},
+        "vt_symbols": ["SYM1.LOCAL", "SYM2.LOCAL", "SYM3.LOCAL", "SYM4.LOCAL"]
+      }
+    ]
   }
 ]

@@ -27,7 +27,7 @@ from vnpy.trader.object import (
 )
 from vnpy.trader.event import (
     EVENT_ORDER, EVENT_TRADE, EVENT_CONTRACT, EVENT_TIMER, EVENT_LOG,
-    EVENT_FACTOR
+    EVENT_FACTOR, EVENT_BAR # Added EVENT_BAR
 )
 from vnpy.trader.constant import EngineType
 from vnpy.trader.utility import load_json, save_json, get_file_path, virtual
@@ -127,6 +127,9 @@ class StrategyEngine(BaseEngine):
         self.latest_factors_data: Dict[str, pl.DataFrame] = {} # Renamed and type updated
         self.factor_update_time: Optional[datetime] = None
 
+        # --- Bar Data Cache ---
+        self.latest_bars: Dict[str, BarData] = {}
+
         self.write_log("Engine components initialized.", level=DEBUG)
 
     def _init_execution_agent(self) -> ExecutionAgent:
@@ -199,6 +202,7 @@ class StrategyEngine(BaseEngine):
         self.event_engine.register(EVENT_TRADE, self.process_trade_event)
         self.event_engine.register(EVENT_FACTOR, self.process_factor_event)
         self.event_engine.register(EVENT_TIMER, self._process_timer_event)
+        self.event_engine.register(EVENT_BAR, self.process_bar_event) # Added
         self.write_log("Engine event listeners registered.", level=DEBUG)
 
     def close(self) -> None:
@@ -219,6 +223,7 @@ class StrategyEngine(BaseEngine):
         self.event_engine.unregister(EVENT_TRADE, self.process_trade_event)
         self.event_engine.unregister(EVENT_FACTOR, self.process_factor_event)
         self.event_engine.unregister(EVENT_TIMER, self._process_timer_event)
+        self.event_engine.unregister(EVENT_BAR, self.process_bar_event) # Added
         self.write_log("Engine event listeners unregistered.", level=DEBUG)
 
     def _camel_to_snake(self, name: str) -> str:
@@ -504,3 +509,18 @@ class StrategyEngine(BaseEngine):
     def get_current_datetime(self) -> datetime: return datetime.now(timezone.utc)
     def get_tick(self, symbol: str) -> Optional[TickData]: return self.main_engine.get_tick(symbol)
     def get_contract(self, symbol: str) -> Optional[ContractData]: return self.main_engine.get_contract(symbol)
+
+    def process_bar_event(self, event: Event) -> None:
+        """Processes incoming bar data and caches the latest bar for each symbol."""
+        bar: BarData = event.data
+        if not isinstance(bar, BarData): # Basic type check
+            self.write_log(f"Received non-BarData in process_bar_event: {type(bar)}. Skipping.", WARNING)
+            return
+
+        self.latest_bars[bar.vt_symbol] = bar
+        # Optional: Log that a bar was received and cached for debugging
+        # self.write_log(f"Cached latest bar for {bar.vt_symbol} at {bar.datetime}", DEBUG)
+
+    def get_latest_bar(self, vt_symbol: str) -> Optional[BarData]:
+        """Returns the most recent BarData for a given symbol, or None if not available."""
+        return self.latest_bars.get(vt_symbol)

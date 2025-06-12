@@ -35,7 +35,7 @@
     "class_name": "RankedFactorStrategy",
     "strategy_name": "FactorRanker_Demo",
     "vt_symbols": ["SYM1.LOCAL", "SYM2.LOCAL", "SYM3.LOCAL", "SYM4.LOCAL"],
-    "ranking_factor_name": "factor.1m.mimicdummyfactor@noparams",
+    "ranking_factor_name": "factor.1m.macdfactor@signal_period_9",
     "factor_value_column": "factor_value",
     "num_long": 1,
     "num_short": 1,
