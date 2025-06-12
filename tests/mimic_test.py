@@ -17,6 +17,7 @@ from vnpy.event import EventEngine
 from vnpy.gateway.mimicgateway.mimicgateway import MimicGateway
 from vnpy.trader.engine import MainEngine
 from vnpy.app.data_recorder import DataRecorderApp
+from vnpy.strategy.engine import StrategyEngine # Added import
 
 
 # from vnpy.strategy.examples.test_strategy_template import TestStrategyTemplate
@@ -36,9 +37,35 @@ def run_child():
     # start factor engine
     factor_maker_engine: FactorEngine = main_engine.add_engine(FactorEngine)
     factor_maker_engine.init_engine(fake=False)
+    # Log active factors
+    active_factor_keys = list(factor_maker_engine.flattened_factors.keys())
+    main_engine.write_log(f"FactorEngine initialized with {len(active_factor_keys)} active factors. Keys: {active_factor_keys[:5]}")
+    # Log first 5 keys for brevity
+
+    # Add and initialize StrategyEngine
+    main_engine.write_log("Adding Strategy Engine...")
+    strategy_engine = main_engine.add_engine(StrategyEngine)
+    strategy_engine.init_engine() # This loads strategies from strategy_config.json
+    main_engine.write_log("Strategy Engine added and initialized.")
+
+    # Start strategies
+    for strategy_name in strategy_engine.strategies:
+        strategy = strategy_engine.strategies[strategy_name]
+        if hasattr(strategy, 'on_start') and callable(strategy.on_start):
+            main_engine.write_log(f"Starting strategy: {strategy_name}")
+            strategy.on_start() # Directly call on_start for testing
+        else:
+            main_engine.write_log(f"Strategy {strategy_name} does not have on_start or it's not callable.")
+
+    # Log active strategies and their parameters
+    active_strategy_names = list(strategy_engine.strategies.keys())
+    main_engine.write_log(f"StrategyEngine initialized with {len(active_strategy_names)} active strategies: {active_strategy_names}")
+    for strategy_name in active_strategy_names:
+        strategy_instance = strategy_engine.strategies[strategy_name]
+        main_engine.write_log(f"Strategy '{strategy_name}' params: {strategy_instance.get_parameters()}")
 
     gateway_settings = {
-        "symbols": [],
+        "symbols": ["SYM1.LOCAL", "SYM2.LOCAL", "SYM3.LOCAL", "SYM4.LOCAL"], # Example symbols
         "simulation_interval_seconds": 2,  # Bars every second for each symbol
         "open_price_range_min": 100,
         "open_price_range_max": 105,

@@ -33,13 +33,14 @@ from vnpy.trader.constant import EngineType
 from vnpy.trader.utility import load_json, save_json, get_file_path, virtual
 from vnpy.trader.database import BaseDatabase, get_database
 from vnpy.trader.datafeed import BaseDatafeed, get_datafeed
+import polars as pl # Added import
 
 # --- Strategy & Portfolio Specific Imports ---
 from vnpy.app.portfolio_manager.engine import PortfolioEngine, APP_NAME as PortfolioEngine_APP_NAME
 PORTFOLIO_APP_NAME = PortfolioEngine_APP_NAME
 
 from vnpy.strategy.execution_agent import ExecutionAgent
-from vnpy.factor.memory import FactorMemory
+from vnpy.factor.memory import FactorMemory # FactorMemory might still be used by strategies, keep for now
 from vnpy.strategy.template import StrategyTemplate
 
 # --- Settings Integration (Updated) ---
@@ -123,7 +124,7 @@ class StrategyEngine(BaseEngine):
         )
 
         # --- Factor Handling ---
-        self.latest_factor_memories: Dict[str, FactorMemory] = {}
+        self.latest_factors_data: Dict[str, pl.DataFrame] = {} # Renamed and type updated
         self.factor_update_time: Optional[datetime] = None
 
         self.write_log("Engine components initialized.", level=DEBUG)
@@ -387,19 +388,24 @@ class StrategyEngine(BaseEngine):
     # --- Core Event Processing & Strategy Interaction ---
 
     def process_factor_event(self, event: Event) -> None:
-        factor_memories_dict: Dict[str, FactorMemory] = event.data
-        if not isinstance(factor_memories_dict, dict) or not factor_memories_dict:
-            self.write_log(f"Ignoring factor event: Data not a non-empty dict (Type: {type(factor_memories_dict)}).", WARNING)
+        # Ensure pl is imported if not already: import polars as pl
+        latest_factors_data: Dict[str, pl.DataFrame] = event.data # Correct type and name
+        if not isinstance(latest_factors_data, dict) or not latest_factors_data:
+            self.write_log(f"Ignoring factor event: Data not a non-empty dict (Type: {type(latest_factors_data)}).", WARNING)
             return
-        self.write_log(f"Processing factor update with {len(factor_memories_dict)} FactorMemory objects: {list(factor_memories_dict.keys())[:3]}...", DEBUG)
-        self.latest_factor_memories = factor_memories_dict
-        self.factor_update_time = self.get_current_datetime() # Assuming get_current_datetime exists
+
+        # Update log message to reflect Polars DataFrames
+        factor_keys_preview = list(latest_factors_data.keys())[:3]
+        self.write_log(f"Processing factor update with {len(latest_factors_data)} Polars DataFrames for factors: {factor_keys_preview}...", DEBUG)
+
+        self.latest_factors_data = latest_factors_data # Use new attribute name
+        self.factor_update_time = self.get_current_datetime()
+
         active_strategies = [s for s in self.strategies.values() if getattr(s, 'inited', False) and getattr(s, 'trading', False)]
         for strategy in active_strategies:
-            # Prefer 'on_factor_update' if defined in StrategyTemplate
             handler_method_name = 'on_factor_update' if hasattr(strategy, 'on_factor_update') else 'on_factor'
             if hasattr(strategy, handler_method_name) and callable(getattr(strategy, handler_method_name)):
-                self.call_strategy_func(strategy, getattr(strategy, handler_method_name), factor_memories_dict)
+                self.call_strategy_func(strategy, getattr(strategy, handler_method_name), latest_factors_data) # Pass correct data
             # else: self.write_log(f"Strategy {strategy.strategy_name} has no {handler_method_name} method.", DEBUG)
 
 
@@ -426,8 +432,8 @@ class StrategyEngine(BaseEngine):
             self.write_log(f"Cannot retrain for '{strategy_name}': No callable 'retrain_model'.", ERROR, strategy=strategy); return
         self.write_log(f"Starting model retraining for: {strategy_name}", INFO, strategy=strategy)
         try:
-            # Pass all latest FactorMemory instances. Strategy's retrain_model will fetch history.
-            strategy.retrain_model(self.latest_factor_memories)
+            # Pass all latest Polars DataFrames. Strategy's retrain_model will fetch history.
+            strategy.retrain_model(self.latest_factors_data) # New
             self.write_log(f"Retrain call completed for '{strategy_name}'. Last retrained: {getattr(strategy, 'last_retrain_time', 'N/A')}", INFO, strategy=strategy)
         except Exception as e:
             self.write_log(f"Exception during retrain_model for '{strategy_name}': {e}\n{traceback.format_exc()}", ERROR, strategy=strategy)
@@ -444,8 +450,13 @@ class StrategyEngine(BaseEngine):
     # For brevity, only a few are re-pasted if they needed minor adjustments.
 
     def write_log(self, msg: str, strategy: Optional[StrategyTemplate] = None, level: int = INFO) -> None:
-        prefix = f"[{strategy.strategy_name}] " if strategy and hasattr(strategy, 'strategy_name') else ""
-        log_entry = LogData(msg=f"{prefix}{msg}", gateway_name=self.engine_name, level=level)
+        log_msg: str
+        if strategy and hasattr(strategy, 'strategy_name'):
+            log_msg = f"{strategy.strategy_name}: {msg}"
+        else:
+            log_msg = msg
+
+        log_entry = LogData(msg=log_msg, gateway_name=self.engine_name, level=level)
         event = Event(type=EVENT_LOG, data=log_entry) # Use standard EVENT_LOG
         self.event_engine.put(event)
 

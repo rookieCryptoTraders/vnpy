@@ -1,1 +1,2 @@
 from .my_strat_lib import MyMomentumStrategy
+from .ranked_factor_strategy import RankedFactorStrategy

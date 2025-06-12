@@ -30,5 +30,23 @@
     },
     "custom_strategy_param_A": "alpha",
     "custom_strategy_param_B": 123
+  },
+  {
+    "class_name": "RankedFactorStrategy",
+    "strategy_name": "FactorRanker_Demo",
+    "vt_symbols": ["SYM1.LOCAL", "SYM2.LOCAL", "SYM3.LOCAL", "SYM4.LOCAL"],
+    "ranking_factor_name": "factor.1m.mimicdummyfactor@noparams",
+    "factor_value_column": "factor_value",
+    "num_long": 1,
+    "num_short": 1,
+    "percent_capital_per_position": 0.02,
+    "limit_order_price_offset_ticks": 1,
+    "model_load_path": null,
+    "model_save_path": null,
+    "retraining_config": {},
+    "model_config": {},
+    "trading_config": {
+      "min_order_volume": 1.0
+    }
   }
 ]
