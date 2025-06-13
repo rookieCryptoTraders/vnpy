@@ -13,7 +13,7 @@ from typing import Callable, Optional, Union
 import pandas as pd
 import polars as pl
 import numpy as np
-# import talib
+import talib
 from zoneinfo import ZoneInfo, available_timezones  # noqa
 
 from vnpy.trader.object import BarData, TickData, FactorData
@@ -55,8 +55,7 @@ def extract_vt_symbol_factor(vt_symbol: str) -> tuple[Interval, str, str, Exchan
     return Interval(interval_str), symbol, factor_name, Exchange(exchange)
 
 
-def extract_vt_symbol(vt_symbol: str, is_factor=False) -> Union[
-    tuple[str, Exchange], tuple[Interval, str, str, Exchange]]:
+def extract_vt_symbol(vt_symbol: str, is_factor=False) -> tuple[str, Exchange] | tuple[Interval, str, str, Exchange]:
     """
     :return: (symbol, exchange) or ('factor',interval, symbol(ticker), name(factor name), exchange)
     """
