@@ -79,8 +79,8 @@ class MainEngine:
         self.apps: dict[str, BaseApp] = {}
         self.intervals = [Interval(interval) for interval in SETTINGS.get('gateway.intervals', [])]  # hyf
         self.symbols = SETTINGS.get("gateway.symbols", [])  # hyf
-        self.exchanges = [Exchange(ex) for ex in SETTINGS.get("gateway.exchanges", [])]  # hyf
-        self.vt_symbols: list[str] = [f"{s}.{e}" for s, e in product(self.symbols, self.exchanges)]
+        self.exchanges: list[Exchange] = [Exchange(ex) for ex in SETTINGS.get("gateway.exchanges", [])]  # hyf
+        self.vt_symbols: list[str] = [f"{s}.{e.value}" for s, e in product(self.symbols, self.exchanges)]
         self.mode: str = SETTINGS.get('mode', 'LIVE')
         assert self.mode in ['LIVE', 'BACKTEST', 'TEST']
 
