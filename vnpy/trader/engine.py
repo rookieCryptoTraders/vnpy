@@ -7,7 +7,6 @@ from abc import ABC, abstractmethod
 from email.message import EmailMessage
 from queue import Empty, Queue
 from threading import Thread
-from typing import Type, Dict, List, Optional, Union
 from itertools import product
 from typing import TypeVar
 from collections.abc import Callable
@@ -75,9 +74,9 @@ class MainEngine:
             self.event_engine = EventEngine()
         self.event_engine.start()
 
-        self.gateways: Dict[str, BaseGateway] = {}
-        self.engines: Dict[str, BaseEngine] = {}
-        self.apps: Dict[str, BaseApp] = {}
+        self.gateways: dict[str, BaseGateway] = {}
+        self.engines: dict[str, BaseEngine] = {}
+        self.apps: dict[str, BaseApp] = {}
         self.intervals = [Interval(interval) for interval in SETTINGS.get('gateway.intervals', [])]  # hyf
         self.symbols = SETTINGS.get("gateway.symbols", [])  # hyf
         self.exchanges = [Exchange(ex) for ex in SETTINGS.get("gateway.exchanges", [])]  # hyf
@@ -96,7 +95,7 @@ class MainEngine:
         self.engines[engine.engine_name] = engine
         return engine
 
-    def add_gateway(self, gateway_class: Type[BaseGateway], gateway_name: str = "") -> BaseGateway:
+    def add_gateway(self, gateway_class: type[BaseGateway], gateway_name: str = "") -> BaseGateway:
         """
         Add gateway.
         """
@@ -114,7 +113,7 @@ class MainEngine:
 
         return gateway
 
-    def add_app(self, app_class: Type[BaseApp]) -> Union[BaseEngine, Type[BaseEngine], EngineType]:
+    def add_app(self, app_class: type[BaseApp]) -> BaseEngine | type[BaseEngine] | EngineType:
         """
         Add app.
         """
@@ -194,19 +193,19 @@ class MainEngine:
             return gateway.get_default_setting()
         return None
 
-    def get_all_gateway_names(self) -> List[str]:
+    def get_all_gateway_names(self) -> list[str]:
         """
         Get all names of gateway added in main engine.
         """
         return list(self.gateways.keys())
 
-    def get_all_apps(self) -> List[BaseApp]:
+    def get_all_apps(self) -> list[BaseApp]:
         """
         Get all app objects.
         """
         return list(self.apps.values())
 
-    def get_all_exchanges(self) -> List[Exchange]:
+    def get_all_exchanges(self) -> list[Exchange]:
         """
         Get all exchanges.
         """
@@ -273,7 +272,7 @@ class MainEngine:
         if gateway:
             gateway.cancel_quote(req)
 
-    def query_history(self, req: HistoryRequest, gateway_name: str) -> Optional[List[BarData]]:
+    def query_history(self, req: HistoryRequest, gateway_name: str) -> list[BarData] | None:
         """
         Query bar history data from a specific gateway.
         """
@@ -301,7 +300,7 @@ class MainEngine:
         for exchange in self.exchanges:
             for ticker in self.tickers:
                 vt_symbol = f'{ticker}.{exchange.value}'
-                contract: Optional[ContractData] = self.get_contract(vt_symbol)
+                contract: ContractData | None = self.get_contract(vt_symbol)
                 if contract:
                     req: SubscribeRequest = SubscribeRequest(symbol=contract.symbol, exchange=contract.exchange)
                     self.subscribe(req, contract.gateway_name)
@@ -441,18 +440,18 @@ class OmsEngine(BaseEngine):
         """"""
         super(OmsEngine, self).__init__(main_engine, event_engine, "oms")
 
-        self.ticks: Dict[str, TickData] = {}
-        self.orders: Dict[str, OrderData] = {}
-        self.trades: Dict[str, TradeData] = {}
-        self.positions: Dict[str, PositionData] = {}
-        self.accounts: Dict[str, AccountData] = {}
-        self.contracts: Dict[str, ContractData] = {}
-        self.quotes: Dict[str, QuoteData] = {}
+        self.ticks: dict[str, TickData] = {}
+        self.orders: dict[str, OrderData] = {}
+        self.trades: dict[str, TradeData] = {}
+        self.positions: dict[str, PositionData] = {}
+        self.accounts: dict[str, AccountData] = {}
+        self.contracts: dict[str, ContractData] = {}
+        self.quotes: dict[str, QuoteData] = {}
 
-        self.active_orders: Dict[str, OrderData] = {}
-        self.active_quotes: Dict[str, QuoteData] = {}
+        self.active_orders: dict[str, OrderData] = {}
+        self.active_quotes: dict[str, QuoteData] = {}
 
-        self.offset_converters: Dict[str, OffsetConverter] = {}
+        self.offset_converters: dict[str, OffsetConverter] = {}
 
         # self.add_function()  # vnpy v4.0.0 update. it is moved to initialization of main_engine
         self.register_event()
@@ -560,67 +559,67 @@ class OmsEngine(BaseEngine):
         elif quote.vt_quoteid in self.active_quotes:
             self.active_quotes.pop(quote.vt_quoteid)
 
-    def get_tick(self, vt_symbol: str) -> Optional[TickData]:
+    def get_tick(self, vt_symbol: str) -> TickData | None:
         """
         Get latest market tick data by vt_symbol.
         """
         return self.ticks.get(vt_symbol, None)
 
-    def get_order(self, vt_orderid: str) -> Optional[OrderData]:
+    def get_order(self, vt_orderid: str) -> OrderData | None:
         """
         Get latest order data by vt_orderid.
         """
         return self.orders.get(vt_orderid, None)
 
-    def get_trade(self, vt_tradeid: str) -> Optional[TradeData]:
+    def get_trade(self, vt_tradeid: str) -> TradeData | None:
         """
         Get trade data by vt_tradeid.
         """
         return self.trades.get(vt_tradeid, None)
 
-    def get_position(self, vt_positionid: str) -> Optional[PositionData]:
+    def get_position(self, vt_positionid: str) -> PositionData | None:
         """
         Get latest position data by vt_positionid.
         """
         return self.positions.get(vt_positionid, None)
 
-    def get_account(self, vt_accountid: str) -> Optional[AccountData]:
+    def get_account(self, vt_accountid: str) -> AccountData | None:
         """
         Get latest account data by vt_accountid.
         """
         return self.accounts.get(vt_accountid, None)
 
-    def get_contract(self, vt_symbol: str) -> Optional[ContractData]:
+    def get_contract(self, vt_symbol: str) -> ContractData | None:
         """
         Get contract data by vt_symbol.
         """
         return self.contracts.get(vt_symbol, None)
 
-    def get_quote(self, vt_quoteid: str) -> Optional[QuoteData]:
+    def get_quote(self, vt_quoteid: str) -> QuoteData | None:
         """
         Get latest quote data by vt_orderid.
         """
         return self.quotes.get(vt_quoteid, None)
 
-    def get_all_ticks(self) -> List[TickData]:
+    def get_all_ticks(self) -> list[TickData]:
         """
         Get all tick data.
         """
         return list(self.ticks.values())
 
-    def get_all_orders(self) -> List[OrderData]:
+    def get_all_orders(self) -> list[OrderData]:
         """
         Get all order data.
         """
         return list(self.orders.values())
 
-    def get_all_trades(self) -> List[TradeData]:
+    def get_all_trades(self) -> list[TradeData]:
         """
         Get all trade data.
         """
         return list(self.trades.values())
 
-    def get_all_positions(self) -> List[PositionData]:
+    def get_all_positions(self) -> list[PositionData]:
         """
         Get all position data.
         """
@@ -644,7 +643,7 @@ class OmsEngine(BaseEngine):
         """
         return list(self.quotes.values())
 
-    def get_all_active_orders(self, vt_symbol: str = "") -> List[OrderData]:
+    def get_all_active_orders(self, vt_symbol: str = "") -> list[OrderData]:
         """
         Get all active orders by vt_symbol.
 
@@ -653,14 +652,14 @@ class OmsEngine(BaseEngine):
         if not vt_symbol:
             return list(self.active_orders.values())
         else:
-            active_orders: List[OrderData] = [
+            active_orders: list[OrderData] = [
                 order
                 for order in self.active_orders.values()
                 if order.vt_symbol == vt_symbol
             ]
             return active_orders
 
-    def get_all_active_quotes(self, vt_symbol: str = "") -> List[QuoteData]:
+    def get_all_active_quotes(self, vt_symbol: str = "") -> list[QuoteData]:
         """
         Get all active quotes by vt_symbol.
         If vt_symbol is empty, return all active qutoes.
@@ -668,7 +667,7 @@ class OmsEngine(BaseEngine):
         if not vt_symbol:
             return list(self.active_quotes.values())
         else:
-            active_quotes: List[QuoteData] = [
+            active_quotes: list[QuoteData] = [
                 quote
                 for quote in self.active_quotes.values()
                 if quote.vt_symbol == vt_symbol
