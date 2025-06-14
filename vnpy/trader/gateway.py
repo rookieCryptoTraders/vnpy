@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Callable
+from collections.abc import Callable
 from copy import copy
 from logging import INFO
 
