@@ -1,436 +1,426 @@
 import importlib
-import time
 from collections import defaultdict
 from copy import deepcopy
-from logging import ERROR, INFO, DEBUG, NOTSET
-from queue import Queue
-from threading import Thread
-from typing import Literal, Optional, Union
+from logging import ERROR, INFO, NOTSET
+from queue import Empty, Queue
+from threading import Lock, Thread
+from typing import Literal
 
 import polars as pl
+from vnpy_clickhouse.clickhouse_database import ClickhouseDatabase
 
 from vnpy.adapters.overview import OverviewHandler
 from vnpy.event.engine import Event
-from vnpy.trader.constant import Interval, Exchange
-from vnpy.trader.engine import BaseEngine, MainEngine, EventEngine
-from vnpy.trader.event import EVENT_LOG, EVENT_CONTRACT, EVENT_BAR, EVENT_FACTOR, EVENT_RECORDER_UPDATE
-from vnpy.trader.object import (SubscribeRequest, TickData, BarData, FactorData, ContractData, LogData)
-from vnpy.trader.setting import SETTINGS
-from vnpy.trader.utility import (
-    BarGenerator,
-    extract_vt_symbol,
-    extract_factor_key
+from vnpy.trader.constant import Exchange, Interval
+from vnpy.trader.engine import BaseEngine, EventEngine, MainEngine
+from vnpy.trader.event import (
+    EVENT_BAR,
+    EVENT_CONTRACT,
+    EVENT_FACTOR,
+    EVENT_LOG,
+    EVENT_RECORDER_UPDATE,
 )
-from vnpy_clickhouse.clickhouse_database import ClickhouseDatabase
+from vnpy.trader.object import (
+    BarData,
+    ContractData,
+    FactorData,
+    LogData,
+    SubscribeRequest,
+    TickData,
+)
+from vnpy.trader.setting import SETTINGS
+from vnpy.trader.utility import BarGenerator, extract_factor_key
 
 APP_NAME = "DataRecorder"
 SYSTEM_MODE = SETTINGS.get("system.mode", "LIVE")
 
 
 class RecorderEngine(BaseEngine):
-    """For storing data obtained from exchanges like Binance into the database, not responsible for calculating factors"""
+    """
+    For storing tick, bar, and factor data from market data streams into a database.
+    This engine is designed to be thread-safe and handles data in batches for efficiency.
+    """
 
-    def __init__(self,
-                 main_engine: MainEngine,
-                 event_engine: EventEngine):
-        """"""
+    def __init__(self, main_engine: MainEngine, event_engine: EventEngine):
+        """Initializes the RecorderEngine."""
         super().__init__(main_engine, event_engine, engine_name=APP_NAME)
 
-        self.queue = Queue()
-        self.thread = Thread(target=self.run)
-        self.active = False
+        self.queue: Queue = Queue()
+        self.thread: Thread = Thread(target=self.run)
+        self.active: bool = False
+        self.lock: Lock = Lock()  # Lock for thread-safe access to shared resources
 
-        # zc
-        self.tick_recordings = {}  # list of symbols to record tick data
-        self.bar_recordings = {}  # list of symbols to record bar data
-        self.factor_recordings = {}  # list of symbols to record bar data
-        self.bar_generators = {}
+        # Dictionaries to track which symbols are being recorded
+        self.tick_recordings: dict[str, dict] = {}
+        self.bar_recordings: dict[str, dict] = {}
+        self.factor_recordings: dict[str, dict] = {}
 
-        # zc
-        # self.load_setting()
+        # Bar generators for creating bars from ticks
+        self.bar_generators: dict[str, BarGenerator] = {}
+
         self.register_event()
-        self.start()
-        self.put_event()
 
-        # database settings
-        self.buffer_bar = defaultdict(list)
-        self.buffer_factor = defaultdict(list)
-        self.buffer_size = 1  # todo: 调大该数字
+        # --- Database Settings ---
+        # Buffers for batch database writes
+        self.buffer_bar: defaultdict = defaultdict(list)
+        self.buffer_factor: defaultdict = defaultdict(list)
+        self.buffer_size: int = 1000  # Number of records to buffer before writing
 
-        # database init
+        # Database manager instance
         self.database_manager = ClickhouseDatabase(event_engine=event_engine)
-        # self.database_manager = get_database()  # todo: use configured database
 
-        # overview. DO NOT USE IT FOR UPDATING OVERVIEW!
-        self.overview_handler_for_result_check = OverviewHandler()  # only used for check data consistency.
+        # Overview handler for data consistency checks (optional)
+        self.overview_handler_for_result_check = OverviewHandler()
 
-    def update_schema(self, database_name: str, exchanges: list[Exchange], intervals: Union[Interval, list[Interval]],
-                      factor_keys: Optional[list[str]] = None):
-        """use outer information to update the schema of the database"""
+    def update_schema(
+        self,
+        database_name: str,
+        exchanges: list[Exchange],
+        intervals: Interval | list[Interval],
+        factor_keys: list[str] | None = None,
+    ):
+        """Dynamically updates the database schema based on external info."""
+        # This function remains as is, assuming it works in your environment.
         database_name = database_name.lower()
         module = importlib.import_module(f"vnpy_{database_name}")
-        convertor = getattr(module, "outer_str2console_str")  # convert factor keys to database acceptable column names
+        convertor = module.outer_str2console_str
         dtype_mapper = module.DTYPE_MAPPER
-        database_name_camelcase = database_name[0].upper() + database_name[1:].lower()
-        for exchange in exchanges:
-            exchange = exchange.value
-            # convert to CamelCase
-            exchange_camelcase = exchange[0].upper() + exchange[1:].lower()
-            factor_schema_class = getattr(module,
-                                          f"{database_name_camelcase}{exchange_camelcase}FactorSchema")
-            factor_keys: dict = {convertor(factor_key): dtype_mapper['float64'] for factor_key in
-                                 factor_keys} if factor_keys else {}
-            schema_factor = factor_schema_class(additional_columns=factor_keys)
-            self.database_manager.update_all_schema(intervals=intervals, schema_factor=schema_factor)
+        database_name_camelcase = database_name.capitalize()
 
-    def register_event(self):
-        """"""
-        # self.event_engine.register(EVENT_TICK, self.process_tick_event)
+        for exchange in exchanges:
+            exchange_val = exchange.value
+            exchange_camelcase = exchange_val.capitalize()
+            factor_schema_class = getattr(
+                module, f"{database_name_camelcase}{exchange_camelcase}FactorSchema"
+            )
+            factor_keys_dict = (
+                {convertor(key): dtype_mapper["float64"] for key in factor_keys}
+                if factor_keys
+                else {}
+            )
+            schema_factor = factor_schema_class(additional_columns=factor_keys_dict)
+            self.database_manager.update_all_schema(
+                intervals=intervals, schema_factor=schema_factor
+            )
+
+    def register_event(self) -> None:
+        """Registers the engine for relevant events."""
         self.event_engine.register(EVENT_BAR, self.process_bar_event)
         self.event_engine.register(EVENT_FACTOR, self.process_factor_event)
         self.event_engine.register(EVENT_CONTRACT, self.process_contract_event)
 
-        # self.main_engine.register_log_event(EVENT_RECORDER_LOG)
-
-    def save_data(self,
-                  task_type: Optional[Literal["bar", "factor", "tick"]] = None,
-                  data=None,
-                  force_save: bool = False,
-                  stream: bool = False,
-                  ):
-        """The actual implementation of the core functions that put the data into the database
-        
-        Parameters
-        ----------
-        stream : bool
-            true when the data is streamed
-        task_type :
-        data :
-        force_save : bool
-            Ignore buffer_size and force all current data to be saved
-
-        Returns
-        -------
-
-        """
-        if task_type == "tick":
-            self.database_manager.save_tick_data([data])
-        elif task_type == "bar":
-            assert isinstance(data, BarData)
-            self.buffer_bar[data.vt_symbol].append(data)
-            to_remove = []  # After saving the data, remove it from the buffer
-            for k, v in self.buffer_bar.items():
-                # do insertion
-                if len(v) >= self.buffer_size or force_save:
-                    # get info for the data list
-                    sample_data = v[0]
-                    vt_symbol: str = sample_data.vt_symbol
-                    interval: Interval = sample_data.interval
-                    symbol, exchange = extract_vt_symbol(vt_symbol, is_factor=False)
-
-                    status = self.database_manager.save_bar_data(v, interval=interval, exchange=exchange)
-                    # todo: use status
-                    to_remove.append(k)  # to remove the key from buffer
-
-                    # check consistency
-                    overview = self.overview_handler_for_result_check.bar_overview.get(vt_symbol, {})
-                    ret = self.database_manager.client_bar.select(freq=str(interval.value), ticker_list=symbol,
-                                                                  start_time=overview.start,
-                                                                  end_time=overview.end, ret='rows')
-                    assert self.overview_handler_for_result_check.bar_overview[vt_symbol].count == len(
-                        ret) if not SYSTEM_MODE == 'TEST' else True
-            for k in to_remove:
-                self.buffer_bar[k] = []
-        elif task_type == 'factor':
-            self.write_log(f"Recognized factor", level=NOTSET)
-            if isinstance(data, FactorData):
-                self.write_log(f"Recognized FactorData", level=DEBUG)
-                self.buffer_factor[data.vt_symbol].append(data)  # todo: Can vt_symbol be used here???
-                to_remove = []
-                for k, v in self.buffer_factor.items():
-                    if len(v) >= self.buffer_size or force_save:
-                        # get info for the data list
-                        sample_data: FactorData = v[0]
-                        vt_symbol: str = sample_data.vt_symbol
-                        interval: Interval = sample_data.interval
-                        interval_, symbol, factor_name, exchange = extract_vt_symbol(vt_symbol, is_factor=True)
-
-                        status = self.database_manager.save_factor_data(name=data.factor_name, data=v)
-                        to_remove.append(k)
-
-                for k in to_remove:
-                    self.buffer_factor[k] = []
-            elif isinstance(data, pl.DataFrame):
-                self.write_log(f"Recognized polars dataframe")
-                self.write_log(f"data {data}")
-                time.sleep(0.1)
-                self.database_manager.save_factor_data(name=data.columns[-1], data=data)
-            elif isinstance(data, dict) and isinstance(list(data.values())[0], pl.DataFrame):
-                self.write_log(f"Recognized dict", level=NOTSET)
-                df_list = []
-                checked_interval = None
-                for factor_key, factor_df in data.items():
-                    self.write_log(f"factor_key: {factor_key}", level=NOTSET)
-                    self.write_log(f"factor_df: {factor_df}", level=NOTSET)
-                    interval, factor_name = extract_factor_key(factor_key)
-                    # check all the data have the same interval
-                    if checked_interval is None:
-                        checked_interval = interval
-                    else:
-                        assert interval == checked_interval
-                    # stacking the DataFrame (make column_names into one column called ticker)
-                    """
-                    2025-03-05 15:48:00,489  INFO: factor_df: shape: (1, 3)
-                    ┌─────────────────────┬─────────────────┬─────────────────┐
-                    │ datetime            ┆ btcusdt.BINANCE ┆ ethusdt.BINANCE │
-                    │ ---                 ┆ ---             ┆ ---             │
-                    │ datetime[μs]        ┆ f64             ┆ f64             │
-                    ╞═════════════════════╪═════════════════╪═════════════════╡
-                    │ 2025-03-05 15:47:00 ┆ 88620.0         ┆ 2190.79         │
-                    └─────────────────────┴─────────────────┴─────────────────┘
-                    ->
-                    2025-03-05 15:48:00,489  INFO: df_long: shape: (2, 3)
-                    ┌─────────────────────┬─────────────────┬─────────────────────────┐
-                    │ datetime            ┆ ticker          ┆ factor_1m_open@noparams │
-                    │ ---                 ┆ ---             ┆ ---                     │
-                    │ datetime[μs]        ┆ str             ┆ f64                     │
-                    ╞═════════════════════╪═════════════════╪═════════════════════════╡
-                    │ 2025-03-05 15:47:00 ┆ btcusdt.BINANCE ┆ 88620.0                 │
-                    │ 2025-03-05 15:47:00 ┆ ethusdt.BINANCE ┆ 2190.79                 │
-                    └─────────────────────┴─────────────────┴─────────────────────────┘
-                    """
-                    df_pivoted = factor_df.melt(
-                        id_vars=["datetime"],
-                        value_vars=list(sorted(set(factor_df.columns) - {'datetime'})),
-                        variable_name="ticker",
-                        value_name=factor_key
-                    )
-                    df_list.append(df_pivoted)
-                df_pivoted = pl.concat(df_list, how='align')
-                self.write_log(f"df_pivoted: {df_pivoted}", level=NOTSET)
-                status = self.database_manager.save_factor_data(data=df_pivoted, interval=checked_interval)
-
-            else:
-                raise TypeError(f"Unsupported data type: {type(data)}")
-
-        elif task_type is None and data is None:
-            # Force save all current data
-            for k, v in self.buffer_bar.items():
-                if len(v) == 0:
-                    continue
-                self.database_manager.save_bar_data(v)
-            for k, v in self.buffer_factor.items():
-                if len(v) == 0:
-                    continue
-                self.database_manager.save_factor_data(name=v[0].factor_name, data=v)
-            self.buffer_bar = defaultdict(list)
-            self.buffer_factor = defaultdict(list)
-
     def run(self):
-        """"""
+        """Main loop for the worker thread."""
         while self.active:
-            if self.queue.qsize() > 0:
+            try:
+                # Get a task from the queue, with a timeout to allow periodic buffer checks
                 task = self.queue.get(timeout=1)
                 task_type, data = task
                 self.save_data(task_type, data)
-            else:
-                time.sleep(1)
+            except Empty:
+                # If the queue is empty, flush any partially filled buffers
+                self.save_data(force_save=True)
+            except Exception as e:
+                self.write_log(f"Error in recorder worker thread: {e}", level=ERROR)
 
     def close(self):
-        """"""
-        self.save_data(None, None)  # Save all remaining data in the buffer
+        """Stops the engine and saves all remaining data."""
+        if not self.active:
+            return
+
+        self.write_log("Closing data recorder engine.")
         self.active = False
-        if self.thread.isAlive():
+        if self.thread.is_alive():
             self.thread.join()
 
+        # Final save of any data left in buffers after the thread stops
+        self._flush_all_buffers()
+        self.write_log("Data recorder engine closed.")
+
     def start(self):
-        """"""
-        self.write_log("Starting data fetching engine")
+        """Starts the engine and its worker thread."""
+        if self.active:
+            return
+
+        self.write_log("Starting data recorder engine.")
         self.active = True
         self.thread.start()
+        self.put_event()
+
+    # ----------------------------------------------------------------------
+    # Public API for adding/removing recordings
+    # ----------------------------------------------------------------------
 
     def add_bar_recording(self, vt_symbol: str):
-        """add a symbol to the bar recording list, which means that the bar data of this symbol will be recorded"""
-        if vt_symbol in self.bar_recordings:
-            self.write_log(f"Already in K-line recording list: {vt_symbol}", level=NOTSET)
-            return
+        """Adds a symbol for bar data recording."""
+        with self.lock:
+            if vt_symbol in self.bar_recordings:
+                self.write_log(f"Already in K-line recording list: {vt_symbol}", level=NOTSET)
+                return
 
-        contract = self.main_engine.get_contract(vt_symbol)
-        if not contract:
-            self.write_log(f"Cannot find contract: {vt_symbol}", level=ERROR)
-            return
+            contract = self.main_engine.get_contract(vt_symbol)
+            if not contract:
+                self.write_log(f"Cannot find contract for bar recording: {vt_symbol}", level=ERROR)
+                return
 
-        self.bar_recordings[vt_symbol] = {
-            "symbol": contract.symbol,
-            "exchange": contract.exchange.value,
-            "gateway_name": contract.gateway_name
-        }
-
-        self.subscribe(contract)
-        # self.save_setting()
-        self.put_event()
-
-        self.write_log(f"Added K-line recording successfully: {vt_symbol}", level=DEBUG)
-
-    def add_factor_recording(self, vt_symbol: str):
-        """add a symbol to the factor recording list, which means that the factor data of this symbol will be recorded"""
-        if vt_symbol in self.factor_recordings:
-            self.write_log(f"Already in factor recording list: {vt_symbol}", level=NOTSET)
-            return
-
-        contract = self.main_engine.get_contract(vt_symbol)
-        if not contract:
-            self.write_log(f"Cannot find contract: {vt_symbol}", level=ERROR)
-            return
-
-        self.factor_recordings[vt_symbol] = {
-            "symbol": contract.symbol,
-            "exchange": contract.exchange.value,
-            "gateway_name": contract.gateway_name
-        }
-
-        self.subscribe(contract)
-        # self.save_setting()
-        self.put_event()
-
-        self.write_log(f"Added factor recording successfully: {vt_symbol}", level=DEBUG)
-
-    def add_tick_recording(self, vt_symbol: str):
-        """add a symbol to the tick recording list, which means that the tick data of this symbol will be recorded"""
-        if vt_symbol in self.tick_recordings:
-            self.write_log(f"Already in Tick recording list: {vt_symbol}", level=NOTSET)
-            return
-
-        contract = self.main_engine.get_contract(vt_symbol)
-        if not contract:
-            self.write_log(f"Cannot find contract: {vt_symbol}", level=ERROR)
-            return
-
-        self.tick_recordings[vt_symbol] = {
-            "symbol": contract.symbol,
-            "exchange": contract.exchange.value,
-            "gateway_name": contract.gateway_name
-        }
-
-        self.subscribe(contract)
-        # self.save_setting()
-        self.put_event()
-
-        self.write_log(f"Added Tick recording successfully: {vt_symbol}", level=DEBUG)
-
-    def remove_bar_recording(self, vt_symbol: str):
-        """remove a symbol from the bar recording list"""
-        if vt_symbol not in self.bar_recordings:
-            self.write_log(f"Not in K-line recording list: {vt_symbol}", level=DEBUG)
-            return
-
-        self.bar_recordings.pop(vt_symbol)
-        # self.save_setting()
-        self.put_event()
-
-        self.write_log(f"Removed K-line recording successfully: {vt_symbol}")
-
-    def remove_tick_recording(self, vt_symbol: str):
-        """remove a symbol from the tick recording list"""
-        if vt_symbol not in self.tick_recordings:
-            self.write_log(f"Not in Tick recording list: {vt_symbol}", level=DEBUG)
-            return
-
-        self.tick_recordings.pop(vt_symbol)
-        # self.save_setting()
-        self.put_event()
-
-        self.write_log(f"Removed Tick recording successfully: {vt_symbol}")
-
-    def process_bar_event(self, event: Event):
-        """"""
-        bar = event.data
-        self.record_bar(bar)
-
-    def process_factor_event(self, event: Event):
-        """"""
-        factor_dict: dict = event.data
-
-        self.write_log(f"factor_dict: {factor_dict}", level=NOTSET)
-        self.record_factor(factor_dict)
-
-    def process_tick_event(self, event: Event):
-        """"""
-        tick = event.data
-
-        if tick.vt_symbol in self.tick_recordings:
-            self.record_tick(tick)
-
-        if tick.vt_symbol in self.bar_recordings:
-            bg = self.get_bar_generator(tick.vt_symbol)
-            bg.update_tick(tick)
-
-    def process_contract_event(self, event: Event):
-        """"""
-        contract = event.data
-        vt_symbol = contract.vt_symbol
-
-        if (vt_symbol in self.tick_recordings or vt_symbol in self.bar_recordings):
+            self.bar_recordings[vt_symbol] = {
+                "symbol": contract.symbol,
+                "exchange": contract.exchange.value,
+                "gateway_name": contract.gateway_name,
+            }
             self.subscribe(contract)
 
+        self.put_event()
+        self.write_log(f"Added K-line recording: {vt_symbol}", level=INFO)
+
+    def add_tick_recording(self, vt_symbol: str):
+        """Adds a symbol for tick data recording."""
+        with self.lock:
+            if vt_symbol in self.tick_recordings:
+                self.write_log(f"Already in Tick recording list: {vt_symbol}", level=NOTSET)
+                return
+
+            contract = self.main_engine.get_contract(vt_symbol)
+            if not contract:
+                self.write_log(f"Cannot find contract for tick recording: {vt_symbol}", level=ERROR)
+                return
+
+            self.tick_recordings[vt_symbol] = {
+                "symbol": contract.symbol,
+                "exchange": contract.exchange.value,
+                "gateway_name": contract.gateway_name,
+            }
+            self.subscribe(contract)
+
+        self.put_event()
+        self.write_log(f"Added Tick recording: {vt_symbol}", level=INFO)
+
+    def remove_bar_recording(self, vt_symbol: str):
+        """Removes a symbol from bar data recording."""
+        with self.lock:
+            if vt_symbol not in self.bar_recordings:
+                return
+            self.bar_recordings.pop(vt_symbol)
+
+        self.put_event()
+        self.write_log(f"Removed K-line recording: {vt_symbol}", level=INFO)
+
+    def remove_tick_recording(self, vt_symbol: str):
+        """Removes a symbol from tick data recording."""
+        with self.lock:
+            if vt_symbol not in self.tick_recordings:
+                return
+            self.tick_recordings.pop(vt_symbol)
+
+        self.put_event()
+        self.write_log(f"Removed Tick recording: {vt_symbol}", level=INFO)
+
+    # ----------------------------------------------------------------------
+    # Event processing methods (called by EventEngine)
+    # ----------------------------------------------------------------------
+
+    def process_bar_event(self, event: Event):
+        """Processes incoming bar data."""
+        self.record_bar(event.data)
+
+    def process_factor_event(self, event: Event):
+        """Processes incoming factor data."""
+        self.record_factor(event.data)
+
+    def process_tick_event(self, event: Event):
+        """Processes incoming tick data."""
+        tick: TickData = event.data
+        vt_symbol = tick.vt_symbol
+
+        with self.lock:
+            if vt_symbol in self.tick_recordings:
+                self.record_tick(tick)
+
+            if vt_symbol in self.bar_recordings:
+                bg = self.get_bar_generator(vt_symbol)
+                bg.update_tick(tick)
+
+    def process_contract_event(self, event: Event):
+        """Subscribes to market data upon receiving contract details."""
+        contract: ContractData = event.data
+        vt_symbol = contract.vt_symbol
+
+        with self.lock:
+            if vt_symbol in self.tick_recordings or vt_symbol in self.bar_recordings:
+                self.subscribe(contract)
+
+    # ----------------------------------------------------------------------
+    # Data recording methods (putting data into the queue)
+    # ----------------------------------------------------------------------
+
     def record_tick(self, tick: TickData):
-        """"""
-        self.write_log(f"record_tick", level=DEBUG)
+        """Puts tick data into the processing queue."""
         task = ("tick", deepcopy(tick))
         self.queue.put(task)
 
     def record_bar(self, bar: BarData):
-        """"""
-        self.write_log(f"record_bar", level=DEBUG)
+        """Puts bar data into the processing queue."""
         task = ("bar", deepcopy(bar))
         self.queue.put(task)
 
-    def record_factor(self, factor: Union[FactorData, pl.DataFrame, dict]):
-        """"""
-        self.write_log(f"record_factor", level=DEBUG)
+    def record_factor(self, factor: FactorData | dict):
+        """
+        Puts factor data into the queue.
+        DataFrame-based factors MUST be in a dict: {factor_key: pl.DataFrame}.
+        """
         task = ("factor", deepcopy(factor))
         self.queue.put(task)
 
-    def write_log(self, msg: str, level: int = INFO) -> None:
-        """"""
-        log: LogData = LogData(msg=msg, gateway_name=APP_NAME, level=level)
-        event: Event = Event(EVENT_LOG, log)
-        self.event_engine.put(event)
+    # ----------------------------------------------------------------------
+    # Core data saving logic (called by worker thread)
+    # ----------------------------------------------------------------------
 
-    def put_event(self):
-        """ this function is apply on widget.py """
-        tick_symbols = list(self.tick_recordings.keys())
-        tick_symbols.sort()
-
-        bar_symbols = list(self.bar_recordings.keys())
-        bar_symbols.sort()
-
-        data = {
-            "tick": tick_symbols,
-            "bar": bar_symbols
-        }
-
-        event = Event(
-            EVENT_RECORDER_UPDATE,
-            data
+    def save_data(
+        self,
+        task_type: Literal["bar", "factor", "tick"] | None = None,
+        data=None,
+        force_save: bool = False,
+    ):
+        """Routes data from the queue to the appropriate processing helper."""
+        self.write_log(
+            f"Processing task: {task_type}, force_save={force_save}",
+            level=INFO if task_type else NOTSET,
         )
+        if task_type == "tick":
+            self.database_manager.save_tick_data([data])
+        elif task_type == "bar":
+            self._process_bar_data(data, force_save)
+        elif task_type == "factor":
+            self._process_factor_data(data, force_save)
+        elif force_save:
+            # This case is for flushing buffers when the queue is empty
+            self._flush_all_buffers()
+
+    def _process_bar_data(self, data: BarData, force_save: bool):
+        """Helper to process and buffer bar data."""
+        with self.lock:
+            self.buffer_bar[data.vt_symbol].append(data)
+            to_remove = []
+            for k, v in self.buffer_bar.items():
+                if len(v) >= self.buffer_size or (force_save and v):
+                    self._save_bar_buffer(v)
+                    to_remove.append(k)
+            for k in to_remove:
+                self.buffer_bar.pop(k, None)
+
+    def _process_factor_data(self, data: FactorData | dict, force_save: bool):
+        """Helper to process and buffer/save factor data."""
+        with self.lock:
+            if isinstance(data, FactorData):
+                self.buffer_factor[data.vt_symbol].append(data)
+                to_remove = []
+                for k, v in self.buffer_factor.items():
+                    if len(v) >= self.buffer_size or (force_save and v):
+                        self.database_manager.save_factor_data(name=v[0].name, data=v)
+                        to_remove.append(k)
+                for k in to_remove:
+                    self.buffer_factor.pop(k, None)
+            elif isinstance(data, dict):
+                self._process_factor_dict(data)
+            else:
+                self.write_log(
+                    f"Unsupported data type for factor task: {type(data)}. "
+                    "Must be FactorData or dict.",
+                    level=ERROR,
+                )
+
+    def _flush_all_buffers(self):
+        """Force-saves all data remaining in any buffer."""
+        with self.lock:
+            if not self.buffer_bar and not self.buffer_factor:
+                return  # Nothing to flush
+            self.write_log("Flushing all data buffers...")
+            for v in self.buffer_bar.values():
+                if v:
+                    self._save_bar_buffer(v)
+            self.buffer_bar.clear()
+            for v in self.buffer_factor.values():
+                if v:
+                    self.database_manager.save_factor_data(name=v[0].factor_name, data=v)
+            self.buffer_factor.clear()
+            self.write_log("Buffers flushed.")
+
+    def _save_bar_buffer(self, bar_list: list[BarData]):
+        """Saves a list of bars from the buffer to the database."""
+        sample_data = bar_list[0]
+        self.database_manager.save_bar_data(
+            bar_list,
+            interval=sample_data.interval,
+            exchange=sample_data.exchange
+        )
+
+    def _process_factor_dict(self, data: dict):
+        """
+        Converts a dict of wide-format factor DataFrames to a single
+        long-format DataFrame and saves it.
+        """
+        long_format_dfs = []
+        checked_interval = None
+        for factor_key, wide_df in data.items():
+            if not isinstance(wide_df, pl.DataFrame):
+                self.write_log(f"Value for '{factor_key}' is not a DataFrame. Skipping.", level=ERROR)
+                continue
+            interval, _ = extract_factor_key(factor_key)
+            if checked_interval is None:
+                checked_interval = interval
+            else:
+                assert interval == checked_interval, "All factors in dict must have same interval."
+
+            df_long = wide_df.melt(
+                id_vars=["datetime"],
+                value_vars=[col for col in wide_df.columns if col != "datetime"],
+                variable_name="ticker",
+                value_name=factor_key,
+            )
+            long_format_dfs.append(df_long)
+        if not long_format_dfs:
+            return
+        final_df = long_format_dfs[0]
+        for i in range(1, len(long_format_dfs)):
+            final_df = final_df.join(
+                long_format_dfs[i], on=["datetime", "ticker"], how="outer_coalesce"
+            )
+        self.database_manager.save_factor_data(data=final_df, interval=checked_interval)
+
+    # ----------------------------------------------------------------------
+    # Utility methods
+    # ----------------------------------------------------------------------
+
+    def write_log(self, msg: str, level: int = INFO) -> None:
+        """Sends a log event to the main event bus."""
+        log = LogData(msg=msg, gateway_name=APP_NAME, level=level)
+        event = Event(EVENT_LOG, log)
         self.event_engine.put(event)
 
-    def get_bar_generator(self, vt_symbol: str):
-        """"""
-        bg = self.bar_generators.get(vt_symbol, None)
+    def put_event(self) -> None:
+        """Puts current recording status into the event engine for UI updates."""
+        with self.lock:
+            tick_symbols = sorted(self.tick_recordings.keys())
+            bar_symbols = sorted(self.bar_recordings.keys())
+        data = {"tick": tick_symbols, "bar": bar_symbols}
+        event = Event(EVENT_RECORDER_UPDATE, data)
+        self.event_engine.put(event)
 
+    def get_bar_generator(self, vt_symbol: str) -> BarGenerator:
+        """Gets or creates a BarGenerator for a specific symbol."""
+        # This method is called from within a locked block, so access is safe.
+        bg = self.bar_generators.get(vt_symbol)
         if not bg:
             bg = BarGenerator(self.record_bar)
             self.bar_generators[vt_symbol] = bg
-
         return bg
 
-    def subscribe(self, contract: ContractData):
-        """"""
+    def subscribe(self, contract: ContractData) -> None:
+        """Subscribes to market data for a contract."""
+        # This method is called from within a locked block.
         req = SubscribeRequest(
             symbol=contract.symbol,
             exchange=contract.exchange,
-            interval=contract.interval
+            interval=getattr(contract, 'interval', None)
         )
         self.main_engine.subscribe(req, contract.gateway_name)

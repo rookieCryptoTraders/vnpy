@@ -58,6 +58,7 @@ def run_child():
 
     # start data recorder
     data_recorder_engine = main_engine.add_app(DataRecorderApp)
+    data_recorder_engine.start()
     main_engine.write_log(f"启动[{data_recorder_engine.__class__.__name__}]")
     data_recorder_engine.update_schema(database_name=data_recorder_engine.database_manager.database_name,
                                        exchanges=main_engine.exchanges,
