@@ -30,36 +30,29 @@ if not _SETTINGS_INITIALIZED:
     DEFAULT_FACTOR_DEFINITIONS_FILENAME = "factor_defination_setting.json"
 
     # --- MODIFICATION START ---
-    # The logic for resolving the factor definitions file path has been simplified.
-    # We now only store the filename, assuming it will be located in the
-    # main .vntrader directory and loaded by a utility function that is
-    # aware of that directory.
+    # Both settings and definitions files are now treated as filenames only,
+    # expected to be located in the main .vntrader directory. The core
+    # load_json utility is responsible for finding and loading them.
 
-    # Determine the factor definitions *filename*.
+    # Determine the factor definitions filename.
     FACTOR_DEFINITIONS_FILENAME = SETTINGS.get(
         "factor.definitions_file_path", DEFAULT_FACTOR_DEFINITIONS_FILENAME
     )
 
+    # Determine the factor settings filename.
+    FACTOR_SETTINGS_FILENAME = SETTINGS.get(
+        "factor.settings_file_path", DEFAULT_FACTOR_SETTINGS_FILENAME
+    )
+
+    # Load Factor Module Settings from its JSON file.
+    _temp_factor_module_settings = load_json_main(FACTOR_SETTINGS_FILENAME)
+
+    # Validate that the loaded settings file contains a dictionary.
+    if not isinstance(_temp_factor_module_settings, dict):
+        print(f"[vnpy.factor.setting] Warning: Content of {FACTOR_SETTINGS_FILENAME} is not a valid JSON object. Using empty settings.")
+        _temp_factor_module_settings = {}
+
     # --- MODIFICATION END ---
-
-    # Root path of this module, used for resolving factor settings file if relative
-    MODULE_ROOT_PATH = Path(__file__).parent
-
-    # Determine the factor settings file path (This file can still be local to the module)
-    _factor_settings_file_path_str = SETTINGS.get("factor.settings_file_path", DEFAULT_FACTOR_SETTINGS_FILENAME)
-    _factor_settings_filepath = Path(_factor_settings_file_path_str)
-    if not _factor_settings_filepath.is_absolute():
-        _factor_settings_filepath = MODULE_ROOT_PATH / _factor_settings_filepath
-
-    # Load Factor Module Settings from its JSON file
-    _temp_factor_module_settings: dict[str, Any] = {}
-    if _factor_settings_filepath.exists():
-        _temp_factor_module_settings = load_json_main(str(_factor_settings_filepath))
-        if not isinstance(_temp_factor_module_settings, dict):
-            print(f"[vnpy.factor.setting] Warning: Content of {_factor_settings_filepath} is not a valid JSON object.")
-            _temp_factor_module_settings = {}
-    else:
-        print(f"[vnpy.factor.setting] Warning: Factor settings file not found at {_factor_settings_filepath}.")
 
     # Override with values from global SETTINGS if they exist
     _keys_to_override = [
