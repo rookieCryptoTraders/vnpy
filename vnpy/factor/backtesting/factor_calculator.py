@@ -274,7 +274,7 @@ class FactorCalculator:
                     )
                 fp = self.output_data_dir.joinpath(f"{safe_filename(key)}.arrow")
                 self.factor_memory_instances[key] = FactorMemory(
-                    fp, max_rows, schema, self.factor_datetime_col
+                    fp, max_rows, schema, self.factor_datetime_col, instance.factor_mode
                 )
             except Exception as e:
                 self._write_log(

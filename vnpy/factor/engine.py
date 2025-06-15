@@ -1,3 +1,5 @@
+# factor_engine.py
+
 import gc
 import importlib
 import re
@@ -290,11 +292,13 @@ class FactorEngine(BaseEngine):
                     f"{safe_filename(factor_key)}.arrow"
                 )
 
+                # --- THIS IS THE KEY CHANGE ---
                 self.factor_memory_instances[factor_key] = FactorMemory(
                     file_path=file_path,
                     max_rows=self.max_memory_length_factor,
                     schema=output_schema,
                     datetime_col=self.factor_datetime_col,
+                    mode=factor_instance.factor_mode  # Pass the factor's mode to its memory manager
                 )
             except Exception as e:
                 self.write_log(

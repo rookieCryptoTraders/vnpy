@@ -1,25 +1,38 @@
-import os  # For os.getpid()
-import shutil  # For atomic write (rename)
+import os
+import shutil
 from pathlib import Path
-from threading import Lock  # For thread safety
+from threading import Lock
+from typing import Optional
 
 import polars as pl
+
+# To make the FactorMemory class aware of the context it's running in,
+# we import FactorMode. A fallback is provided for standalone use or testing.
+try:
+    from vnpy.factor.base import FactorMode
+except ImportError:
+    from enum import Enum
+
+    class FactorMode(Enum):
+        LIVE = "live"
+        BACKTEST = "backtest"
 
 
 class FactorMemory:
     """
-    Manages factor historical data using memory-mapped Arrow IPC files,
-    acting as a fixed-size circular buffer.
+    Manages factor historical data using memory-mapped Arrow IPC files.
 
-    This class ensures thread-safe operations and atomic writes to protect data integrity.
-    It strictly enforces a schema for the stored data.
+    This class ensures thread-safe operations and atomic writes to protect
+    data integrity. It strictly enforces a schema for the stored data and
+    adjusts its behavior based on the operational mode (LIVE vs. BACKTEST).
 
     Attributes:
         file_path (Path): Path to the Arrow IPC file.
-        max_rows (int): Maximum number of rows to store (capacity of the circular buffer).
+        max_rows (int): Maximum number of rows to store.
         schema (Dict[str, pl.PolarsDataType]): Schema of the DataFrame.
-        datetime_col (str): Name of the datetime column, used for sorting and de-duplication.
-        _lock (Lock): Thread lock for ensuring safe concurrent file access.
+        datetime_col (str): Name of the datetime column.
+        mode (FactorMode): The operational mode (LIVE or BACKTEST).
+        _lock (Lock): Thread lock for ensuring safe concurrent access.
     """
 
     def __init__(
@@ -28,6 +41,7 @@ class FactorMemory:
         max_rows: int,
         schema: dict[str, pl.DataType],
         datetime_col: str = "datetime",
+        mode: FactorMode = FactorMode.LIVE,
     ):
         """
         Initializes the FactorMemory instance.
@@ -35,16 +49,10 @@ class FactorMemory:
         Args:
             file_path: Path to the Arrow IPC file where data will be stored.
             max_rows: Maximum number of rows to maintain in the circular buffer.
-                      Must be greater than 0.
             schema: A dictionary defining column names and their Polars data types.
-                    Example: {"datetime": pl.Datetime(time_unit="us"), "value": pl.Float64}
             datetime_col: The name of the column that serves as the primary time index.
-                          This column must be part of the schema and have a datetime or date type.
-
-        Raises:
-            ValueError: If max_rows is not positive, schema is empty, or datetime_col
-                        is misconfigured or missing from the schema.
-            IOError: If the factor memory file cannot be initialized.
+            mode (FactorMode): The operational mode, which determines cleanup behavior.
+                               Defaults to LIVE.
         """
         if max_rows <= 0:
             raise ValueError("max_rows must be a positive integer.")
@@ -55,16 +63,21 @@ class FactorMemory:
                 f"datetime_col '{datetime_col}' must be defined in the schema."
             )
 
-        self.file_path = Path(file_path).resolve()  # Use absolute path
+        self.file_path = Path(file_path).resolve()
         self.max_rows = max_rows
         self.schema = schema
         self.datetime_col = datetime_col
+        self.mode = mode
         self._lock = Lock()
 
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize_if_empty()
 
     def _initialize_if_empty(self) -> None:
+        """
+        Initializes or validates the Arrow file. If the file doesn't exist,
+        is empty, or has a mismatched schema, it's created/overwritten.
+        """
         with self._lock:
             try:
                 should_initialize = True
@@ -73,15 +86,11 @@ class FactorMemory:
                         existing_df = pl.read_ipc(
                             self.file_path, memory_map=False, use_pyarrow=True
                         )
-                        # Check if schemas are equivalent, not necessarily identical objects
-                        if (
-                            existing_df.schema == self.schema
-                        ):  # Polars schema comparison
+                        if existing_df.schema == self.schema:
                             should_initialize = False
                         else:
                             print(
-                                f"Warning: File {self.file_path} exists with mismatched schema. "
-                                f"Expected: {self.schema}, Found: {existing_df.schema}. Re-initializing."
+                                f"Warning: File {self.file_path} exists with mismatched schema. Re-initializing."
                             )
                     except Exception as e:
                         print(
@@ -90,9 +99,9 @@ class FactorMemory:
 
                 if should_initialize:
                     empty_df = pl.DataFrame(data={}, schema=self.schema)
-                    empty_df.write_ipc(self.file_path, compression="lz4")
+                    self._save_data(empty_df) # Use atomic save for initialization
                     print(
-                        f"Initialized factor memory file: {self.file_path} with schema: {self.schema}"
+                        f"Initialized or re-initialized factor memory file: {self.file_path}"
                     )
             except Exception as e_init:
                 raise OSError(
@@ -103,26 +112,14 @@ class FactorMemory:
         self, df: pl.DataFrame, df_name: str = "input"
     ) -> pl.DataFrame:
         """
-        Conforms an input DataFrame to the FactorMemory instance's schema.
-
-        It ensures all columns from `self.schema` exist, are in the correct order,
-        and attempts to cast data types if they don't match. Missing columns
-        are filled with nulls. Issues are collected and printed as warnings.
-
-        Args:
-            df: The input DataFrame to conform.
-            df_name: A descriptive name for the input DataFrame, used in warning messages.
-
-        Returns:
-            A new DataFrame that strictly adheres to `self.schema`.
+        Conforms an input DataFrame to the instance's schema, ensuring
+        column order, existence, and data types are correct.
         """
         if df.schema == self.schema:
             return df
 
         conformed_cols = {}
         errors = []
-
-        # Create a mapping of existing column names to their current dtypes for quick lookup
         current_df_schema = df.schema
 
         for col_name, expected_dtype in self.schema.items():
@@ -136,64 +133,45 @@ class FactorMemory:
                             expected_dtype, strict=False
                         )
                     except Exception as e:
-                        errors.append(
-                            f"Could not cast column '{col_name}' in {df_name} DataFrame from {current_dtype} to {expected_dtype}: {e}"
-                        )
-                        conformed_cols[col_name] = pl.Series(
-                            [None] * len(df), dtype=expected_dtype, name=col_name
-                        )
+                        errors.append(f"Could not cast column '{col_name}' from {current_dtype} to {expected_dtype}: {e}")
+                        conformed_cols[col_name] = pl.Series([None] * len(df), dtype=expected_dtype, name=col_name)
             else:
-                errors.append(
-                    f"Column '{col_name}' missing in {df_name} DataFrame. Adding as nulls with type {expected_dtype}."
-                )
-                conformed_cols[col_name] = pl.Series(
-                    [None] * len(df), dtype=expected_dtype, name=col_name
-                )
+                errors.append(f"Column '{col_name}' missing in {df_name} DataFrame. Adding as nulls.")
+                conformed_cols[col_name] = pl.Series([None] * len(df), dtype=expected_dtype, name=col_name)
 
         if errors:
-            print(
-                f"Warning: Schema conformance issues for {self.file_path} with {df_name} DataFrame:\n"
-                + "\n".join(errors)
-            )
+            print(f"Warning: Schema conformance issues for {self.file_path} with {df_name} DataFrame:\n" + "\n".join(errors))
 
-        # Ensure correct column order as defined in self.schema
         return pl.DataFrame(conformed_cols).select(list(self.schema.keys()))
 
     def _load_data(self) -> pl.DataFrame:
+        """Loads data from the Arrow file. Returns an empty DataFrame on failure."""
         if not self.file_path.exists() or self.file_path.stat().st_size == 0:
             return pl.DataFrame(data={}, schema=self.schema)
         try:
-            # It's generally safer to read without memory_map if the file might be modified externally
-            # or if schema conformance is complex. For internal use where this class controls writes,
-            # memory_map=True is fine for reads.
             df = pl.read_ipc(self.file_path, memory_map=True, use_pyarrow=True)
             return self._conform_df_to_schema(df, "loaded")
         except Exception as e:
-            print(
-                f"Error loading data from {self.file_path}: {e}. Returning empty DataFrame with schema."
-            )
+            print(f"Error loading data from {self.file_path}: {e}. Returning empty DataFrame.")
             return pl.DataFrame(data={}, schema=self.schema)
 
     def _save_data(self, df: pl.DataFrame) -> None:
+        """Saves a DataFrame to the file atomically."""
         df_to_save = self._conform_df_to_schema(df, "data_to_save")
-        temp_file_path = self.file_path.with_suffix(
-            f"{self.file_path.suffix}.{os.getpid()}.tmp"
-        )
+        temp_file_path = self.file_path.with_suffix(f"{self.file_path.suffix}.{os.getpid()}.tmp")
         try:
             df_to_save.write_ipc(temp_file_path, compression="lz4")
             shutil.move(str(temp_file_path), str(self.file_path))
         except Exception as e:
-            # Clean up temp file if it exists after a failed save or move
             if temp_file_path.exists():
                 try:
-                    temp_file_path.unlink(missing_ok=True)  # missing_ok for Python 3.8+
+                    temp_file_path.unlink(missing_ok=True)
                 except OSError:
-                    if temp_file_path.exists():  # check again for race condition
+                    if temp_file_path.exists():
                         os.remove(temp_file_path)
-
             raise OSError(f"Failed to save data to {self.file_path}: {e}") from e
         finally:
-            if temp_file_path.exists():  # Final cleanup check
+            if temp_file_path.exists():
                 try:
                     temp_file_path.unlink(missing_ok=True)
                 except OSError:
@@ -201,61 +179,37 @@ class FactorMemory:
                         os.remove(temp_file_path)
 
     def get_data(self) -> pl.DataFrame:
+        """Returns the full DataFrame from memory."""
         with self._lock:
             return self._load_data()
 
     def update_data(self, new_data: pl.DataFrame) -> None:
+        """
+        Updates the stored data with new data points.
+
+        This method combines the current data with the new data, sorts by the
+        datetime column, removes duplicates (keeping the last entry), truncates
+        to max_rows, and saves the result atomically.
+        """
         if new_data is None or new_data.is_empty():
-            # print(f"Debug: update_data called with empty or None new_data for {self.file_path}. No action taken.")
             return
 
         with self._lock:
             try:
-                conformed_new_data = self._conform_df_to_schema(
-                    new_data, "new_data_input"
-                )
+                conformed_new_data = self._conform_df_to_schema(new_data, "new_data_input")
             except Exception as e:
-                raise ValueError(
-                    f"Fatal schema error in new_data for {self.file_path}: {e}"
-                ) from e
+                raise ValueError(f"Fatal schema error in new_data for {self.file_path}: {e}") from e
 
             current_data = self._load_data()
-
-            if current_data.is_empty():
-                combined_data = conformed_new_data
-            else:
-                combined_data = pl.concat(
-                    [current_data, conformed_new_data], how="vertical_relaxed"
-                )
+            combined_data = pl.concat([current_data, conformed_new_data], how="vertical_relaxed") if not current_data.is_empty() else conformed_new_data
 
             if self.datetime_col not in combined_data.columns:
-                # This case should ideally be prevented by _conform_df_to_schema
-                raise ValueError(
-                    f"Internal error: Datetime column '{self.datetime_col}' not found "
-                    f"in combined data for {self.file_path}. Schema: {combined_data.schema}"
-                )
+                raise ValueError(f"Internal error: Datetime column '{self.datetime_col}' not found in combined data.")
 
-            # Sort by datetime, remove duplicates (preferring last entries for ties),
-            # and then sort again to ensure final order.
-            # Ensure datetime_col is actually sortable (e.g., not all nulls if it's critical)
-            if combined_data.get_column(self.datetime_col).null_count() == len(
-                combined_data
-            ):
-                print(
-                    f"Warning: Datetime column '{self.datetime_col}' in {self.file_path} is all nulls. "
-                    "Cannot sort or de-duplicate effectively by datetime."
-                )
-                # If all datetime are null, unique won't work as expected on it.
-                # We might need a different strategy or just take the tail.
-                # For now, proceed, but this is a data quality flag.
+            if combined_data.get_column(self.datetime_col).null_count() != len(combined_data):
+                combined_data = combined_data.sort(by=self.datetime_col).unique(subset=[self.datetime_col], keep="last", maintain_order=False).sort(by=self.datetime_col)
             else:
-                combined_data = (
-                    combined_data.sort(by=self.datetime_col)
-                    .unique(
-                        subset=[self.datetime_col], keep="last", maintain_order=False
-                    )
-                    .sort(by=self.datetime_col)
-                )
+                print(f"Warning: Datetime column '{self.datetime_col}' in {self.file_path} is all nulls. Cannot de-duplicate by time.")
 
             if len(combined_data) > self.max_rows:
                 combined_data = combined_data.tail(self.max_rows)
@@ -263,6 +217,7 @@ class FactorMemory:
             self._save_data(combined_data)
 
     def get_shape(self) -> tuple[int, int]:
+        """Returns the shape of the stored DataFrame."""
         with self._lock:
             if not self.file_path.exists() or self.file_path.stat().st_size == 0:
                 return (0, len(self.schema))
@@ -270,50 +225,72 @@ class FactorMemory:
             return df.shape
 
     def get_latest_rows(self, n: int) -> pl.DataFrame:
+        """Returns the n most recent rows."""
         if n <= 0:
             return pl.DataFrame(data={}, schema=self.schema)
         with self._lock:
             df = self._load_data()
-            if df.is_empty():
-                return df
             return df.tail(n)
 
     def get_oldest_rows(self, n: int) -> pl.DataFrame:
+        """Returns the n oldest rows."""
         if n <= 0:
             return pl.DataFrame(data={}, schema=self.schema)
         with self._lock:
             df = self._load_data()
-            if df.is_empty():
-                return df
             return df.head(n)
 
-    def clear(self) -> None:
+    def clear(self, n: int | None = None) -> None:
         """
-        Clears all data from the FactorMemory by deleting the underlying file.
-        The file will be re-initialized with an empty schema if methods like
-        update_data or get_data are called subsequently, or if a new
-        FactorMemory instance is created for this path.
+        Clears or truncates data from the FactorMemory.
+        Behavior depends on the instance's mode.
+
+        - In BACKTEST mode: Always deletes the file to ensure a clean slate for the next run.
+        - In LIVE mode:
+            - If n is None or 0: Clears data but keeps an empty, initialized file.
+            - If n > 0: Truncates data, keeping the `n` most recent rows.
         """
         with self._lock:
-            try:
-                if self.file_path.exists():
-                    self.file_path.unlink(missing_ok=True) # missing_ok for safety if already gone
-                    print(f"Factor memory file deleted: {self.file_path}")
+            # --- BACKTEST MODE ---
+            # In backtesting, we always want a clean slate. The most reliable
+            # way to ensure this is to delete the cache file.
+            if self.mode == FactorMode.BACKTEST:
+                try:
+                    if self.file_path.exists():
+                        self.file_path.unlink()
+                        print(f"Factor memory file deleted (Backtest Mode): {self.file_path}")
+                except Exception as e:
+                    print(f"Error during file deletion for {self.file_path} (Backtest Mode): {e}")
+                return
+
+            # --- LIVE MODE ---
+            # In live trading, we prioritize data preservation.
+            if n is not None and n > 0:
+                # Truncate to the n most recent rows
+                current_data = self._load_data()
+                if n < len(current_data):
+                    truncated_data = current_data.tail(n)
+                    self._save_data(truncated_data)
+                    print(f"Factor memory truncated to {n} rows (Live Mode): {self.file_path}")
                 else:
-                    # If the file doesn't exist, it's already "clear" in that sense.
-                    print(f"Factor memory file already deleted or does not exist: {self.file_path}")
-            except Exception as e:
-                print(f"Error during clear (delete) operation for {self.file_path}: {e}")
-                # No explicit re-initialization here as per user request.
-                # Subsequent operations will rely on _initialize_if_empty (for new instances)
-                # or _load_data/_save_data to handle the missing file.
+                    print(f"Truncation skipped: request ({n}) >= current rows ({len(current_data)}). No change made.")
+            else:
+                # Clear all data but re-initialize the file with an empty schema.
+                try:
+                    empty_df = pl.DataFrame(data={}, schema=self.schema)
+                    self._save_data(empty_df)
+                    print(f"Factor memory cleared and re-initialized (Live Mode): {self.file_path}")
+                except Exception as e:
+                    print(f"Error during clear/re-initialization for {self.file_path} (Live Mode): {e}")
 
     @property
     def is_empty(self) -> bool:
+        """Checks if the stored DataFrame is empty."""
         return self.get_shape()[0] == 0
 
     def __repr__(self) -> str:
+        """Returns a string representation of the FactorMemory instance."""
         return (
             f"FactorMemory(file_path='{self.file_path}', max_rows={self.max_rows}, "
-            f"schema_cols={list(self.schema.keys())}, datetime_col='{self.datetime_col}')"
+            f"mode={self.mode.name}, schema_cols={list(self.schema.keys())})"
         )
