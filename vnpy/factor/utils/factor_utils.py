@@ -49,22 +49,22 @@ def save_factor_setting(
     save_json(setting_filename, settings_list_to_save)
 
 
-def load_factor_setting(setting_path: str) -> list[dict[str, Any]]:
+def load_factor_setting(setting_file_name: str) -> list[dict[str, Any]]:
     """
     Loads a list of factor settings dictionaries from a JSON file.
     """
-    loaded_data = load_json(setting_path)
+    loaded_data = load_json(setting_file_name)
     if not isinstance(loaded_data, list):
         # Optional: Add handling for old dictionary format for backward compatibility
         # For now, enforce the new list format.
         raise TypeError(
-            f"Factor settings file '{setting_path}' is not in the expected list format. "
+            f"Factor settings file '{setting_file_name}' is not in the expected list format. "
             f"Expected a list of factor settings, got {type(loaded_data)}."
         )
     # Further validation: check if all items in the list are dicts
     if not all(isinstance(item, dict) for item in loaded_data):
         raise ValueError(
-            f"Factor settings file '{setting_path}' contains non-dictionary items in the list."
+            f"Factor settings file '{setting_file_name}' contains non-dictionary items in the list."
         )
     return loaded_data
 

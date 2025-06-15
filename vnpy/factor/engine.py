@@ -38,7 +38,7 @@ from vnpy.trader.object import BarData, LogData
 from .setting import (
     FACTOR_MODULE_SETTINGS,
     get_factor_data_cache_path,
-    get_factor_definitions_filepath,
+    get_factor_definitions_filename,
 )
 
 FACTOR_MODULE_NAME = FACTOR_MODULE_SETTINGS.get(
@@ -65,7 +65,7 @@ class FactorEngine(BaseEngine):
         super().__init__(main_engine, event_engine, APP_NAME)
 
         # Use settings for paths and configuration
-        self.setting_filename = get_factor_definitions_filepath()  # Updated
+        self.setting_filename = get_factor_definitions_filename()  # Updated
         self.factor_data_dir = get_factor_data_cache_path()  # Updated
 
         # Load other settings
