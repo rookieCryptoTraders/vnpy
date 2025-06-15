@@ -185,7 +185,7 @@ class FactorTemplate(ABC):
     # Actual instances of dependency factors
     dependencies_factor: list["FactorTemplate"] = []  # noqa: UP037
 
-    factor_mode: FactorMode = FactorMode.LIVE  # Default mode (LIVE, BACKTEST)
+    _factor_mode: FactorMode = FactorMode.LIVE  # Default mode (LIVE, BACKTEST)
     VTSYMBOL_TEMPLATE: str = (
         VTSYMBOL_FACTOR  # Template string for generating factor keys
     )
@@ -231,6 +231,13 @@ class FactorTemplate(ABC):
     def vt_symbols(self) -> list[str]:
         return self._vt_symbols
 
+    @property
+    def factor_mode(self) -> FactorMode:
+        """
+        Returns the current factor mode (LIVE, BACKTEST, etc.).
+        """
+        return self._factor_mode
+
     @vt_symbols.setter
     def vt_symbols(self, value: list[str]) -> None:
         if not isinstance(value, list):
@@ -248,6 +255,22 @@ class FactorTemplate(ABC):
                     dep_factor.vt_symbols = (
                         value  # This will call the setter on the dependency
                     )
+    @factor_mode.setter
+    def factor_mode(self, value: FactorMode) -> None:
+        """
+        Setter for factor_mode. Ensures the value is a valid FactorMode.
+        """
+        if not isinstance(value, FactorMode):
+            raise TypeError(
+                f"factor_mode must be a FactorMode instance, got {type(value)}"
+            )
+        self._factor_mode = value
+
+        # Propagate to dependencies if they exist
+        if hasattr(self, "dependencies_factor") and self.dependencies_factor:
+            for dep_factor in self.dependencies_factor:
+                if isinstance(dep_factor, FactorTemplate):
+                    dep_factor.factor_mode = value
 
     def _init_dependency_instances(self):
         """

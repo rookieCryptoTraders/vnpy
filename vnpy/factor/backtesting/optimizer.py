@@ -150,7 +150,7 @@ class FactorOptimizer:
         search_results = {"params": [], "scores": []}
 
         for i, params in enumerate(param_combinations):
-            self._write_log(f"Evaluating combo {i + 1}: {params}", DEBUG)
+            self._write_log(f"Evaluating combo {i + 1}", level=DEBUG)
             score = self._calculate_factor_score(
                 base_factor_definition=factor_definition_template,
                 params_to_set=params,
@@ -322,10 +322,7 @@ class FactorOptimizer:
         self, test_size_ratio: float
     ) -> tuple[dict[str, pl.DataFrame], dict[str, pl.DataFrame]]:
         """Splits the data loaded in the backtest engine into train and test sets."""
-        if (
-            not self.backtest_engine.memory_bar
-            or not self.backtest_engine.memory_bar.get("close")
-        ):
+        if self.backtest_engine.memory_bar.get("close").is_empty():
             raise ValueError("Memory bar is not loaded in the backtest engine.")
 
         total_rows = self.backtest_engine.memory_bar["close"].height

@@ -245,6 +245,7 @@ class BacktestEngine:
         # Logic to get a single FactorTemplate instance based on factor_definition
         if isinstance(factor_definition, FactorTemplate):
             target_factor_instance = factor_definition
+            target_factor_instance.factor_mode = FactorMode.BACKTEST
             # Ensure vt_symbols are aligned if provided
             if target_factor_instance.vt_symbols != vt_symbols_for_factor:
                 target_factor_instance.vt_symbols = vt_symbols_for_factor

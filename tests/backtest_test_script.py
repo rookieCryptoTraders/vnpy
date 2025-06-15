@@ -12,7 +12,7 @@ from vnpy.factor.backtesting.backtesting import BacktestEngine
 from vnpy.factor.setting import (
     get_backtest_data_cache_path,
     get_backtest_report_path,
-    FACTOR_DEFINITIONS_FILEPATH
+    get_factor_definitions_filename
 )
 from vnpy.factor.utils.factor_utils import load_factor_setting, init_factors
 
@@ -170,7 +170,7 @@ def main():
                   'bchusdt.BINANCE', 'adausdt.BINANCE', 'solusdt.BINANCE', 'dogeusdt.BINANCE']
 
     # Load factor definitions
-    factor_definitions = load_factor_setting(FACTOR_DEFINITIONS_FILEPATH)
+    factor_definitions = load_factor_setting(get_factor_definitions_filename())
     macd_factor_definition = factor_definitions[2]  # Using the third factor definition
 
     # Initialize MACD factor
