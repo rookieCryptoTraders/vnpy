@@ -14,6 +14,9 @@ try:
 except ImportError:
     DB_TZ = None
 
+# https://github.com/Yvictor/polars_ta_extension
+# using ta-lib based on polars
+
 
 class EMAFactor(FactorTemplate):
     """
