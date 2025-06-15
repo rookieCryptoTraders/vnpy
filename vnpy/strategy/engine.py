@@ -38,31 +38,12 @@ from vnpy.trader.object import (
 from vnpy.trader.utility import load_json, save_json
 
 # --- Settings Integration ---
-try:
-    from vnpy.strategy.setting import (
-        DATA_PATH,
-        MODEL_PATH,
-        STRATEGY_ENGINE_OPERATIONAL_PARAMS,
-        get_strategy_instance_definitions_filepath,
-    )
-except ImportError:
-    # Fallback settings if the dedicated settings file is not found
-    print(
-        "CRITICAL: [StrategyEngine] Could not import from 'vnpy.strategy.setting'. Using fallback."
-    )
-    STRATEGY_ENGINE_OPERATIONAL_PARAMS: dict[str, Any] = {
-        "strategy_code_module_path": "strategies",
-        "default_execution_gateway": "DEFAULT_GW",
-        "init_max_workers": 1,
-    }
-
-    def get_strategy_instance_definitions_filepath() -> Path:
-        return Path.cwd() / "strategy_definitions.json"
-
-    MODEL_PATH = Path.cwd() / ".vnpy_data" / "models"
-    MODEL_PATH.mkdir(parents=True, exist_ok=True)
-    DATA_PATH = Path.cwd() / ".vnpy_data" / "data"
-    DATA_PATH.mkdir(parents=True, exist_ok=True)
+from vnpy.strategy.setting import (
+    DATA_PATH,
+    MODEL_PATH,
+    STRATEGY_ENGINE_OPERATIONAL_PARAMS,
+    get_strategy_instance_definitions_filename
+)
 
 # --- Constants ---
 STRATEGY_ENGINE_APP_NAME: str = "StrategyEngine"
@@ -95,7 +76,7 @@ class StrategyEngine(BaseEngine):
         self.init_max_workers: int = STRATEGY_ENGINE_OPERATIONAL_PARAMS.get(
             "init_max_workers", 1
         )
-        self.definitions_filepath: Path = get_strategy_instance_definitions_filepath()
+        self.definitions_filename: Path = get_strategy_instance_definitions_filename()
 
         # Core state
         self.strategy_classes: dict[str, type[StrategyTemplate]] = {}
@@ -106,7 +87,7 @@ class StrategyEngine(BaseEngine):
         self.factor_update_time: datetime | None = None
 
         self.write_log(
-            f"StrategyEngine initialized. Definitions path: {self.definitions_filepath}",
+            f"StrategyEngine initialized. Definitions name: {self.definitions_filename}",
             level=INFO,
         )
 
@@ -177,13 +158,13 @@ class StrategyEngine(BaseEngine):
     def init_strategies_from_configs(self) -> None:
         """Initializes strategy instances based on the definitions JSON file."""
         self.write_log(
-            f"Initializing strategies from {self.definitions_filepath}...", level=INFO
+            f"Initializing strategies from {self.definitions_filename}...", level=INFO
         )
-        if not self.definitions_filepath.exists():
+        if not self.definitions_filename.exists():
             self.write_log("Definitions file not found. No strategies loaded.", WARNING)
             return
 
-        strategy_settings = load_json(str(self.definitions_filepath))
+        strategy_settings = load_json(str(self.definitions_filename))
         for setting in strategy_settings:
             class_name = setting.get("class_name")
             strategy_name = setting.get("strategy_name")
@@ -241,20 +222,20 @@ class StrategyEngine(BaseEngine):
     def save_all_strategy_settings(self) -> None:
         """Saves the configurations of all strategies to the definitions file."""
         settings_to_save = [s.to_setting() for s in self.strategies.values()]
-        save_json(str(self.definitions_filepath), settings_to_save)
+        save_json(str(self.definitions_filename), settings_to_save)
         self.write_log(f"Saved settings for {len(settings_to_save)} strategies.", INFO)
 
     def save_all_strategy_runtime_data(self) -> None:
         """Saves the runtime state of all strategies."""
         all_data = {name: s.get_data() for name, s in self.strategies.items()}
         # Save this to a dedicated runtime state file
-        runtime_file = self.definitions_filepath.with_name("strategy_runtime_data.json")
+        runtime_file = self.definitions_filename.with_name("strategy_runtime_data.json")
         save_json(str(runtime_file), all_data)
         self.write_log(f"Saved runtime data for {len(all_data)} strategies.", INFO)
 
     def load_all_strategy_runtime_data(self) -> None:
         """Loads the runtime state for all initialized strategies."""
-        runtime_file = self.definitions_filepath.with_name("strategy_runtime_data.json")
+        runtime_file = self.definitions_filename.with_name("strategy_runtime_data.json")
         if not runtime_file.exists():
             return
 
