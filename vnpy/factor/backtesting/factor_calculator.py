@@ -83,9 +83,6 @@ class FactorCalculator:
     def _prepare_output_directory(self) -> None:
         try:
             self.output_data_dir.mkdir(parents=True, exist_ok=True)
-            self._write_log(
-                f"Factor cache directory ensured at: {self.output_data_dir}", level=INFO
-            )
         except OSError as e:
             self._write_log(
                 f"Error creating factor cache directory {self.output_data_dir}: {e}. Critical error.",
@@ -239,7 +236,7 @@ class FactorCalculator:
     def _initialize_factor_memory(self) -> bool:
         self._write_log(
             f"Initializing factor memory for {len(self.sorted_factor_keys)} factors...",
-            level=INFO,
+            level=DEBUG,
         )
         if self.num_data_rows <= 0:
             self._write_log(
@@ -281,10 +278,6 @@ class FactorCalculator:
                     f"Failed to init FactorMemory for {key}: {e}", level=ERROR
                 )
                 return False
-        self._write_log(
-            f"Initialized {len(self.factor_memory_instances)} FactorMemory instances.",
-            level=INFO,
-        )
         return True
 
     def _build_dask_computational_graph(self) -> bool:
@@ -310,9 +303,6 @@ class FactorCalculator:
         if not self.dask_tasks and self.flattened_factors:
             self._write_log("Dask graph empty but factors exist.", level=ERROR)
             return False
-        self._write_log(
-            f"Built Dask graph with {len(self.dask_tasks)} tasks.", level=INFO
-        )
         return True
 
     def _execute_batch_dask_graph(self) -> bool:
@@ -331,10 +321,6 @@ class FactorCalculator:
                         optimize_graph=True,
                         scheduler="threads"
                     )
-                self._write_log(
-                    f"Dask computation finished in {time.time() - start_time:.3f}s.",
-                    level=INFO,
-                )
                 errors = 0
                 for key, df_res in zip(self.dask_tasks.keys(), results, strict=False):
                     if df_res is None or not isinstance(df_res, pl.DataFrame):

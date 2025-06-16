@@ -94,7 +94,7 @@ class FactorOptimizer:
             test_rows = test_data["close"].height
             self._write_log(
                 f"Data split into {train_rows} train rows and {test_rows} test rows.",
-                INFO,
+                level=DEBUG,
             )
         except ValueError as e:
             self._write_log(f"Error splitting data: {e}", ERROR)

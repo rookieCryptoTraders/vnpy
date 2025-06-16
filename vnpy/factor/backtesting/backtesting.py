@@ -66,7 +66,7 @@ class BacktestEngine:
             self.module_factors = importlib.import_module(self.factor_module_name)
             self._write_log(
                 f"Successfully imported factor module: '{self.factor_module_name}'",
-                level=INFO,
+                level=DEBUG,
             )
         except ImportError as e:
             self._write_log(
@@ -92,7 +92,7 @@ class BacktestEngine:
         """
         self._write_log(
             f"Orchestrator Placeholder: load_bar_data called for {start} to {end}, interval {interval.value}, symbols: {vt_symbols}",
-            level=INFO,
+            level=DEBUG,
         )
         self.memory_bar.clear()
 
@@ -216,7 +216,7 @@ class BacktestEngine:
 
         self._write_log(
             f"Orchestrator Placeholder: Successfully simulated loading of {self.num_data_rows} rows for {len(vt_symbols)} symbols.",
-            level=INFO,
+            level=DEBUG,
         )
         return True
 
@@ -406,7 +406,7 @@ class BacktestEngine:
         vt_symbols_for_run: list[str],  # Pass the current run's symbols
     ) -> pl.DataFrame | None:
         """Uses the calculator to compute factor values using its loaded data."""
-        self._write_log("Starting factor value computation phase...", level=INFO)
+        self._write_log("Starting factor value computation phase...", level=DEBUG)
 
         factor_df = calculator.compute_factor_values(
             target_factor_instance_input=target_factor_instance,
@@ -430,7 +430,7 @@ class BacktestEngine:
         report_filename_prefix: str,
     ) -> Path | None:
         """Uses the analyser to process results and generate a report."""
-        self._write_log("Starting factor analysis phase...", level=INFO)
+        self._write_log("Starting factor analysis phase...", level=DEBUG)
         analyser = FactorAnalyser(
             output_data_dir_for_reports=self.output_data_dir_for_analyser_reports
         )
