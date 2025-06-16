@@ -6,6 +6,9 @@ from vnpy.trader.app import BaseApp
 from .engine import FactorEngine, APP_NAME
 from .template import TV_FactorTemplate
 
+import os
+os.environ['POLARS_TIME_ZONE'] = 'UTC'
+
 class FactorMakerApp(BaseApp):
     """"""
     app_name = APP_NAME

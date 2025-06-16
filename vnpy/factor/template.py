@@ -16,6 +16,8 @@ from vnpy.factor.base import FactorMode
 from vnpy.trader.constant import Exchange, Interval
 from vnpy.config import VTSYMBOL_FACTOR  # General vnpy config/constant
 
+DEFAULT_DATETIME_COL = "datetime"
+
 
 class FactorParameters(object):  # noqa: UP004
     """
@@ -190,23 +192,22 @@ class FactorTemplate(ABC):
         VTSYMBOL_FACTOR  # Template string for generating factor keys
     )
 
-    @abstractmethod
     def get_output_schema(self) -> dict[str, pl.DataType]:
         """
-        Returns the Polars schema of the DataFrame produced by this factor's
-        calculate() method. This schema will be used by FactorMemory.
-
-        The schema must include a datetime column, typically named "datetime".
-        Its name can be configured via FactorEngine.factor_datetime_col.
-
-        Example:
-            return {
-                "datetime": pl.Datetime(time_unit="us"), # Standard datetime column
-                self.vt_symbols: pl.Float64, # Example output column
-                # Add other output columns as needed
-            }
+        Defines the output schema: a datetime column and one Float64 column for each symbol.
+        Column names for symbols are the vt_symbol strings themselves.
         """
-        pass
+        schema = {
+            DEFAULT_DATETIME_COL: pl.Datetime(
+                time_unit="us"
+            )
+        }
+        # Allows schema with only datetime if vt_symbols is empty.
+        # FactorMemory might require at least one value column depending on its own logic,
+        # but this factor will produce an empty value set for such a schema.
+        for symbol in self.vt_symbols:
+            schema[symbol] = pl.Float64
+        return schema
 
     @property
     def factor_key(self) -> str:

@@ -589,7 +589,6 @@ class BacktestEngine:
         return report_path
 
     def _write_log(self, msg: str, level: int = INFO) -> None:
-        log_msg = f"[{self.engine_name}] {msg}"
         level_map = {
             DEBUG: logger.debug,
             INFO: logger.info,
@@ -597,4 +596,4 @@ class BacktestEngine:
             ERROR: logger.error,
         }
         log_func = level_map.get(level, logger.info)
-        log_func(log_msg, gateway_name=self.engine_name)
+        log_func(msg, gateway_name=self.engine_name)

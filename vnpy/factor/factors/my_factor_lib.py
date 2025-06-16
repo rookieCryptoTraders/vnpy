@@ -7,15 +7,10 @@ from ..memory import FactorMemory
 # Assuming FactorTemplate, FactorMemory are correctly importable
 from ..template import FactorTemplate
 
-# Define constants if not readily available from FactorEngine's context for standalone clarity
-DEFAULT_DATETIME_COL = "datetime"
-try:
-    from vnpy.trader.database import DB_TZ  # Timezone for datetime columns
-except ImportError:
-    DB_TZ = None
-
 # https://github.com/Yvictor/polars_ta_extension
 # using ta-lib based on polars
+
+DEFAULT_DATETIME_COL = "datetime"
 
 
 class EMAFactor(FactorTemplate):
@@ -50,23 +45,6 @@ class EMAFactor(FactorTemplate):
                 raise ValueError("Period must be positive.")
         except ValueError as e:
             print(f"EMAFactor ({self.factor_key}): Invalid 'period' parameter: {e}")
-
-    def get_output_schema(self) -> dict[str, pl.DataType]:
-        """
-        Defines the output schema: a datetime column and one Float64 column for each symbol.
-        Column names for symbols are the vt_symbol strings themselves.
-        """
-        schema = {
-            DEFAULT_DATETIME_COL: pl.Datetime(
-                time_unit="us", time_zone=DB_TZ if DB_TZ else None
-            )
-        }
-        # Allows schema with only datetime if vt_symbols is empty.
-        # FactorMemory might require at least one value column depending on its own logic,
-        # but this factor will produce an empty value set for such a schema.
-        for symbol in self.vt_symbols:
-            schema[symbol] = pl.Float64
-        return schema
 
     def calculate(
         self,
@@ -173,21 +151,6 @@ class MACDFactor(FactorTemplate):
                 self.slow_ema = factora_instance
 
         self.signal_period: int = int(self.params.signal_period)
-
-    def get_output_schema(self) -> dict[str, pl.DataType]:
-        """
-        Defines output schema: a datetime column and one Float64 column for each symbol,
-        representing the MACD histogram value.
-        e.g., schema will be {DEFAULT_DATETIME_COL: Datetime, "SYM1": Float64, "SYM2": Float64, ...}
-        """
-        schema = {
-            DEFAULT_DATETIME_COL: pl.Datetime(
-                time_unit="us", time_zone=DB_TZ if DB_TZ else None
-            )
-        }
-        for symbol in self.vt_symbols:
-            schema[symbol] = pl.Float64
-        return schema
 
     def calculate(
         self,

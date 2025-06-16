@@ -632,18 +632,17 @@ class FactorAnalyser:
         return json_report_path
 
     def _write_log(self, msg: str, level: int = INFO) -> None:
-        log_msg = f"[{self.engine_name}] {msg}"
         contextual_logger = logger.bind(gateway_name=self.engine_name)
         if level == DEBUG:
-            contextual_logger.debug(log_msg)
+            contextual_logger.debug(msg)
         elif level == INFO:
-            contextual_logger.info(log_msg)
+            contextual_logger.info(msg)
         elif level == WARNING:
-            contextual_logger.warning(log_msg)
+            contextual_logger.warning(msg)
         elif level == ERROR:
-            contextual_logger.error(log_msg)
+            contextual_logger.error(msg)
         else:
-            contextual_logger.info(log_msg)
+            contextual_logger.info(msg)
 
     def close(self) -> None:
         self._write_log("FactorAnalyser closed.", level=INFO)

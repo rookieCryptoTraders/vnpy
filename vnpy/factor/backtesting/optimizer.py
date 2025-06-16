@@ -1,3 +1,6 @@
+import os
+os.environ['POLARS_TIME_ZONE'] = 'UTC'
+
 import copy
 import itertools
 from datetime import datetime
@@ -7,6 +10,8 @@ from typing import Any
 from collections.abc import Iterator
 
 import polars as pl
+
+
 from loguru import logger
 
 from vnpy.factor.backtesting.backtesting import BacktestEngine
@@ -150,7 +155,7 @@ class FactorOptimizer:
         search_results = {"params": [], "scores": []}
 
         for i, params in enumerate(param_combinations):
-            self._write_log(f"Evaluating combo {i + 1}", level=DEBUG)
+            self._write_log(f"Evaluating combo {i + 1}, Params:{params}", level=DEBUG)
             score = self._calculate_factor_score(
                 base_factor_definition=factor_definition_template,
                 params_to_set=params,
@@ -216,7 +221,7 @@ class FactorOptimizer:
             vt_symbols_for_run=vt_symbols,
         )
         calculator.close()
-        if factor_df is None or factor_df.is_empty():
+        if factor_df.is_empty():
             self._write_log(
                 f"Factor calculation yielded no data for params: {params_to_set}",
                 WARNING,
@@ -247,7 +252,7 @@ class FactorOptimizer:
             score = analyser.long_short_stats.sharpe_ratio
 
         analyser.close()
-        self._write_log(f"Score: {score:.4f} for params: {params_to_set}", DEBUG)
+        self._write_log(f"Score:{score}, Parameters:{params_to_set}", DEBUG)
         return score
 
     def _evaluate_on_test_set(
@@ -353,6 +358,14 @@ class FactorOptimizer:
             yield dict(zip(param_names, combo, strict=False))
 
     def _write_log(self, msg: str, level: int = INFO) -> None:
-        """Writes a log message with the engine name."""
-        log_msg = f"[{self.engine_name}] {msg}"
-        logger.log(level, log_msg, gateway_name=self.engine_name)
+        contextual_logger = logger.bind(gateway_name=self.engine_name)
+        if level == DEBUG:
+            contextual_logger.debug(msg)
+        elif level == INFO:
+            contextual_logger.info(msg)
+        elif level == WARNING:
+            contextual_logger.warning(msg)
+        elif level == ERROR:
+            contextual_logger.error(msg)
+        else:
+            contextual_logger.info(msg)
