@@ -194,14 +194,13 @@ class FactorAnalyser:
                 "Analysis data is empty after joining factors and returns.", level=ERROR
             )
             return None
-        self._write_log("Analysis data prepared successfully.", level=INFO)
         return analysis_data
 
     def perform_quantile_analysis(self, analysis_data: pl.DataFrame) -> bool:
         """Performs quantile analysis on the prepared data."""
         self._write_log(
             f"Performing quantile analysis ({self.config.num_quantiles} quantiles)...",
-            level=INFO,
+            level=DEBUG,
         )
         if analysis_data.is_empty():
             self._write_log(
@@ -238,7 +237,6 @@ class FactorAnalyser:
             by_time=quantile_returns_by_time,
             overall_average=average_quantile_returns_overall,
         )
-        self._write_log("Quantile analysis completed.", level=INFO)
         return True
 
     def perform_long_short_analysis(self, analysis_data: pl.DataFrame) -> bool:
@@ -246,7 +244,7 @@ class FactorAnalyser:
         percentile = self.config.long_short_percentile
         self._write_log(
             f"Performing L/S analysis (top/bottom {percentile * 100:.0f}%)...",
-            level=INFO,
+            level=DEBUG,
         )
         if analysis_data.is_empty():
             self._write_log("Analysis data is empty for L/S analysis.", level=ERROR)
@@ -327,7 +325,7 @@ class FactorAnalyser:
         """Calculates a comprehensive suite of performance metrics using QuantStats."""
         self._write_log(
             "Calculating full suite of performance metrics with QuantStats...",
-            level=INFO,
+            level=DEBUG,
         )
         if (
             self.long_short_portfolio_returns_df is None
@@ -386,7 +384,6 @@ class FactorAnalyser:
                 )
                 for k, v in self.performance_metrics.to_dict().items()
             }
-            self._write_log("QuantStats performance metrics calculated.", level=INFO)
             return True
         except Exception as e:
             self._write_log(
@@ -464,7 +461,7 @@ class FactorAnalyser:
         benchmark_symbol: str | None = None,
     ) -> Path | None:
         """Generates and saves a comprehensive HTML report using QuantStats."""
-        self._write_log("Generating interactive HTML report...", level=INFO)
+        self._write_log("Generating interactive HTML report...", level=DEBUG)
         if self.long_short_portfolio_returns_df is None:
             self._write_log(
                 "L/S portfolio returns not available for HTML report.", level=ERROR
