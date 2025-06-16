@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 import gc
-import time
 from logging import INFO, DEBUG, WARNING, ERROR
 from threading import Lock
 from pathlib import Path
@@ -15,7 +14,7 @@ import dask.diagnostics
 # VnTrader imports
 from vnpy.factor.memory import FactorMemory
 from vnpy.factor.template import FactorTemplate
-from vnpy.factor.base import APP_NAME
+from vnpy.factor.base import APP_NAME, FactorMode
 from vnpy.factor.setting import get_backtest_data_cache_path
 
 # Default datetime column name
@@ -263,6 +262,8 @@ class FactorCalculator:
                         "This might lead to schema issues if schema depends on symbols.",
                         level=WARNING,
                     )
+                    instance.vt_symbols = self.vt_symbols
+                instance.factor_mode = FactorMode.BACKTEST
 
                 schema = instance.get_output_schema()
                 if self.factor_datetime_col not in schema:
@@ -313,7 +314,7 @@ class FactorCalculator:
             f"Executing Dask graph for {len(self.dask_tasks)} factors...", level=INFO
         )
         with self.calculation_lock:
-            start_time = time.time()
+            #start_time = time.time()
             try:
                 with dask.diagnostics.ProgressBar():
                     results = dask.compute(

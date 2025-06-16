@@ -29,7 +29,7 @@ format: str = (
 
 
 # Log level
-level: int = SETTINGS["log.level"]
+level = SETTINGS["log.level"]
 
 
 # Remove default stderr output

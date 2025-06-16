@@ -3,10 +3,13 @@ Backtest script converted from backtest_test.ipynb
 This script demonstrates backtesting functionality using vnpy factor engine.
 """
 from datetime import datetime, timedelta
+import os
 
 import numpy as np
 import polars as pl
 from loguru import logger
+
+os.environ["POLARS_TIME_ZONE"] = "UTC"
 
 from vnpy.factor.backtesting.backtesting import BacktestEngine
 from vnpy.factor.setting import (
@@ -60,7 +63,7 @@ def generate_fake_ohlcv_wide_dict(
     # --- 1. Setup Time Range and Parameters ---
     try:
         datetimes = pl.datetime_range(
-            start=start_date, end=end_date, interval=interval, time_unit="us", eager=True, time_zone="UTC"
+            start=start_date, end=end_date, interval=interval, time_unit="us", eager=True
         )
     except Exception as e:
         logger.error(f"Failed to generate date range: {e}")
