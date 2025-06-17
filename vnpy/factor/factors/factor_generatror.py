@@ -7,7 +7,7 @@ import polars_talib as plta
 
 # The directory where the new factor files will be saved
 OUTPUT_DIR = Path(
-    "/Users/chenzhao/Documents/crypto_vnpy/vnpy/vnpy/factor/factors/ta-lib"
+    "/Users/chenzhao/Documents/crypto_vnpy/vnpy/vnpy/factor/factors/ta_lib"
 )
 
 # A template for the Python code of each new factor class.
@@ -41,15 +41,13 @@ class {class_name}(FactorTemplate):
         # --- Parameter Validation and Assignment ---
 {param_validation_and_assignment}
 
-
     def calculate(self, input_data: dict[str, pl.DataFrame], memory: FactorMemory) -> pl.DataFrame:
-        \"\"\"Calculates the indicator and extracts the relevant component if necessary.\"\"\"
+        \"\"\"Calculates the indicator by iterating through symbols and executing eagerly.\"\"\"
         # --- Input Data Validation ---
 {input_data_validation}
 
-        # --- Core Calculation ---
+        # --- Eager Calculation Loop ---
         df_base = input_data.get("close") or next(iter(input_data.values()))
-
         symbol_columns = [col for col in df_base.columns if col != DEFAULT_DATETIME_COL]
         if self.vt_symbols:
             symbol_columns = [col for col in symbol_columns if col in self.vt_symbols]
@@ -58,28 +56,27 @@ class {class_name}(FactorTemplate):
             return pl.DataFrame(data={{}}, schema=self.get_output_schema())
 
         kwargs = {{ {kwargs_for_call} }}
-        expressions_to_run = []
+        output_series_list = []
 
         for symbol in symbol_columns:
-            symbol_inputs = {{ {symbol_inputs_for_call} }}
+            # Build the keyword arguments by extracting the pl.Series for this symbol
+            # E.g., {{'high': input_data['high'][symbol], 'low': input_data['low'][symbol]}}
+            symbol_inputs = {{ {symbol_inputs_for_eager_call} }}
 
-            result_expr = plta.{func_name}(**symbol_inputs, **kwargs)
+            # Execute the calculation immediately for this single symbol
+            result_series_or_struct = plta.{func_name}(**symbol_inputs, **kwargs)
 
             # If this is a component of a multi-output function, extract the field.
             if "{output_component_name}":
-                result_expr = result_expr.struct.field("{output_component_name}")
+                final_series = result_series_or_struct.struct.field("{output_component_name}")
+            else:
+                final_series = result_series_or_struct
 
-            expressions_to_run.append(result_expr.alias(symbol))
+            output_series_list.append(final_series.alias(symbol))
 
-        # Join all necessary input dataframes for the calculation
-        df_exec_base = df_base
-        for col_name, df_wide in input_data.items():
-            if col_name != "close" and col_name in {required_input_cols_repr}:
-                if df_wide is not df_base:
-                    df_exec_base = df_exec_base.join(df_wide.select(pl.all().exclude(DEFAULT_DATETIME_COL)), on=DEFAULT_DATETIME_COL, how="left")
-
-        # Execute all expressions at once
-        result_df = df_exec_base.select(pl.col(DEFAULT_DATETIME_COL), *expressions_to_run)
+        # Combine the datetime column with the list of calculated series
+        datetime_col_df = df_base.select(pl.col(DEFAULT_DATETIME_COL))
+        result_df = datetime_col_df.with_columns(output_series_list)
         return result_df
 
 """
@@ -254,29 +251,19 @@ INPUT_COLUMN_MAP = {
 
 
 def generate_factor_files():
-    """
-    Inspects polars_talib, generates a .py file for each factor class, and
-    organizes them into subdirectories based on their indicator group.
-    """
+    """Main function to generate all factor files, organized by group."""
     print("--- Starting Factor File Generator ---")
     OUTPUT_DIR.mkdir(exist_ok=True)
-
-    # Use a dictionary to store lists of generated classes for each group
     generated_files_by_group = defaultdict(list)
 
     for func_name, func_obj in inspect.getmembers(plta, inspect.isfunction):
         if func_name.startswith("_"):
             continue
 
-        # Determine the output directory for this function's group
-        # Normalize the function name from inspect to match keys in our dict
         normalized_func_name = func_name.lower()
         group_name = INDICATOR_GROUPS.get(normalized_func_name, "uncategorized")
-
         group_dir = OUTPUT_DIR / group_name
         group_dir.mkdir(exist_ok=True)
-
-        # Get the list where we will store the generated class info for this group
         class_list_for_group = generated_files_by_group[group_name]
 
         if func_name in MULTI_OUTPUT_FUNCTIONS:
@@ -293,52 +280,16 @@ def generate_factor_files():
                 group_dir, func_name, func_obj, class_list_for_group
             )
 
-    # --- Create __init__.py files to make directories into packages ---
-    # First, create an __init__.py for each subdirectory
-    for group_name, generated_classes in generated_files_by_group.items():
-        group_dir = OUTPUT_DIR / group_name
-        init_path = group_dir / "__init__.py"
-        with open(init_path, "w", encoding="utf-8") as f:
-            f.write(f"# Auto-generated __init__.py for {group_name}\n\n")
-            for module_name, class_name in sorted(generated_classes):
-                f.write(f"from .{module_name} import {class_name}\n")
-
-    # Second, create a top-level __init__.py that imports from all subdirectories
-    top_level_init_path = OUTPUT_DIR / "__init__.py"
-    with open(top_level_init_path, "w", encoding="utf-8") as f:
-        f.write("# Auto-generated by factor_generator.py\n\n")
-        all_classes_list = []
-        for group_name, group_classes in sorted(generated_files_by_group.items()):
-            class_names = [cls[1] for cls in group_classes]
-            all_classes_list.extend(class_names)
-            # Create a nice import block for each group
-            f.write(f"from .{group_name} import (\n")
-            for class_name in sorted(class_names):
-                f.write(f"    {class_name},\n")
-            f.write(")\n\n")
-
-        # Add an __all__ list for cleaner imports
-        f.write("\n__all__ = [\n")
-        for class_name in sorted(all_classes_list):
-            f.write(f'    "{class_name}",\n')
-        f.write("]\n")
-
-    print("\n--- Generation Complete: All factor files organized by group. ---")
-    print(
-        f"All files saved in the '{OUTPUT_DIR.name}' directory and its subdirectories."
-    )
+    create_init_files(generated_files_by_group)
+    print(f"\n--- Generation Complete: All files saved in '{OUTPUT_DIR.name}' ---")
 
 
 def generate_single_factor_file(
-    output_path: Path,
-    func_name,
-    func_obj,
-    generated_classes_in_group,
-    output_component_name=None,
+    output_path, func_name, func_obj, class_list, output_component_name=None
 ):
-    """Generates the code for a single factor class and writes it to a file in the specified path."""
+    """Generates the code for a single factor class and writes it to a file."""
     print(
-        f"Processing function: {func_name}"
+        f"  -> Processing: {func_name}"
         + (f" -> {output_component_name}" if output_component_name else "")
     )
 
@@ -357,53 +308,74 @@ def generate_single_factor_file(
         if output_component_name
         else func_name.upper()
     )
-    class_name = f"{base_name}Factor"
-    factor_name = base_name
-    module_filename = f"{base_name.lower()}_factor"
-
-    docstring = f"Calculates the {factor_name} indicator."
-    required_param_list = ", ".join(config_params) or "None"
+    class_name = f"{base_name}"
+    module_filename = f"{base_name.lower()}"
 
     param_validation_lines = []
     for p in config_params:
-        param_validation_lines.append(
-            f'        if not hasattr(self.params, "{p}"): raise ValueError(f"{{self.factor_key}} requires a \'{p}\' parameter.")'
+        param_validation_lines.extend(
+            [
+                f'        if not hasattr(self.params, "{p}"): raise ValueError(f"{{self.factor_key}} requires a \'{p}\' parameter.")',
+                f"        try: self.{p} = float(self.params.{p})",
+                f"        except (ValueError, TypeError): self.{p} = int(self.params.{p})",
+            ]
         )
-        param_validation_lines.append(f"        try: self.{p} = float(self.params.{p})")
-        param_validation_lines.append(
-            f"        except (ValueError, TypeError): self.{p} = int(self.params.{p})"
-        )
-    param_validation_and_assignment = "\n".join(param_validation_lines)
 
-    input_validation_lines = [
-        f'        if input_data.get("{col}") is None or input_data["{col}"].is_empty(): return pl.DataFrame(data={{}}, schema=self.get_output_schema())'
-        for col in required_input_cols
-    ]
-
-    kwargs_for_call = ", ".join([f'"{p}": self.{p}' for p in config_params])
-    symbol_inputs_for_call = ", ".join(
-        [f'"{p}": pl.col(symbol)' for p in params if p in INPUT_COLUMN_MAP]
-    )
+    # *** FIX IS HERE ***
+    # This correctly generates the string for the 'symbol_inputs' dictionary
+    # that will be used inside the loop for eager execution.
+    eager_call_args = []
+    for p_name in params:
+        if p_name in INPUT_COLUMN_MAP:
+            col_type = INPUT_COLUMN_MAP[p_name]
+            eager_call_args.append(f'"{p_name}": input_data["{col_type}"][symbol]')
+    symbol_inputs_for_eager_call_str = ", ".join(eager_call_args)
 
     code = FACTOR_CLASS_TEMPLATE.format(
         class_name=class_name,
-        docstring=docstring,
-        factor_name=factor_name,
-        required_param_list=required_param_list,
-        param_validation_and_assignment=param_validation_and_assignment,
-        input_data_validation="\n".join(input_validation_lines),
-        required_input_cols_repr=repr(required_input_cols),
+        docstring=f"Calculates the {base_name} indicator.",
+        factor_name=base_name,
+        required_param_list=", ".join(config_params) or "None",
+        param_validation_and_assignment="\n".join(param_validation_lines),
+        input_data_validation="\n".join(
+            [
+                f'        if input_data.get("{c}") is None: return pl.DataFrame(data={{}}, schema=self.get_output_schema())'
+                for c in required_input_cols
+            ]
+        ),
         func_name=func_name,
-        kwargs_for_call=kwargs_for_call,
-        symbol_inputs_for_call=symbol_inputs_for_call,
+        kwargs_for_call=", ".join([f'"{p}": self.{p}' for p in config_params]),
+        symbol_inputs_for_eager_call=symbol_inputs_for_eager_call_str,  # Pass the corrected string
         output_component_name=output_component_name or "",
     )
 
-    file_path = output_path / f"{module_filename}.py"  # Use the passed path
-    with open(file_path, "w", encoding="utf-8") as f:
-        f.write(code)
+    file_path = output_path / f"{module_filename}.py"
+    file_path.write_text(code, encoding="utf-8")
+    class_list.append((module_filename, class_name))
 
-    generated_classes_in_group.append((module_filename, class_name))
+
+def create_init_files(generated_files_by_group):
+    """Creates all necessary __init__.py files to form a package."""
+    for group_name, classes in generated_files_by_group.items():
+        init_path = OUTPUT_DIR / group_name / "__init__.py"
+        with init_path.open("w", encoding="utf-8") as f:
+            for module_name, class_name in sorted(classes):
+                f.write(f"from .{module_name} import {class_name}\n")
+
+    top_init_path = OUTPUT_DIR / "__init__.py"
+    with top_init_path.open("w", encoding="utf-8") as f:
+        all_class_names = []
+        for group_name, classes in sorted(generated_files_by_group.items()):
+            class_names = sorted([c[1] for c in classes])
+            all_class_names.extend(class_names)
+            f.write(
+                f"from .{group_name} import (\n    "
+                + ",\n    ".join(class_names)
+                + "\n)\n\n"
+            )
+        f.write(
+            "\n__all__ = [\n    " + '",\n    "'.join(sorted(all_class_names)) + '"\n]\n'
+        )
 
 
 if __name__ == "__main__":
