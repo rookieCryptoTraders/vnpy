@@ -46,4 +46,4 @@ requirements.txt
 lab/
 
 # Factor
-factor/factors/ta_lib/
+factor/factors/ta_lib
