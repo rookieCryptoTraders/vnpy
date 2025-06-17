@@ -6,9 +6,7 @@ from pathlib import Path
 import polars_talib as plta
 
 # The directory where the new factor files will be saved
-OUTPUT_DIR = Path(
-    "/Users/chenzhao/Documents/crypto_vnpy/vnpy/vnpy/factor/factors/ta_lib"
-)
+OUTPUT_DIR = Path(__file__).parent / "ta_lib"
 
 # A template for the Python code of each new factor class.
 # Placeholders like {class_name}, {factor_name}, etc., will be filled in.
