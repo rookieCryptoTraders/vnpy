@@ -46,4 +46,4 @@ requirements.txt
 lab/
 
 # Factor
-factor/factors/ta_lib
+vnpy/vnpy/factor/factors/ta_lib/
