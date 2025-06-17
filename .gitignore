@@ -44,3 +44,6 @@ requirements.txt
 
 # Alpha
 lab/
+
+# Factor
+factor/factors/ta_lib/
