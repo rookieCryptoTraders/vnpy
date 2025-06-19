@@ -77,7 +77,7 @@ def populate_settings_file():
             config_params = [
                 p
                 for p, v in sig.parameters.items()
-                if p not in {"real", "open", "high", "low", "close", "volume"}
+                if p not in {"real", "open", "high", "low", "close", "volume", "price"}
                 and v.default is not inspect.Parameter.empty
             ]
             default_params = {
@@ -88,7 +88,7 @@ def populate_settings_file():
 
             # Create a setting dictionary and instantiate the class
             setting_dict = {"params": default_params}
-            instance = FactorClass(setting=setting_dict, vt_symbols=[])
+            instance = FactorClass(setting=setting_dict)
 
             instance.freq = Interval.MINUTE  # Set a default frequency
 
@@ -102,6 +102,7 @@ def populate_settings_file():
 
     # Write all collected settings to the JSON file, overwriting the old one
     with open(SETTINGS_JSON_PATH, "w", encoding="utf-8") as f:
+        print(all_settings)
         json.dump(all_settings, f, indent=4)
 
     print("\n--- Population Complete ---")
