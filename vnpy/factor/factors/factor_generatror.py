@@ -215,20 +215,16 @@ INDICATOR_GROUPS = {
     "cdltristar": "pattern_recognition",
     "cdlunique3river": "pattern_recognition",
     "cdlupsidegap2crows": "pattern_recognition",
-    "cdlxsidegap3methods": "pattern_recognition"
+    "cdlxsidegap3methods": "pattern_recognition",
 }
 MULTI_OUTPUT_FUNCTIONS = {
     "bbands": ["upperband", "middleband", "lowerband"],
-    "mama": ["mama", "fama"],
     "macd": ["macd", "macdsignal", "macdhist"],
-    "macdext": ["macd", "macdsignal", "macdhist"],
-    "macdfix": ["macd", "macdsignal", "macdhist"],
     "stoch": ["slowk", "slowd"],
     "stochf": ["fastk", "fastd"],
     "aroon": ["aroondown", "aroonup"],
-    "ht_phasor": ["inphase", "quadrature"],
-    "ht_sine": ["sine", "leadsine"],
 }
+
 INPUT_COLUMN_MAP = {
     "real": "close",
     "price": "close",
@@ -237,6 +233,44 @@ INPUT_COLUMN_MAP = {
     "low": "low",
     "close": "close",
     "volume": "volume",
+}
+
+INDICATOR_GROUPS_EXCLUDED = {
+    "macdext",
+    "midpoint",
+    "sarext",
+    "macdfix",
+    "rocp",
+    "ht_dcphase",
+    "ht_trendline",
+    "dx",
+    "rocr100",
+    "minus_dm",
+    "midprice",
+    "kama",
+    "medprice",
+    "avgprice",
+    "ht_dcperiod",
+    "ema",
+    "wclprice",
+    "sma",
+    "minus_di",
+    "ht_phasor",
+    "ma",
+    "trange",
+    "t3",
+    "plus_di",
+    "mavp",
+    "ht_sine",
+    "ht_trendmode",
+    "plus_dm",
+    "mama",
+    "dema",
+    "rocr",
+    "tema",
+    "trima",
+    "wma",
+    "typprice",
 }
 
 
@@ -360,6 +394,9 @@ def generate_factor_files():
 
         normalized_func_name = func_name.lower()
         if normalized_func_name not in INDICATOR_GROUPS:
+            continue
+
+        if normalized_func_name in INDICATOR_GROUPS_EXCLUDED:
             continue
 
         group_name = INDICATOR_GROUPS.get(normalized_func_name, "uncategorized")

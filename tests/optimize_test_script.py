@@ -50,7 +50,8 @@ def generate_fake_ohlcv_wide_dict(
     n_dates = len(datetimes)
     n_symbols = len(vt_symbols)
     base_prices = 100 + np.arange(n_symbols) * 50
-    drifts = np.random.uniform(0.05, 0.25, n_symbols)
+    #drifts = np.random.uniform(0.05, 0.25, n_symbols)
+    drifts = np.zeros(n_symbols)  # No drift for simplicity
     volatilities = np.random.uniform(0.3, 0.8, n_symbols)
 
     corr_matrix = np.full((n_symbols, n_symbols), 0.7)
@@ -150,15 +151,14 @@ def main():
     factor_definitions_filename = get_factor_definitions_filename()
     factor_definitions = load_json(factor_definitions_filename)
     macd_factor_template = factor_definitions[
-        2
+        3
     ]  # Using the MACD factor definition dict
 
     # Define the grid of parameters to search over for the MACD factor.
     # The keys use dot-notation to target parameters in nested dependency factors.
     parameter_grid = {
-        "fast_ema.period": [10, 12, 15],
-        "slow_ema.period": [20, 26, 30],
-        "signal_period": [7, 9, 12],
+        "fastperiod": [10, 12, 15],
+        "slowperiod": [20, 26, 30]
     }
 
     # Define time range for the data

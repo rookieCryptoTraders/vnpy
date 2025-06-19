@@ -211,7 +211,8 @@ class FactorAnalyser:
         # Assign assets to quantiles using ntile
         data_with_quantiles = analysis_data.with_columns(
             pl.col("factor_value").qcut(
-                self.config.num_quantiles, labels=[f"Q{i+1}" for i in range(self.config.num_quantiles)]
+                self.config.num_quantiles, labels=[f"Q{i+1}" for i in range(self.config.num_quantiles)],
+                allow_duplicates=True
             ).alias("quantile")
         )
 
