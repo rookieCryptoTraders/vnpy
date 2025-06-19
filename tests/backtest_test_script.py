@@ -174,7 +174,7 @@ def main():
 
     # Load factor definitions
     factor_definitions = load_factor_setting(get_factor_definitions_filename())
-    macd_factor_definition = factor_definitions[2]  # Using the third factor definition
+    macd_factor_definition = factor_definitions[3]  # Using the third factor definition
 
     # Initialize MACD factor
     import importlib
