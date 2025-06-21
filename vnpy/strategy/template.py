@@ -112,6 +112,9 @@ class StrategyTemplate(ABC):
         if "params" in settings and isinstance(settings["params"], dict):
             self.params.update(settings["params"])
 
+        # Model-specific parameters, separated for clarity
+        self.model_params: dict = settings.get("model_params", {})
+
         # Engine access and initial state
         self.get_tick: Callable[[str], TickData | None] = self.strategy_engine.get_tick
         self.get_contract: Callable[[str], ContractData | None] = (
@@ -180,11 +183,10 @@ class StrategyTemplate(ABC):
 
         self.latest_factor_update_time = self.strategy_engine.get_current_datetime()
 
-        required_keys = self.params.get_parameter("required_factor_keys", [])
+        # Get all required factor keys (for features and labels)
+        required_keys = self.get_all_required_factor_keys()
         if not required_keys:
-            self.write_log(
-                "No required_factor_keys defined in params. Cannot process.", WARNING
-            )
+            self.write_log("No required factor keys defined. Cannot process.", WARNING)
             return None
 
         latest_polars_data_map: dict[str, pl.DataFrame] = {}
@@ -229,6 +231,57 @@ class StrategyTemplate(ABC):
                 ERROR,
             )
             return None
+
+    @virtual
+    def retrain_model(self, factor_memories: dict[str, FactorMemory]) -> None:
+        """Orchestrates model retraining using provided FactorMemory instances for historical data."""
+        self.write_log("Starting model retraining process...", INFO)
+        try:
+            # Fetch full historical data for all required factors
+            historical_data = {
+                key: mem.get_data()
+                for key, mem in factor_memories.items()
+                if key in self.get_all_required_factor_keys()
+            }
+
+            features_df, labels_series = self.prepare_training_data(historical_data)
+
+            if (
+                features_df is None
+                or features_df.empty
+                or labels_series is None
+                or labels_series.empty
+            ):
+                self.write_log(
+                    "Training data prep resulted in empty features/labels. Aborting.",
+                    WARNING,
+                )
+                return
+
+            if self.model is None or not hasattr(self.model, "fit"):
+                self.write_log(
+                    "Model is not initialized or does not have a 'fit' method.", ERROR
+                )
+                return
+
+            self.write_log(
+                f"Training model with {features_df.shape[0]} samples, {features_df.shape[1]} features.",
+                INFO,
+            )
+            self.model.fit(features_df, labels_series)
+            self.write_log("Model training completed.", INFO)
+
+            self.save_model()
+            self.last_retrain_time = self.strategy_engine.get_current_datetime()
+            self.write_log(
+                f"Model retraining finished. Last retrain: {self.last_retrain_time}",
+                INFO,
+            )
+            self.put_event()
+        except Exception as e:
+            self.write_log(
+                f"Error during model retraining: {e}\n{traceback.format_exc()}", ERROR
+            )
 
     # --------------------------------
     # Model Management
@@ -298,15 +351,15 @@ class StrategyTemplate(ABC):
         Serializes the strategy's configuration to a dictionary,
         including model-specific parameters for traceability.
         """
-        model_params = {}
+        model_params = self.model_params.copy()
+
         if self.model:
-            # Add support for scikit-learn models
+            # Add/update sklearn_params if the model is compatible
             if hasattr(self.model, "get_params") and callable(self.model.get_params):
                 try:
                     model_params["sklearn_params"] = self.model.get_params()
                 except Exception as e:
                     self.write_log(f"Could not get sklearn_params: {e}", WARNING)
-            # Add more `elif` blocks here for other model types (Keras, PyTorch, etc.)
 
         settings = {
             "strategy_name": self.strategy_name,
@@ -358,6 +411,9 @@ class StrategyTemplate(ABC):
         if params_to_update := settings.get("params"):
             self.params.update(params_to_update)
 
+        if model_params_to_update := settings.get("model_params"):
+            self.model_params.update(model_params_to_update)
+
         self.load_model()  # Reload model in case path changed
         self.write_log("Strategy settings updated.", INFO)
         self.put_event()
@@ -365,6 +421,24 @@ class StrategyTemplate(ABC):
     # --------------------------------
     # Utility and Virtual Methods
     # --------------------------------
+    @virtual
+    def get_all_required_factor_keys(self) -> set[str]:
+        """
+        Returns a set of all factor keys this strategy needs to function,
+        including features for prediction and data for label creation.
+        """
+        # Get feature keys from model_params
+        feature_map = self.model_params.get("features", {})
+        required_keys = set(feature_map.values())
+
+        # Get label creation key from retraining_config
+        retraining_config = self.params.get_parameter("retraining_config", {})
+        label_key = retraining_config.get("label_factor_key")
+        if label_key:
+            required_keys.add(label_key)
+
+        return required_keys
+
     def write_log(self, msg: str, level: int = INFO) -> None:
         """Writes a log message via the strategy engine."""
         self.strategy_engine.write_log(msg, self, level=level)
