@@ -1,47 +1,54 @@
 import csv
+from collections.abc import Callable
 from datetime import datetime
-from typing import List, Optional, Callable
+from logging import INFO
+from typing import List, Optional, Union
 
-from vnpy.trader.engine import BaseEngine, MainEngine, EventEngine
+from vnpy.event import Event, EventEngine
 from vnpy.trader.constant import Interval, Exchange
-from vnpy.trader.object import BarData, TickData, ContractData, HistoryRequest
-from vnpy.trader.database import BaseDatabase, get_database, BarOverview, DB_TZ
+from vnpy.trader.database import BaseDatabase, get_database, BarOverview, DB_TZ, TV_BaseOverview, TickOverview, \
+    FactorOverview
 from vnpy.trader.datafeed import BaseDatafeed, get_datafeed
+from vnpy.trader.engine import BaseEngine, MainEngine
+from vnpy.trader.event import EVENT_LOG
+from vnpy.trader.object import BarData, LogData
+from vnpy.trader.object import TickData, ContractData, HistoryRequest
 from vnpy.trader.utility import ZoneInfo
 
-APP_NAME = "DataManager"
+from .base import APP_NAME
 
 
-class ManagerEngine(BaseEngine):
+class DataManagerEngine(BaseEngine):
     """"""
 
     def __init__(
-        self,
-        main_engine: MainEngine,
-        event_engine: EventEngine,
+            self,
+            main_engine: MainEngine,
+            event_engine: EventEngine,
     ) -> None:
         """"""
         super().__init__(main_engine, event_engine, APP_NAME)
 
-        self.database: BaseDatabase = get_database()
+        # self.database: BaseDatabase = get_database()
+        self.database: BaseDatabase = None  # fixme: database should not affiliated to data_manager. database is event driven
         self.datafeed: BaseDatafeed = get_datafeed()
 
     def import_data_from_csv(
-        self,
-        file_path: str,
-        symbol: str,
-        exchange: Exchange,
-        interval: Interval,
-        tz_name: str,
-        datetime_head: str,
-        open_head: str,
-        high_head: str,
-        low_head: str,
-        close_head: str,
-        volume_head: str,
-        turnover_head: str,
-        open_interest_head: str,
-        datetime_format: str
+            self,
+            file_path: str,
+            symbol: str,
+            exchange: Exchange,
+            interval: Interval,
+            tz_name: str,
+            datetime_head: str,
+            open_head: str,
+            high_head: str,
+            low_head: str,
+            close_head: str,
+            volume_head: str,
+            turnover_head: str,
+            open_interest_head: str,
+            datetime_format: str
     ) -> tuple:
         """"""
         with open(file_path, "rt") as f:
@@ -50,7 +57,7 @@ class ManagerEngine(BaseEngine):
         reader: csv.DictReader = csv.DictReader(buf, delimiter=",")
 
         bars: List[BarData] = []
-        start: datetime = None
+        start: Optional[datetime] = None
         count: int = 0
         tz = ZoneInfo(tz_name)
 
@@ -94,13 +101,13 @@ class ManagerEngine(BaseEngine):
         return start, end, count
 
     def output_data_to_csv(
-        self,
-        file_path: str,
-        symbol: str,
-        exchange: Exchange,
-        interval: Interval,
-        start: datetime,
-        end: datetime
+            self,
+            file_path: str,
+            symbol: str,
+            exchange: Exchange,
+            interval: Interval,
+            start: datetime,
+            end: datetime
     ) -> bool:
         """"""
         bars: List[BarData] = self.load_bar_data(symbol, exchange, interval, start, end)
@@ -142,17 +149,22 @@ class ManagerEngine(BaseEngine):
         except PermissionError:
             return False
 
-    def get_bar_overview(self) -> List[BarOverview]:
-        """"""
+    def get_bar_overview(self) -> dict[str, BarOverview]:
         return self.database.get_bar_overview()
 
+    def get_tick_overview(self) -> dict[str, TickOverview]:
+        return self.database.get_tick_overview()
+
+    def get_factor_overview(self) -> dict[str, FactorOverview]:
+        return self.database.get_factor_overview()
+
     def load_bar_data(
-        self,
-        symbol: str,
-        exchange: Exchange,
-        interval: Interval,
-        start: datetime,
-        end: datetime
+            self,
+            symbol: str,
+            exchange: Exchange,
+            interval: Interval,
+            start: datetime,
+            end: datetime
     ) -> List[BarData]:
         """"""
         bars: List[BarData] = self.database.load_bar_data(
@@ -166,10 +178,10 @@ class ManagerEngine(BaseEngine):
         return bars
 
     def delete_bar_data(
-        self,
-        symbol: str,
-        exchange: Exchange,
-        interval: Interval
+            self,
+            symbol: str,
+            exchange: Exchange,
+            interval: Interval
     ) -> int:
         """"""
         count: int = self.database.delete_bar_data(
@@ -181,22 +193,25 @@ class ManagerEngine(BaseEngine):
         return count
 
     def download_bar_data(
-        self,
-        symbol: str,
-        exchange: Exchange,
-        interval: str,
-        start: datetime,
-        output: Callable
-    ) -> int:
+            self,
+            symbol: str,
+            exchange: Exchange,
+            interval: str,
+            start: datetime,
+            end: datetime = None,
+            save: bool = False
+    ) -> Union[int, List[BarData]]:
         """
         Query bar data from datafeed.
         """
+        if end is None:
+            end = datetime.now(DB_TZ)
         req: HistoryRequest = HistoryRequest(
             symbol=symbol,
             exchange=exchange,
             interval=Interval(interval),
             start=start,
-            end=datetime.now(DB_TZ)
+            end=end
         )
 
         vt_symbol: str = f"{symbol}.{exchange.value}"
@@ -209,20 +224,24 @@ class ManagerEngine(BaseEngine):
             )
         # Otherwise use datafeed to query data
         else:
-            data: List[BarData] = self.datafeed.query_bar_history(req, output)
+            data: List[dict] = self.datafeed.query_bar_history(req=req, output=self.write_log)
 
-        if data:
-            self.database.save_bar_data(data)
-            return (len(data))
+        if save:
+            if data:
+                status=self.database.save_bar_data(data)
+                return status
+        else:
+            # If not saving, just return the data
+            return data
 
         return 0
 
     def download_tick_data(
-        self,
-        symbol: str,
-        exchange: Exchange,
-        start: datetime,
-        output: Callable
+            self,
+            symbol: str,
+            exchange: Exchange,
+            start: datetime,
+            output: Callable
     ) -> int:
         """
         Query tick data from datafeed.
@@ -238,6 +257,17 @@ class ManagerEngine(BaseEngine):
 
         if data:
             self.database.save_tick_data(data)
-            return (len(data))
+            return len(data)
 
         return 0
+
+    def write_log(self, msg: str, level=INFO) -> None:
+        """
+        Write log message to the log file.
+        """
+        log: LogData = LogData(msg=msg, gateway_name=APP_NAME, level=level)
+        event = Event(type=EVENT_LOG, data=log)
+        self.event_engine.put(event)
+
+    def close(self) -> None:
+        pass

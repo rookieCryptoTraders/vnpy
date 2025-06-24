@@ -23,9 +23,10 @@
 from pathlib import Path
 
 import importlib
+import importlib.metadata
 from vnpy.trader.app import BaseApp
 
-from .engine import APP_NAME, ManagerEngine
+from .engine import APP_NAME, DataManagerEngine
 
 
 try:
@@ -41,4 +42,4 @@ class DataManagerApp(BaseApp):
     app_module: str = None
     app_path: Path = Path(__file__).parent
     display_name: str = "数据管理"
-    engine_class: ManagerEngine = ManagerEngine
+    engine_class: DataManagerEngine = DataManagerEngine

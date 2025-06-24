@@ -19,7 +19,7 @@ class EMAFactor(FactorTemplate):
     """
 
     author = "VN Trader Community"
-    factor_name = "EMAFactor"  # Default, can be overridden by factor_name in settings
+    factor_name = "emafactor"  # Default, can be overridden by factor_name in settings
 
     def __init__(
         self,
@@ -128,7 +128,7 @@ class MACDFactor(FactorTemplate):
     """
 
     author = "VN Trader Community"
-    factor_name = "MACDFactor"
+    factor_name = "macdfactor"
 
     def __init__(
         self,

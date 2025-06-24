@@ -9,9 +9,10 @@ from typing import Literal
 import polars as pl
 from vnpy_clickhouse.clickhouse_database import ClickhouseDatabase
 
-from vnpy.adapters.overview import OverviewHandler
 from vnpy.event.engine import Event
 from vnpy.trader.constant import Exchange, Interval
+from vnpy.trader.database import OverviewHandler
+
 from vnpy.trader.engine import BaseEngine, EventEngine, MainEngine
 from vnpy.trader.event import (
     EVENT_BAR,

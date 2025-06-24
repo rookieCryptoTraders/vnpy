@@ -11,8 +11,10 @@ import multiprocessing
 from time import sleep
 import time
 
+from vnpy.trader.constant import Exchange
+
 from vnpy.factor.engine import FactorEngine
-# from vnpy.app.factor_maker import FactorMakerApp
+from vnpy.factor import FactorMakerApp
 from vnpy.event import EventEngine
 from vnpy.gateway.mimicgateway.mimicgateway import MimicGateway
 from vnpy.trader.engine import MainEngine
@@ -20,7 +22,10 @@ from vnpy.app.data_recorder import DataRecorderApp
 
 
 # from vnpy.strategy.examples.test_strategy_template import TestStrategyTemplate
-
+# 1. 落实data_recorder对于overview的记录
+# 2. data_manager在识别到数据缺失后:
+# 	1. 下载bar(需要往前多下载max_window大小的数据)
+# 	2. put bar event
 
 def run_child():
     """
@@ -33,13 +38,9 @@ def run_child():
     main_engine = MainEngine(event_engine)
     main_engine.write_log("Main engine created successfully")
 
-    # start factor engine
-    factor_maker_engine: FactorEngine = main_engine.add_engine(FactorEngine)
-    factor_maker_engine.init_engine(fake=False)
-
     gateway_settings = {
         "symbols": [],
-        "simulation_interval_seconds": 2,  # Bars every second for each symbol
+        "simulation_interval_seconds": 2.0,  # Bars every second for each symbol
         "open_price_range_min": 100,
         "open_price_range_max": 105,
         "price_change_range_min": -1,
@@ -50,20 +51,25 @@ def run_child():
 
     # connect to exchange
     main_engine.add_gateway(MimicGateway, "MIMIC")
-    main_engine.subscribe_all(gateway_name='MIMIC')
+    # main_engine.subscribe_all(gateway_name='MIMIC')
 
     main_engine.connect(gateway_settings, "MIMIC")
     main_engine.write_log("Connected to MIMIC interface")
     main_engine.subscribe_all(gateway_name='MIMIC')
 
+    # start factor engine
+    factor_maker_engine: FactorEngine = main_engine.add_app(FactorMakerApp)
+    factor_maker_engine.init_engine(fake=True)
+    main_engine.write_log(f"启动[{factor_maker_engine.__class__.__name__}]")
+
     # start data recorder
     data_recorder_engine = main_engine.add_app(DataRecorderApp)
-    data_recorder_engine.start()
-    main_engine.write_log(f"启动[{data_recorder_engine.__class__.__name__}]")
     data_recorder_engine.update_schema(database_name=data_recorder_engine.database_manager.database_name,
                                        exchanges=main_engine.exchanges,
                                        intervals=main_engine.intervals,
                                        factor_keys=[key for key in factor_maker_engine.flattened_factors.keys()])
+    data_recorder_engine.start()
+    main_engine.write_log(f"启动[{data_recorder_engine.__class__.__name__}]")
 
 
 def run_parent():

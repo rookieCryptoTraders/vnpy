@@ -149,7 +149,7 @@ def generate_fake_ohlcv_wide_dict(
             pivoted_df = flat_df.pivot(
                 values=ohlcv_type,
                 index="datetime",
-                columns="symbol"
+                on="symbol"
             ).sort("datetime")
             ohlcv_dict[ohlcv_type] = pivoted_df
         except Exception as e:

@@ -23,6 +23,7 @@ class TimeFreq(Enum):
     """
 
     unknown = 0
+    us = 0.001  # microseconds
     ms = 1  # milliseconds
     s = ms * 1000  # seconds
     m = s * 60  # minutes

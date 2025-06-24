@@ -31,6 +31,7 @@ class MimicGateway(BaseGateway):
     }
 
     exchanges = [Exchange.BINANCE] # Add more as needed
+    # exchanges = [Exchange('BINANCE')] # Add more as needed
 
     def __init__(self, event_engine: EventEngine, gateway_name: str = GATEWAY_NAME):
         """Constructor"""

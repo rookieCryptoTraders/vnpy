@@ -59,9 +59,10 @@ SETTINGS: dict = {
 SETTING_FILENAME: str = "vt_setting.json"
 
 if not _VT_SETTING_LOADED:
-    SETTINGS.update(load_json(SETTING_FILENAME))
+    new_settings,setting_filepath = load_json(SETTING_FILENAME, return_filepath=True)
+    SETTINGS.update(new_settings)
     _VT_SETTING_LOADED = True
-    print(f"[vnpy.trader.setting] Updated SETTINGS from {SETTING_FILENAME}")
+    print(f"[vnpy.trader.setting] Updated SETTINGS from {setting_filepath}")
 
 
 # def get_settings(prefix: str = "") -> Dict[str, Any]:

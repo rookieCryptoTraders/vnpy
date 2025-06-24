@@ -122,7 +122,7 @@ def get_icon_path(filepath: str, ico_name: str) -> str:
     return str(icon_path)
 
 
-def load_json(filename: str, cls=json.JSONDecoder) -> dict:
+def load_json(filename: str, cls=json.JSONDecoder, return_filepath:bool=False) -> Union[dict,tuple[dict, Path]]:
     """
     Load data from json file in temp path.
     """
@@ -131,7 +131,10 @@ def load_json(filename: str, cls=json.JSONDecoder) -> dict:
     if filepath.exists():
         with open(filepath, mode="r", encoding="UTF-8") as f:
             data: dict = json.load(f, cls=cls)
-        return data
+            if return_filepath:
+                return data, filepath
+            else:
+                return data
     else:
         save_json(filename, {})
         return {}
