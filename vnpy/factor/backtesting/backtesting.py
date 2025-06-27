@@ -64,10 +64,6 @@ class BacktestEngine:
         self.module_factors: Any | None = None
         try:
             self.module_factors = importlib.import_module(self.factor_module_name)
-            self._write_log(
-                f"Successfully imported factor module: '{self.factor_module_name}'",
-                level=DEBUG,
-            )
         except ImportError as e:
             self._write_log(
                 f"Could not import factor module '{self.factor_module_name}': {e}. Factor initialization will fail.",
@@ -80,8 +76,6 @@ class BacktestEngine:
         self.num_data_rows: int = 0
         self.factor_datetime_col: str = DEFAULT_DATETIME_COL
 
-        self._write_log(f"{self.engine_name} initialized.", level=INFO)
-
     def _load_bar_data_engine(
         self, start: datetime, end: datetime, interval: Interval, vt_symbols: list[str]
     ) -> bool:
@@ -90,10 +84,6 @@ class BacktestEngine:
         Populates self.memory_bar and self.num_data_rows.
         THIS IS A PLACEHOLDER. Replace with actual data loading logic.
         """
-        self._write_log(
-            f"Orchestrator Placeholder: load_bar_data called for {start} to {end}, interval {interval.value}, symbols: {vt_symbols}",
-            level=DEBUG,
-        )
         self.memory_bar.clear()
 
         if not vt_symbols:
@@ -214,10 +204,6 @@ class BacktestEngine:
             )
             return True
 
-        self._write_log(
-            f"Orchestrator Placeholder: Successfully simulated loading of {self.num_data_rows} rows for {len(vt_symbols)} symbols.",
-            level=DEBUG,
-        )
         return True
 
     def _init_and_flatten_factor(
@@ -345,7 +331,7 @@ class BacktestEngine:
 
         self._write_log(
             f"Target factor instance created: {target_factor_instance.factor_key}",
-            level=INFO,
+            level=DEBUG,
         )
 
         # Flatten the dependency tree

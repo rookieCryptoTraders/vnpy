@@ -105,10 +105,6 @@ class FactorAnalyser:
         self.performance_metrics: dict[str, Any] | None = None
 
         self._prepare_output_directory()
-        self._write_log(
-            f"FactorAnalyser initialized. Reports will be saved in: {self.output_data_dir}",
-            level=INFO,
-        )
 
     def _prepare_output_directory(self) -> None:
         """Ensures the output directory and its subdirectories exist."""
