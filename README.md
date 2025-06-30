@@ -4,24 +4,35 @@
 
 **vn.py** is a comprehensive, modular, event-driven quantitative trading framework written in Python. It provides a complete suite of tools for strategy development, backtesting, and live trading across various financial markets, including stocks, futures, and cryptocurrencies. The framework is designed with a decoupled architecture, allowing for high extensibility and easy integration of custom modules.
 
----
+## 2. Project Structure
 
-## 2. Core Architecture
+```
+crypto_vnpy/
+│
+├── vnpy/                # Core trading engine and modules
+├── vnpy_clickhouse/     # ClickHouse database integration
+├── vnpy_datafeed/       # Market data feed connectors
+├── tests/               # Unit and integration tests
+├── venv/                # Python virtual environment (recommended)
+└── README.md            # Project documentation (this file)
+```
+
+## 3. Core Architecture
 
 The heart of vn.py is its event-driven architecture, which ensures that different components can communicate asynchronously without being tightly linked. This promotes modularity and scalability.
 
-### 2.1. `EventEngine`
+### 3.1. `EventEngine`
 - **Location**: `vnpy/event/engine.py`
 - **Role**: The central message bus of the entire platform. All modules communicate by putting `Event` objects into the `EventEngine` and listening for events they are interested in. This decouples all components, from data gateways to strategy execution.
 
-### 2.2. `MainEngine`
+### 3.2. `MainEngine`
 - **Location**: `vnpy/trader/engine.py`
 - **Role**: The central orchestrator of the framework. It is responsible for:
     - Initializing and managing the lifecycle of all other engines (e.g., `StrategyEngine`, `PortfolioEngine`).
     - Loading and managing gateway connections to external exchanges.
     - Providing a unified API for core trading actions like sending orders, subscribing to market data, and querying account information.
 
-### 2.3. `Gateways`
+### 3.3. `Gateways`
 - **Location**: `vnpy/gateway/`
 - **Role**: Gateways are the bridges to external exchanges (e.g., Binance, OKX). Each gateway implements a standardized interface (`BaseGateway`) for:
     - Connecting to the exchange's API (REST and Websocket).
@@ -29,21 +40,19 @@ The heart of vn.py is its event-driven architecture, which ensures that differen
     - Sending, updating, and canceling orders.
     - Querying account balances, positions, and historical data.
 
----
-
-## 3. Application Modules
+## 4. Application Modules
 
 vn.py includes several pre-built application modules that provide essential trading functionalities. These are managed by the `MainEngine`.
 
-### 3.1. `PortfolioManager`
+### 4.1. `PortfolioManager`
 - **Location**: `vnpy/app/portfolio_manager/engine.py`
 - **Role**: A passive, event-driven engine that tracks trading performance. It listens for trade and order events and automatically calculates PnL, positions, and key statistics for different portfolios. Portfolios are identified by a unique `reference` tag attached to each order, making it easy to track the performance of individual strategies.
 
-### 3.2. `DataRecorder`
+### 4.2. `DataRecorder`
 - **Location**: `vnpy/app/data_recorder/engine.py`
 - **Role**: Responsible for capturing and storing market data. It can record tick-by-tick data, generate candlestick bars (`BarData`) from ticks, and save them to a database (e.g., ClickHouse) for historical analysis and backtesting.
 
-### 3.3. `RiskManager`
+### 4.3. `RiskManager`
 - **Location**: `vnpy/app/risk_manager/engine.py`
 - **Role**: Provides pre-trade risk control by intercepting all outgoing orders. It can enforce rules such as:
     - Limiting order flow rate.
@@ -51,9 +60,7 @@ vn.py includes several pre-built application modules that provide essential trad
     - Setting a maximum for total traded volume.
     - Preventing potential self-trading.
 
----
-
-## 4. Factor Engine Module
+## 5. Factor Engine Module
 
 The Factor Engine is a powerful, data-centric module responsible for all feature engineering and data processing. It is designed for performance, using **Dask** for parallel computation and **Polars** for high-speed data manipulation.
 
@@ -70,9 +77,7 @@ The Factor Engine is a powerful, data-centric module responsible for all feature
     4. The calculated factor values are stored in their respective `FactorMemory` instances.
     5. Finally, the `FactorEngine` broadcasts an `EVENT_FACTOR` containing the latest calculated factor data for all strategies to consume.
 
----
-
-## 5. Strategy Engine Module
+## 6. Strategy Engine Module
 
 The Strategy Engine is the decision-making layer of the framework. It hosts and executes the trading logic.
 
@@ -90,11 +95,9 @@ The Strategy Engine is the decision-making layer of the framework. It hosts and 
     - When a `StrategyTemplate` creates an `OrderRequest`, it **must** set the `reference` field to its own `strategy_name`.
     - This `reference` tag is carried through the entire order lifecycle (order -> trade) and is used by the `PortfolioEngine` to attribute all PnL and performance metrics back to the originating strategy. This is the critical link that enables multi-strategy performance tracking.
 
----
+## 8. Additional Documentation
 
-## 6. Additional Documentation
-
-### Portfolio Manager Documentation
+### 8.1. Portfolio Manager Documentation
 
 #### Overview
 The Portfolio Manager is a VeighNa application designed to manage and track trading portfolios, calculating PnL (Profit and Loss) across multiple contracts and providing real-time portfolio monitoring.
@@ -158,293 +161,11 @@ portfolio = portfolio_engine.get_portfolio_result("PORTFOLIO_A")
 print(f"Total PnL: {portfolio.total_pnl}")
 ```
 
-#### Event Types
-- `EVENT_PM_CONTRACT`: Contract-level updates
-- `EVENT_PM_PORTFOLIO`: Portfolio-level updates
-- `EVENT_PM_TRADE`: Trade processing events
-
-#### Dependencies
-- VeighNa Core (`vnpy.trader`)
-- Event Engine (`vnpy.event`)
-- JSON utilities for data persistence
-
-#### Data Persistence
-The system maintains three JSON files:
-- `portfolio_manager_setting.json`: Configuration settings
-- `portfolio_manager_data.json`: Position data
-- `portfolio_manager_order.json`: Order reference data
-
-#### Error Handling
-- Robust duplicate trade filtering
-- Null contract/tick data handling
-- Date transition management for positions
-
-#### Performance Considerations
-- Configurable update interval
-- Efficient event processing
-- Minimal memory footprint with selective market data subscription
-
-#### Technical Details
-
-##### Data Structures
-
-###### ContractResult
-```python
-class ContractResult:
-    reference: str              # Portfolio reference
-    vt_symbol: str             # Contract symbol
-    open_pos: int              # Opening position
-    last_pos: int             # Current position
-    trading_pnl: float        # Realized PnL
-    holding_pnl: float        # Unrealized PnL
-    total_pnl: float          # Total PnL
-    trades: Dict[str, TradeData]  # Trade history
-    long_volume: float        # Long position volume
-    short_volume: float        # Short position volume
-    long_cost: float         # Long position cost
-    short_cost: float        # Short position cost
-```
-
-###### PortfolioResult
-```python
-class PortfolioResult:
-    reference: str           # Portfolio identifier
-    trading_pnl: float      # Total realized PnL
-    holding_pnl: float      # Total unrealized PnL
-    total_pnl: float        # Combined portfolio PnL
-```
-
-##### Event Processing Flow
-
-1. Trade Event Processing:
-```python
-Trade Event -> process_trade_event() -> ContractResult.update_trade() -> EVENT_PM_TRADE
-```
-
-2. Timer Event Processing:
-```python
-Timer Event -> process_timer_event() -> 
-    ContractResult.calculate_pnl() -> 
-    PortfolioResult aggregation -> 
-    EVENT_PM_CONTRACT/EVENT_PM_PORTFOLIO
-```
-
-##### Calculation Logic
-
-###### Position Management
-1. Position Types:
-   - `open_pos`: Starting position for the day (carried from previous day)
-   - `last_pos`: Current actual position after trades
-
-2. Position Tracking:
-   - Maintains separate long/short positions
-   - Tracks cumulative volumes and costs
-   - Updates on each trade
-
-###### PnL Calculation Process
-
-1. Trading PnL (Realized)
-   ```python
-   # Long positions
-   long_value = long_volume * current_price * contract_size
-   long_pnl = long_value - long_cost
-   
-   # Short positions
-   short_value = short_volume * current_price * contract_size
-   short_pnl = short_cost - short_value
-   
-   # Total trading PnL
-   trading_pnl = long_pnl + short_pnl
-   ```
-
-2. Holding PnL (Unrealized)
-   ```python
-   # Based on open position from day start
-   holding_pnl = (current_price - previous_close) * open_pos * contract_size
-   ```
-
-3. Total PnL
-   ```python
-   total_pnl = trading_pnl + holding_pnl
-   ```
-
-###### Trade Processing Flow
-1. New Trade Arrival:
-   - Validate trade is not duplicate
-   - Update position (last_pos)
-   - Store trade for PnL calculation
-
-2. PnL Calculation Cycle:
-   - Process new trades
-   - Update costs and volumes
-   - Calculate current values
-   - Update PnL components
-
-##### Error Handling
-
-###### Trade Processing
-- Duplicate trade detection
-- Invalid contract validation
-- Position consistency checks
-
-```python
-# Example of trade processing with error handling
-def process_trade(trade: TradeData) -> None:
-    if trade.vt_tradeid in existing_trades:
-        logger.warning(f"Duplicate trade ignored: {trade.vt_tradeid}")
-        return
-        
-    if not validate_contract(trade.vt_symbol):
-        logger.error(f"Invalid contract: {trade.vt_symbol}")
-        return
-```
-
-##### Advanced Usage Examples
-
-###### Portfolio Performance Monitoring
-```python
-from vnpy.app.portfolio_manager import PortfolioEngine
-
-def monitor_portfolio_performance(portfolio_engine: PortfolioEngine, threshold: float = -1000):
-    """Monitor portfolio performance with alerts"""
-    portfolio = portfolio_engine.get_portfolio_result("MAIN")
-    
-    if portfolio.total_pnl < threshold:
-        logger.warning(f"Portfolio drawdown alert: {portfolio.total_pnl}")
-        
-    return {
-        "trading_pnl": portfolio.trading_pnl,
-        "holding_pnl": portfolio.holding_pnl,
-        "total_pnl": portfolio.total_pnl
-    }
-```
-
-###### Custom Position Management
-```python
-def manage_positions(engine: PortfolioEngine, reference: str):
-    """Custom position management logic"""
-    result = engine.contract_results.get((reference, vt_symbol))
-    
-    if result:
-        current_pos = result.last_pos
-        open_pos = result.open_pos
-        position_delta = current_pos - open_pos
-        
-        return {
-            "position_delta": position_delta,
-            "trading_pnl": result.trading_pnl
-        }
-```
-
-##### Performance Optimization
-
-###### Memory Management
-- Selective market data subscription
-- Efficient trade history cleanup
-- Periodic data persistence
-
-###### Latency Considerations
-- Event processing priority
-- Update frequency optimization
-- Data structure access patterns
-
-##### Configuration Options
-
-###### Timer Settings
-```python
-# Configure update frequency
-engine.set_timer_interval(interval=5)  # 5-second updates
-
-# High-frequency monitoring
-engine.set_timer_interval(interval=1)  # 1-second updates
-```
-
-###### Data Persistence
-```json
-{
-    "portfolio_manager_setting.json": {
-        "timer_interval": 5
-    },
-    "portfolio_manager_data.json": {
-        "date": "2023-01-01",
-        "positions": {
-            "PORTFOLIO_A,BTC-USD": {
-                "open_pos": 1.0,
-                "last_pos": 1.5
-            }
-        }
-    }
-}
-```
-
-##### System Requirements
-
-- Python 3.7+
-- Memory: 4GB minimum recommended
-- CPU: Multi-core processor recommended for high-frequency updates
-- Network: Low-latency connection for real-time data
-
-##### Integration Guidelines
-
-###### Event Engine Integration
-```python
-# Register custom event handlers
-engine.event_engine.register(EVENT_PM_PORTFOLIO, custom_portfolio_handler)
-engine.event_engine.register(EVENT_PM_CONTRACT, custom_contract_handler)
-```
-
-###### External System Integration
-```python
-# Export portfolio data
-def export_portfolio_data(engine: PortfolioEngine, format: str = "csv"):
-    data = {
-        ref: result.get_data() 
-        for ref, result in engine.portfolio_results.items()
-    }
-    return format_data(data, format)
-```
-
-##### Testing Guidelines
-
-###### Unit Tests
-```python
-def test_contract_result():
-    engine = MockPortfolioEngine()
-    result = ContractResult(engine, "TEST", "BTC-USD")
-    
-    # Test trade processing
-    trade = create_mock_trade(direction=Direction.LONG, volume=1)
-    result.update_trade(trade)
-    assert result.last_pos == 1
-    
-    # Test PnL calculation
-    result.calculate_pnl()
-    assert result.total_pnl == result.trading_pnl + result.holding_pnl
-```
-
-##### Troubleshooting
-
-Common issues and solutions:
-1. Missing market data
-   - Check subscription status
-   - Verify data source connectivity
-   
-2. Incorrect PnL calculations
-   - Validate trade history
-   - Check position consistency
-   
-3. Performance issues
-   - Optimize update frequency
-   - Review subscription list
-   - Monitor memory usage
-
----
-
-### Factor Backtesting Documentation
+### 8.2. Factor Backtesting Documentation
 
 This document provides an overview of the Factor Backtesting component, its core classes, and how to use them for evaluating quantitative factors.
 
-#### 1. Purpose
+#### Purpose
 
 The Factor Backtesting component is a powerful suite of tools designed for the rigorous evaluation of quantitative trading factors. It provides a complete workflow, from data loading and factor calculation to performance analysis and parameter optimization.
 
@@ -454,7 +175,7 @@ The primary goals of this component are:
 - To generate comprehensive and insightful performance reports, including quantile analysis and long-short portfolio statistics.
 - To ensure efficient and scalable computation using modern libraries like Polars and Dask.
 
-#### 2. Interface
+#### Interface
 
 The component is composed of several key classes that work together. The main user-facing classes are `BacktestEngine` and `FactorOptimizer`.
 
@@ -476,7 +197,7 @@ Responsible for the efficient, Dask-powered calculation of factor values based o
 ##### `FactorAnalyser` (Internal Engine)
 Performs in-depth analysis of factor performance, including quantile analysis and long-short portfolio construction. It uses `quantstats` to generate detailed metrics and reports. It is used internally by the other classes.
 
-#### 3. Usage Examples
+#### Usage Examples
 
 ##### Example 1: Running a Single Factor Backtest
 
@@ -556,24 +277,7 @@ print(f"Best parameters found: {best_params}")
 print(f"Final report for best params on test set: {report_path}")
 ```
 
-#### 4. Dependencies
-
-##### Internal Dependencies
-- `vnpy.factor.template`: For the base `FactorTemplate`.
-- `vnpy.factor.base`: For core constants and types.
-- `vnpy.trader.constant`: For data interval definitions.
-- `vnpy.trader.setting`: For default settings.
-
-##### External Dependencies
-- `polars`: For high-performance data manipulation.
-- `numpy`: For numerical operations.
-- `dask`: For parallel execution of the factor calculation graph.
-- `quantstats`: For generating performance metrics and reports.
-- `loguru`: For logging.
-
----
-
-### Twitter Gateway Documentation
+### 8.3. Twitter Gateway Documentation
 
 #### Purpose
 The `TwitterGateway` is designed to receive text content from Twitter in real-time. It streams tweets based on specified keywords and integrates with the event engine to process the incoming data.
@@ -637,38 +341,7 @@ settings = {
 twitter_gateway.connect(settings)
 ```
 
-#### Dependencies
-- `tweepy` library for Twitter API interaction.
-- `vnpy` framework for event handling and gateway integration.
-- `logging` for log management.
-
-#### Error Handling
-- Logs errors during connection and streaming.
-- Disconnects on rate limit errors (status code 420).
-
-#### Tests
-##### Basic Test Case
-```python
-# Test the connect method
-settings = {
-    "keywords": ["test"],
-    "api_key": "test_api_key",
-    "api_secret": "test_api_secret",
-    "access_token": "test_access_token",
-    "access_token_secret": "test_access_token_secret"
-}
-twitter_gateway = TwitterGateway(event_engine, "Twitter")
-twitter_gateway.connect(settings)
-assert twitter_gateway.stream_listener is not None
-```
-
-#### Notes
-- Ensure the Twitter API credentials are valid and have sufficient permissions.
-- The `connect` method uses asynchronous streaming to handle real-time tweets.
-
----
-
-### Strategy Engine & Template Workflow
+### 8.4. Strategy Engine & Template Workflow
 
 This document outlines the data flow and model lifecycle within the `StrategyEngine` and `StrategyTemplate` framework.
 
