@@ -4,7 +4,7 @@ dynamic = ["version"]
 description = "A framework for developing quant trading systems."
 readme = "README.md"
 license = {text = "MIT"}
-authors = [{name = "Xiaoyou Chen", email = "xiaoyou.chen@mail.vnpy.com"}]
+authors = [{name = "HYF&Chen", email = ""}]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "License :: OSI Approved :: MIT License",
@@ -23,26 +23,128 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "tzlocal>=5.3.1",
-    "PySide6>=6.8.2.1",
-    "pyqtgraph>=0.13.7",
-    "qdarkstyle>=3.2.3",
-    "numpy>=2.2.3",
-    "pandas>=2.2.3",
-#    "ta-lib>=0.6.3",
-    "deap>=1.4.2",
-    "pyzmq>=26.3.0",
-    "plotly>=6.0.0",
-    "tqdm>=4.67.1",
-    "loguru>=0.7.3",
-    "nbformat>=5.10.4",
-    "dask"
+    "aenum==3.1.15",
+    "appnope==0.1.4",
+    "asttokens==3.0.0",
+    "attrs==25.3.0",
+    "backcall==0.2.0",
+    "beautifulsoup4==4.13.3",
+    "binance-connector==3.12.0",
+    "certifi==2025.1.31",
+    "cffi==1.17.1",
+    "charset-normalizer==3.4.1",
+    "click==8.2.1",
+    "clickhouse-connect==0.8.15",
+    "cloudpickle==3.1.1",
+    "comm==0.2.2",
+    "contourpy==1.3.1",
+    "curl_cffi==0.11.1",
+    "cycler==0.12.1",
+    "dask==2025.5.1",
+    "deap==1.4.2",
+    "debugpy==1.8.14",
+    "decorator==5.2.1",
+    "distributed==2025.5.1",
+    "executing==2.2.0",
+    "fastjsonschema==2.21.1",
+    "fonttools==4.56.0",
+    "frozendict==2.4.6",
+    "fsspec==2025.5.0",
+    "idna==3.10",
+    "importlib_metadata==8.7.0",
+    "iniconfig==2.1.0",
+    "ipykernel==6.29.5",
+    "ipython==7.34.0",
+    "ipython_pygments_lexers==1.1.1",
+    "jedi==0.19.2",
+    "Jinja2==3.1.6",
+    "joblib==1.4.2",
+    "jsonschema==4.24.0",
+    "jsonschema-specifications==2025.4.1",
+    "jupyter_client==8.6.3",
+    "jupyter_core==5.7.2",
+    "kiwisolver==1.4.8",
+    "locket==1.0.0",
+    "loguru==0.7.3",
+    "lz4==4.4.3",
+    "MarkupSafe==3.0.2",
+    "matplotlib==3.10.1",
+    "matplotlib-inline==0.1.7",
+    "msgpack==1.1.0",
+    "multitasking==0.0.11",
+    "narwhals==1.30.0",
+    "nbformat==5.10.4",
+    "nest-asyncio==1.6.0",
+    "numpy==2.2.3",
+    "packaging==25.0",
+    "pandas==2.2.3",
+    "parso==0.8.4",
+    "partd==1.4.2",
+    "peewee==3.17.9",
+    "pexpect==4.9.0",
+    "pickleshare==0.7.5",
+    "pillow==11.1.0",
+    "platformdirs==4.3.7",
+    "plotly==6.0.0",
+    "pluggy==1.5.0",
+    "polars==1.24.0",
+    "prompt_toolkit==3.0.51",
+    "protobuf==6.31.1",
+    "psutil==7.0.0",
+    "ptyprocess==0.7.0",
+    "pure_eval==0.2.3",
+    "pyarrow==19.0.1",
+    "pycparser==2.22",
+    "pycryptodome==3.21.0",
+    "Pygments==2.19.1",
+    "pyparsing==3.2.1",
+    "pytest==8.3.5",
+    "pytest-mock==3.14.0",
+    "python-dateutil==2.9.0.post0",
+    "python-dotenv==1.1.0",
+    "pytz==2025.1",
+    "PyYAML==6.0.2",
+    "pyzmq==26.3.0",
+    "QuantStats==0.0.64",
+    "referencing==0.36.2",
+    "requests==2.32.3",
+    "rpds-py==0.25.1",
+    "scikit-learn==1.6.1",
+    "scipy==1.15.2",
+    "seaborn==0.13.2",
+    "setuptools==76.0.0",
+    "six==1.17.0",
+    "sortedcontainers==2.4.0",
+    "soupsieve==2.6",
+    "stack-data==0.6.3",
+    "tabulate==0.9.0",
+    "tblib==3.1.0",
+    "threadpoolctl==3.6.0",
+    "toolz==1.0.0",
+    "tornado==6.5",
+    "tqdm==4.67.1",
+    "traitlets==5.14.3",
+    "typing_extensions==4.13.1",
+    "tzdata==2025.1",
+    "tzlocal==5.3.1",
+    "urllib3==2.4.0",
+    "wcwidth==0.2.13",
+    "websocket-client==1.8.0",
+    "websockets==15.0.1",
+    "yfinance==0.2.61",
+    "zict==3.0.0",
+    "zipp==3.21.0",
+    "zstandard==0.23.0"
 ]
 keywords = ["quant", "quantitative", "investment", "trading", "algotrading"]
 
 [project.optional-dependencies]
+algo-ta = [
+    "ta-lib==0.6.3",
+    "polars-talib==0.1.5"
+]
+gui = []
 alpha = [
-    "polars>=1.26.0",
     "scipy>=1.15.2",
     "alphalens-reloaded>=0.4.5",
     "scikit-learn>=1.6.1",
@@ -57,46 +159,15 @@ dev = [
 ]
 
 [project.urls]
-"Homepage" = "https://www.vnpy.com"
-"Documentation" = "https://www.vnpy.com/docs"
-"Changes" = "https://github.com/vnpy/vnpy/blob/master/CHANGELOG.md"
-"Source" = "https://github.com/vnpy/vnpy/"
-"Forum" = "https://www.vnpy.com/forum"
+"Documentation" = "https://github.com/rookieCryptoTraders/vnpy/blob/dev-chen/README.md"
+"Source" = "https://github.com/rookieCryptoTraders/vnpy"
 
 [build-system]
-requires = ["hatchling>=1.27.0", "babel>=2.17.0"]
-build-backend = "hatchling.build"
+requires = ["uv>=0.1.36"]
+build-backend = "uv.build"
 
-[tool.hatch.version]
-path = "vnpy/__init__.py"
-pattern = "__version__ = ['\"](?P<version>[^'\"]+)['\"]"
-
-[tool.hatch.build.targets.wheel]
-packages = ["vnpy"]
-include-package-data = true
-
-[tool.hatch.build.targets.sdist]
-include = ["vnpy*"]
-
-[tool.hatch.build.hooks.custom]
-path = "vnpy/trader/locale/build_hook.py"
-
-[tool.hatch.build.targets.wheel.force-include]
-"vnpy/trader/locale/en/LC_MESSAGES/vnpy.mo" = "vnpy/trader/locale/en/LC_MESSAGES/vnpy.mo"
-
-[tool.ruff]
-target-version = "py310"
-output-format = "full"
-
-[tool.ruff.lint]
-select = [
-    "B",  # flake8-bugbear
-    "E",  # pycodestyle error
-    "F",  # pyflakes
-    "UP",  # pyupgrade
-    "W",  # pycodestyle warning
-]
-ignore = ["E501"]
+[tool.uv]
+# Optional: add uv-specific configuration here if needed
 
 [tool.mypy]
 python_version = "3.10"
@@ -111,3 +182,17 @@ strict_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 warn_no_return = true
+
+[tool.ruff]
+target-version = "py310"
+output-format = "full"
+
+[tool.ruff.lint]
+select = [
+    "B",  # flake8-bugbear
+    "E",  # pycodestyle error
+    "F",  # pyflakes
+    "UP",  # pyupgrade
+    "W",  # pycodestyle warning
+]
+ignore = ["E501"]
