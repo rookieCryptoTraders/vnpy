@@ -1,20 +1,20 @@
 from __future__ import annotations  # For List['FactorTemplate'] type hint
-from abc import abstractmethod, ABC
+
+from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, TypeVar
+
 import polars as pl
 from dask.delayed import Delayed
 
-from vnpy.factor.utils.factor_utils import init_factors
+from vnpy.config import VTSYMBOL_FACTOR  # General vnpy config/constant
+from vnpy.factor.base import FactorMode
 
 # Assuming FactorMemory is in a sibling file 'factor_memory.py'
 # If FactorMemory is defined elsewhere, adjust the import path accordingly.
 from vnpy.factor.memory import FactorMemory
-
-
-from vnpy.factor.base import FactorMode
+from vnpy.factor.utils.factor_utils import init_factors
 from vnpy.trader.constant import Exchange, Interval
-from vnpy.config import VTSYMBOL_FACTOR  # General vnpy config/constant
 
 DEFAULT_DATETIME_COL = "datetime"
 
@@ -171,7 +171,7 @@ class FactorTemplate(ABC):
     factor_name: str = (
         ""  # Unique name for the factor, set by subclass or from settings
     )
-    freq: Interval | None = None  # Calculation frequency/interval of the factor
+    _freq: Interval | None = None  # Calculation frequency/interval of the factor
 
     # These are typically not used directly by individual factors if they are symbol/exchange agnostic
     # but can be part of the context if a factor is specific.
@@ -197,11 +197,7 @@ class FactorTemplate(ABC):
         Defines the output schema: a datetime column and one Float64 column for each symbol.
         Column names for symbols are the vt_symbol strings themselves.
         """
-        schema = {
-            DEFAULT_DATETIME_COL: pl.Datetime(
-                time_unit="us"
-            )
-        }
+        schema = {DEFAULT_DATETIME_COL: pl.Datetime(time_unit="us")}
         # Allows schema with only datetime if vt_symbols is empty.
         # FactorMemory might require at least one value column depending on its own logic,
         # but this factor will produce an empty value set for such a schema.
@@ -239,6 +235,38 @@ class FactorTemplate(ABC):
         """
         return self._factor_mode
 
+    @property
+    def freq(self) -> Interval:
+        """
+        Returns the frequency of the factor.
+        """
+        return self._freq
+
+    @freq.setter
+    def freq(self, value: Interval | str) -> None:
+        """
+        Setter for frequency. Accepts Interval or string representation.
+        """
+        if isinstance(value, str):
+            try:
+                self._freq = Interval(value)
+            except ValueError:
+                print(
+                    f"Warning: Invalid interval string '{value}' for factor {self.factor_key}. Using UNKNOWN."
+                )
+                self._freq = Interval.UNKNOWN
+        elif isinstance(value, Interval):
+            self._freq = value
+        else:
+            raise TypeError(
+                f"freq must be an Interval or a string, got {type(value)} for factor {self.factor_key}"
+            )
+
+        if hasattr(self, "dependencies_factor") and self.dependencies_factor:
+            for dep_factor in self.dependencies_factor:
+                if isinstance(dep_factor, FactorTemplate):
+                    dep_factor.freq = value
+
     @vt_symbols.setter
     def vt_symbols(self, value: list[str]) -> None:
         if not isinstance(value, list):
@@ -256,6 +284,7 @@ class FactorTemplate(ABC):
                     dep_factor.vt_symbols = (
                         value  # This will call the setter on the dependency
                     )
+
     @factor_mode.setter
     def factor_mode(self, value: FactorMode) -> None:
         """

@@ -4,7 +4,7 @@ from enum import Enum
 
 class FactorMode(Enum):
     """
-    因子计算模式
+    FactorMode
     """
     LIVE = "live"
     BACKTEST = "backtest"

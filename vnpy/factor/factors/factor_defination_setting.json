@@ -1,0 +1,1351 @@
+[
+    {
+        "class_name": "AD",
+        "factor_name": "ad",
+        "factor_key": "factor_1m_ad@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "ADOSC",
+        "factor_name": "adosc",
+        "factor_key": "factor_1m_adosc@fastperiod_3-slowperiod_10",
+        "freq": "1m",
+        "params": {
+            "fastperiod": 3,
+            "slowperiod": 10
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "ADX",
+        "factor_name": "adx",
+        "factor_key": "factor_1m_adx@timeperiod_14",
+        "freq": "1m",
+        "params": {
+            "timeperiod": 14
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "ADXR",
+        "factor_name": "adxr",
+        "factor_key": "factor_1m_adxr@timeperiod_14",
+        "freq": "1m",
+        "params": {
+            "timeperiod": 14
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "APO",
+        "factor_name": "apo",
+        "factor_key": "factor_1m_apo@fastperiod_12-matype_0-slowperiod_26",
+        "freq": "1m",
+        "params": {
+            "fastperiod": 12,
+            "slowperiod": 26,
+            "matype": 0
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "AROONOSC",
+        "factor_name": "aroonosc",
+        "factor_key": "factor_1m_aroonosc@timeperiod_14",
+        "freq": "1m",
+        "params": {
+            "timeperiod": 14
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "AROON_AROONDOWN",
+        "factor_name": "aroon_aroondown",
+        "factor_key": "factor_1m_aroon_aroondown@timeperiod_14",
+        "freq": "1m",
+        "params": {
+            "timeperiod": 14
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "AROON_AROONUP",
+        "factor_name": "aroon_aroonup",
+        "factor_key": "factor_1m_aroon_aroonup@timeperiod_14",
+        "freq": "1m",
+        "params": {
+            "timeperiod": 14
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "ATR",
+        "factor_name": "atr",
+        "factor_key": "factor_1m_atr@timeperiod_14",
+        "freq": "1m",
+        "params": {
+            "timeperiod": 14
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "BBANDS_LOWERBAND",
+        "factor_name": "bbands_lowerband",
+        "factor_key": "factor_1m_bbands_lowerband@matype_0-nbdevdn_2.0-nbdevup_2.0-timeperiod_5",
+        "freq": "1m",
+        "params": {
+            "timeperiod": 5,
+            "nbdevup": 2.0,
+            "nbdevdn": 2.0,
+            "matype": 0
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "BBANDS_MIDDLEBAND",
+        "factor_name": "bbands_middleband",
+        "factor_key": "factor_1m_bbands_middleband@matype_0-nbdevdn_2.0-nbdevup_2.0-timeperiod_5",
+        "freq": "1m",
+        "params": {
+            "timeperiod": 5,
+            "nbdevup": 2.0,
+            "nbdevdn": 2.0,
+            "matype": 0
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "BBANDS_UPPERBAND",
+        "factor_name": "bbands_upperband",
+        "factor_key": "factor_1m_bbands_upperband@matype_0-nbdevdn_2.0-nbdevup_2.0-timeperiod_5",
+        "freq": "1m",
+        "params": {
+            "timeperiod": 5,
+            "nbdevup": 2.0,
+            "nbdevdn": 2.0,
+            "matype": 0
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "BOP",
+        "factor_name": "bop",
+        "factor_key": "factor_1m_bop@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CCI",
+        "factor_name": "cci",
+        "factor_key": "factor_1m_cci@timeperiod_14",
+        "freq": "1m",
+        "params": {
+            "timeperiod": 14
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDL2CROWS",
+        "factor_name": "cdl2crows",
+        "factor_key": "factor_1m_cdl2crows@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDL3BLACKCROWS",
+        "factor_name": "cdl3blackcrows",
+        "factor_key": "factor_1m_cdl3blackcrows@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDL3INSIDE",
+        "factor_name": "cdl3inside",
+        "factor_key": "factor_1m_cdl3inside@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDL3LINESTRIKE",
+        "factor_name": "cdl3linestrike",
+        "factor_key": "factor_1m_cdl3linestrike@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDL3OUTSIDE",
+        "factor_name": "cdl3outside",
+        "factor_key": "factor_1m_cdl3outside@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDL3STARSINSOUTH",
+        "factor_name": "cdl3starsinsouth",
+        "factor_key": "factor_1m_cdl3starsinsouth@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDL3WHITESOLDIERS",
+        "factor_name": "cdl3whitesoldiers",
+        "factor_key": "factor_1m_cdl3whitesoldiers@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLABANDONEDBABY",
+        "factor_name": "cdlabandonedbaby",
+        "factor_key": "factor_1m_cdlabandonedbaby@penetration_0.3",
+        "freq": "1m",
+        "params": {
+            "penetration": 0.3
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLADVANCEBLOCK",
+        "factor_name": "cdladvanceblock",
+        "factor_key": "factor_1m_cdladvanceblock@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLBELTHOLD",
+        "factor_name": "cdlbelthold",
+        "factor_key": "factor_1m_cdlbelthold@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLBREAKAWAY",
+        "factor_name": "cdlbreakaway",
+        "factor_key": "factor_1m_cdlbreakaway@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLCLOSINGMARUBOZU",
+        "factor_name": "cdlclosingmarubozu",
+        "factor_key": "factor_1m_cdlclosingmarubozu@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLCONCEALBABYSWALL",
+        "factor_name": "cdlconcealbabyswall",
+        "factor_key": "factor_1m_cdlconcealbabyswall@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLCOUNTERATTACK",
+        "factor_name": "cdlcounterattack",
+        "factor_key": "factor_1m_cdlcounterattack@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLDARKCLOUDCOVER",
+        "factor_name": "cdldarkcloudcover",
+        "factor_key": "factor_1m_cdldarkcloudcover@penetration_0.3",
+        "freq": "1m",
+        "params": {
+            "penetration": 0.3
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLDOJI",
+        "factor_name": "cdldoji",
+        "factor_key": "factor_1m_cdldoji@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLDOJISTAR",
+        "factor_name": "cdldojistar",
+        "factor_key": "factor_1m_cdldojistar@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLDRAGONFLYDOJI",
+        "factor_name": "cdldragonflydoji",
+        "factor_key": "factor_1m_cdldragonflydoji@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLENGULFING",
+        "factor_name": "cdlengulfing",
+        "factor_key": "factor_1m_cdlengulfing@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLEVENINGDOJISTAR",
+        "factor_name": "cdleveningdojistar",
+        "factor_key": "factor_1m_cdleveningdojistar@penetration_0.3",
+        "freq": "1m",
+        "params": {
+            "penetration": 0.3
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLEVENINGSTAR",
+        "factor_name": "cdleveningstar",
+        "factor_key": "factor_1m_cdleveningstar@penetration_0.3",
+        "freq": "1m",
+        "params": {
+            "penetration": 0.3
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLGAPSIDESIDEWHITE",
+        "factor_name": "cdlgapsidesidewhite",
+        "factor_key": "factor_1m_cdlgapsidesidewhite@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLGRAVESTONEDOJI",
+        "factor_name": "cdlgravestonedoji",
+        "factor_key": "factor_1m_cdlgravestonedoji@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLHAMMER",
+        "factor_name": "cdlhammer",
+        "factor_key": "factor_1m_cdlhammer@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLHANGINGMAN",
+        "factor_name": "cdlhangingman",
+        "factor_key": "factor_1m_cdlhangingman@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLHARAMI",
+        "factor_name": "cdlharami",
+        "factor_key": "factor_1m_cdlharami@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLHARAMICROSS",
+        "factor_name": "cdlharamicross",
+        "factor_key": "factor_1m_cdlharamicross@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLHIGHWAVE",
+        "factor_name": "cdlhighwave",
+        "factor_key": "factor_1m_cdlhighwave@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLHIKKAKE",
+        "factor_name": "cdlhikkake",
+        "factor_key": "factor_1m_cdlhikkake@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLHIKKAKEMOD",
+        "factor_name": "cdlhikkakemod",
+        "factor_key": "factor_1m_cdlhikkakemod@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLHOMINGPIGEON",
+        "factor_name": "cdlhomingpigeon",
+        "factor_key": "factor_1m_cdlhomingpigeon@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLIDENTICAL3CROWS",
+        "factor_name": "cdlidentical3crows",
+        "factor_key": "factor_1m_cdlidentical3crows@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLINNECK",
+        "factor_name": "cdlinneck",
+        "factor_key": "factor_1m_cdlinneck@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLINVERTEDHAMMER",
+        "factor_name": "cdlinvertedhammer",
+        "factor_key": "factor_1m_cdlinvertedhammer@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLKICKING",
+        "factor_name": "cdlkicking",
+        "factor_key": "factor_1m_cdlkicking@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLKICKINGBYLENGTH",
+        "factor_name": "cdlkickingbylength",
+        "factor_key": "factor_1m_cdlkickingbylength@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLLADDERBOTTOM",
+        "factor_name": "cdlladderbottom",
+        "factor_key": "factor_1m_cdlladderbottom@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLLONGLEGGEDDOJI",
+        "factor_name": "cdllongleggeddoji",
+        "factor_key": "factor_1m_cdllongleggeddoji@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLLONGLINE",
+        "factor_name": "cdllongline",
+        "factor_key": "factor_1m_cdllongline@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLMARUBOZU",
+        "factor_name": "cdlmarubozu",
+        "factor_key": "factor_1m_cdlmarubozu@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLMATCHINGLOW",
+        "factor_name": "cdlmatchinglow",
+        "factor_key": "factor_1m_cdlmatchinglow@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLMATHOLD",
+        "factor_name": "cdlmathold",
+        "factor_key": "factor_1m_cdlmathold@penetration_0.3",
+        "freq": "1m",
+        "params": {
+            "penetration": 0.3
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLMORNINGDOJISTAR",
+        "factor_name": "cdlmorningdojistar",
+        "factor_key": "factor_1m_cdlmorningdojistar@penetration_0.3",
+        "freq": "1m",
+        "params": {
+            "penetration": 0.3
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLMORNINGSTAR",
+        "factor_name": "cdlmorningstar",
+        "factor_key": "factor_1m_cdlmorningstar@penetration_0.3",
+        "freq": "1m",
+        "params": {
+            "penetration": 0.3
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLONNECK",
+        "factor_name": "cdlonneck",
+        "factor_key": "factor_1m_cdlonneck@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLPIERCING",
+        "factor_name": "cdlpiercing",
+        "factor_key": "factor_1m_cdlpiercing@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLRICKSHAWMAN",
+        "factor_name": "cdlrickshawman",
+        "factor_key": "factor_1m_cdlrickshawman@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLRISEFALL3METHODS",
+        "factor_name": "cdlrisefall3methods",
+        "factor_key": "factor_1m_cdlrisefall3methods@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLSEPARATINGLINES",
+        "factor_name": "cdlseparatinglines",
+        "factor_key": "factor_1m_cdlseparatinglines@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLSHOOTINGSTAR",
+        "factor_name": "cdlshootingstar",
+        "factor_key": "factor_1m_cdlshootingstar@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLSHORTLINE",
+        "factor_name": "cdlshortline",
+        "factor_key": "factor_1m_cdlshortline@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLSPINNINGTOP",
+        "factor_name": "cdlspinningtop",
+        "factor_key": "factor_1m_cdlspinningtop@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLSTALLEDPATTERN",
+        "factor_name": "cdlstalledpattern",
+        "factor_key": "factor_1m_cdlstalledpattern@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLSTICKSANDWICH",
+        "factor_name": "cdlsticksandwich",
+        "factor_key": "factor_1m_cdlsticksandwich@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLTAKURI",
+        "factor_name": "cdltakuri",
+        "factor_key": "factor_1m_cdltakuri@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLTASUKIGAP",
+        "factor_name": "cdltasukigap",
+        "factor_key": "factor_1m_cdltasukigap@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLTHRUSTING",
+        "factor_name": "cdlthrusting",
+        "factor_key": "factor_1m_cdlthrusting@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLTRISTAR",
+        "factor_name": "cdltristar",
+        "factor_key": "factor_1m_cdltristar@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLUNIQUE3RIVER",
+        "factor_name": "cdlunique3river",
+        "factor_key": "factor_1m_cdlunique3river@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLUPSIDEGAP2CROWS",
+        "factor_name": "cdlupsidegap2crows",
+        "factor_key": "factor_1m_cdlupsidegap2crows@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CDLXSIDEGAP3METHODS",
+        "factor_name": "cdlxsidegap3methods",
+        "factor_key": "factor_1m_cdlxsidegap3methods@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "CMO",
+        "factor_name": "cmo",
+        "factor_key": "factor_1m_cmo@timeperiod_14",
+        "freq": "1m",
+        "params": {
+            "timeperiod": 14
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "MACD_MACD",
+        "factor_name": "macd_macd",
+        "factor_key": "factor_1m_macd_macd@fastperiod_12-signalperiod_9-slowperiod_26",
+        "freq": "1m",
+        "params": {
+            "fastperiod": 12,
+            "slowperiod": 26,
+            "signalperiod": 9
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "MACD_MACDHIST",
+        "factor_name": "macd_macdhist",
+        "factor_key": "factor_1m_macd_macdhist@fastperiod_12-signalperiod_9-slowperiod_26",
+        "freq": "1m",
+        "params": {
+            "fastperiod": 12,
+            "slowperiod": 26,
+            "signalperiod": 9
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "MACD_MACDSIGNAL",
+        "factor_name": "macd_macdsignal",
+        "factor_key": "factor_1m_macd_macdsignal@fastperiod_12-signalperiod_9-slowperiod_26",
+        "freq": "1m",
+        "params": {
+            "fastperiod": 12,
+            "slowperiod": 26,
+            "signalperiod": 9
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "MFI",
+        "factor_name": "mfi",
+        "factor_key": "factor_1m_mfi@timeperiod_14",
+        "freq": "1m",
+        "params": {
+            "timeperiod": 14
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "MOM",
+        "factor_name": "mom",
+        "factor_key": "factor_1m_mom@timeperiod_10",
+        "freq": "1m",
+        "params": {
+            "timeperiod": 10
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "NATR",
+        "factor_name": "natr",
+        "factor_key": "factor_1m_natr@timeperiod_14",
+        "freq": "1m",
+        "params": {
+            "timeperiod": 14
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "OBV",
+        "factor_name": "obv",
+        "factor_key": "factor_1m_obv@noparams",
+        "freq": "1m",
+        "params": {},
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "PPO",
+        "factor_name": "ppo",
+        "factor_key": "factor_1m_ppo@fastperiod_12-matype_0-slowperiod_26",
+        "freq": "1m",
+        "params": {
+            "fastperiod": 12,
+            "slowperiod": 26,
+            "matype": 0
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "ROC",
+        "factor_name": "roc",
+        "factor_key": "factor_1m_roc@timeperiod_10",
+        "freq": "1m",
+        "params": {
+            "timeperiod": 10
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "RSI",
+        "factor_name": "rsi",
+        "factor_key": "factor_1m_rsi@timeperiod_14",
+        "freq": "1m",
+        "params": {
+            "timeperiod": 14
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "SAR",
+        "factor_name": "sar",
+        "factor_key": "factor_1m_sar@acceleration_0.02-maximum_0.2",
+        "freq": "1m",
+        "params": {
+            "acceleration": 0.02,
+            "maximum": 0.2
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "STOCHF_FASTD",
+        "factor_name": "stochf_fastd",
+        "factor_key": "factor_1m_stochf_fastd@fastd_matype_0-fastd_period_3-fastk_period_5",
+        "freq": "1m",
+        "params": {
+            "fastk_period": 5,
+            "fastd_period": 3,
+            "fastd_matype": 0
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "STOCHF_FASTK",
+        "factor_name": "stochf_fastk",
+        "factor_key": "factor_1m_stochf_fastk@fastd_matype_0-fastd_period_3-fastk_period_5",
+        "freq": "1m",
+        "params": {
+            "fastk_period": 5,
+            "fastd_period": 3,
+            "fastd_matype": 0
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "STOCHRSI",
+        "factor_name": "stochrsi",
+        "factor_key": "factor_1m_stochrsi@fastd_matype_0-fastd_period_3-fastk_period_5-timeperiod_14",
+        "freq": "1m",
+        "params": {
+            "timeperiod": 14,
+            "fastk_period": 5,
+            "fastd_period": 3,
+            "fastd_matype": 0
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "STOCH_SLOWD",
+        "factor_name": "stoch_slowd",
+        "factor_key": "factor_1m_stoch_slowd@fastk_period_5-slowd_matype_0-slowd_period_3-slowk_matype_0-slowk_period_3",
+        "freq": "1m",
+        "params": {
+            "fastk_period": 5,
+            "slowk_period": 3,
+            "slowk_matype": 0,
+            "slowd_period": 3,
+            "slowd_matype": 0
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "STOCH_SLOWK",
+        "factor_name": "stoch_slowk",
+        "factor_key": "factor_1m_stoch_slowk@fastk_period_5-slowd_matype_0-slowd_period_3-slowk_matype_0-slowk_period_3",
+        "freq": "1m",
+        "params": {
+            "fastk_period": 5,
+            "slowk_period": 3,
+            "slowk_matype": 0,
+            "slowd_period": 3,
+            "slowd_matype": 0
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "TRIX",
+        "factor_name": "trix",
+        "factor_key": "factor_1m_trix@timeperiod_30",
+        "freq": "1m",
+        "params": {
+            "timeperiod": 30
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "ULTOSC",
+        "factor_name": "ultosc",
+        "factor_key": "factor_1m_ultosc@timeperiod1_7-timeperiod2_14-timeperiod3_28",
+        "freq": "1m",
+        "params": {
+            "timeperiod1": 7,
+            "timeperiod2": 14,
+            "timeperiod3": 28
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    },
+    {
+        "class_name": "WILLR",
+        "factor_name": "willr",
+        "factor_key": "factor_1m_willr@timeperiod_14",
+        "freq": "1m",
+        "params": {
+            "timeperiod": 14
+        },
+        "dependencies_factor": [],
+        "dependencies_freq": [],
+        "dependencies_symbol": [],
+        "dependencies_exchange": [],
+        "last_run_datetime": "2025-06-19 16:15:00",
+        "factor_mode": "LIVE"
+    }
+]
