@@ -145,6 +145,8 @@ def save_json(filename: str, data: dict|list, mode="w+", cls=json.JSONEncoder) -
     Save data into json file in temp path.
     """
     filepath: Path = get_file_path(filename)
+    if not data:
+        return None
     with open(filepath, mode=mode, encoding="UTF-8") as f:
         json.dump(
             data,

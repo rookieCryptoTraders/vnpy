@@ -1,33 +1,37 @@
+from __future__ import annotations
+
 import atexit
-import copy
-import datetime
+import json
 import os
+import copy
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, date, timedelta, timezone as datetime_timezone
 from importlib import import_module
 from types import ModuleType
 from typing import Dict, List, Literal, Optional, Union
 from typing import TypeVar, Self
 
-import polars as pl
-
-from vnpy.config import BAR_OVERVIEW_FILENAME, FACTOR_OVERVIEW_FILENAME, TICK_OVERVIEW_FILENAME, VTSYMBOL_KLINE
+from vnpy.config import BAR_OVERVIEW_FILENAME, FACTOR_OVERVIEW_FILENAME, TICK_OVERVIEW_FILENAME, VTSYMBOL_KLINE, \
+    VTSYMBOL_TICK, VTSYMBOL_FACTOR, VTSYMBOL, VTSYMBOL_OVERVIEW
 from vnpy.config import VTSYMBOL_FACTORDATA
 from vnpy.trader.constant import Exchange, Interval
 from vnpy.trader.engine import Event, EventEngine
 from vnpy.trader.event import EVENT_BAR
-from vnpy.trader.object import HistoryRequest, SubscribeRequest, BarData, TickData, FactorData
+from vnpy.trader.object import HistoryRequest, SubscribeRequest, BarData, TickData
 from vnpy.trader.setting import SETTINGS
-from vnpy.trader.utility import extract_vt_symbol, get_file_path
+from vnpy.trader.utility import get_file_path
 from vnpy.trader.utility import load_json, save_json
 from vnpy.utils.datetimes import DatetimeUtils
 from .utility import ZoneInfo
 
-from vnpy.adapters.overview import OverviewDecoder, OverviewEncoder
+# if TYPE_CHECKING:
+# from vnpy.trader.database import TimeRange,DataRange
+
 
 DB_TZ = ZoneInfo(SETTINGS["database.timezone"])
+SYSTEM_MODE = SETTINGS.get("system.mode", "LIVE")
 
 
 def convert_tz(dt: datetime) -> datetime:
@@ -82,20 +86,12 @@ class TimeRange:
 
     def __init__(self, start: Union[datetime, int, float, str], end: Union[datetime, int, float, str],
                  interval: Optional[Interval] = None):
-        self._start = ensure_datetime(start)
-        self._end = ensure_datetime(end)  # for system consistency, this attr indicates the start of the last bar
+        self.start = ensure_datetime(start)
+        self.end = ensure_datetime(end)  # for system consistency, this attr indicates the start of the last bar
         self.interval = interval
-        self._max_gap_ms = DatetimeUtils.interval2unix(self.interval, ret_unit='ms')
-        if self._start > self._end:
-            raise ValueError(f"Start time ({self._start}) must <= end time ({self._end})")
-
-    @property
-    def start(self) -> datetime:
-        return self._start
-
-    @property
-    def end(self) -> datetime:
-        return self._end
+        self.max_gap_ms = DatetimeUtils.interval2unix(self.interval, ret_unit='ms')
+        if self.start > self.end:
+            raise ValueError(f"Start time ({self.start}) must <= end time ({self.end})")
 
     def overlaps(self, other: Self, max_gap_ms: int = None) -> bool:
         """Check if this range overlaps with another
@@ -111,19 +107,19 @@ class TimeRange:
 
         """
         assert self.interval == other.interval
-        max_gap_ms = max_gap_ms if max_gap_ms else self._max_gap_ms
+        max_gap_ms = max_gap_ms if max_gap_ms else self.max_gap_ms
         if not max_gap_ms: raise ValueError("max_gap_ms must be provided for overlap check")
         max_gap = timedelta(milliseconds=max_gap_ms)
         return not (self.end + max_gap < other.start or other.end + max_gap < self.start)
 
-    def merge_if_continuous(self, other: Self, max_gap_ms: Optional[Union[timedelta, int]]=None) -> Optional[Self]:
+    def merge_if_continuous(self, other: Self, max_gap_ms: Optional[Union[timedelta, int]] = None) -> Optional[Self]:
         """Try to merge with another range if they are continuous or close enough"""
-        assert self.interval==other.interval
+        assert self.interval == other.interval
         if not max_gap_ms:
-            max_gap_ms=self.interval
+            max_gap_ms = self.interval
         if isinstance(max_gap_ms, timedelta):
             max_gap_ms = max_gap_ms.total_seconds() * 1000
-        if self.overlaps(other,max_gap_ms=max_gap_ms):
+        if self.overlaps(other, max_gap_ms=max_gap_ms):
             return TimeRange(
                 start=min(self.start, other.start),
                 end=max(self.end, other.end),
@@ -157,9 +153,9 @@ class TimeRange:
 class DataRange:
     """Manages a collection of time ranges with gap detection"""
 
-    def __init__(self, interval: Optional[Interval] = None):
+    def __init__(self, interval: Optional[Interval] = None, ranges: List[TimeRange] = None):
         """Initialize with optional interval for gap calculation"""
-        self.ranges: List[TimeRange] = []
+        self.ranges: List[TimeRange] = ranges if ranges else []
         self.interval = interval
         self._start_dt: Optional[datetime] = None
         self._end_dt: Optional[datetime] = None
@@ -188,43 +184,52 @@ class DataRange:
         self._start_dt = min(r.start for r in self.ranges)
         self._end_dt = max(r.end for r in self.ranges)
 
-    def add_range(self, start: Union[datetime, int, float, str], end: Union[datetime, int, float, str]) -> List[
-        TimeRange]:
+    def add_ranges(self,ranges:list[TimeRange]):
+        """Add multiple time ranges and update bounds"""
+        if not ranges:
+            return
+        for range in ranges:
+            assert range.interval==self.interval
+            self.add_range(start=range.start,end=range.end)
+
+    def add_range(self, start: Union[datetime, int, float, str], end: Union[datetime, int, float, str],
+                  inplace=False) -> Optional[list[TimeRange]]:
         """Add a new time range and return any gaps found"""
         # Convert start/end to datetime if needed
         start_dt = ensure_datetime(start)
         end_dt = ensure_datetime(end)
 
         new_range = TimeRange(start=start_dt, end=end_dt, interval=self.interval)
-        # gaps: List[TimeRange] = []
+        ranges = self.ranges if inplace else copy.deepcopy(self.ranges)
 
-        if not self.ranges:
-            self.ranges = [new_range]
-            self._start_dt = start_dt
-            self._end_dt = end_dt
-            return []
+        if len(ranges) == 0:
+            if inplace:
+                ranges.append(new_range)
+                self._start_dt = start_dt
+                self._end_dt = end_dt
+            return ranges
 
         # Sort ranges by start time
-        self.ranges.sort(key=lambda x: x.start)
+        ranges.sort(key=lambda x: x.start)
 
         # Try to merge with existing ranges
         merged = False
-        for i, existing in enumerate(self.ranges):
+        for i, existing in enumerate(ranges):
             merged_range = existing.merge_if_continuous(new_range, self.max_gap_timedelta)
             if merged_range:
                 # gap = existing.get_gap_with(new_range)
                 # if gap and (gap.end - gap.start) > self.max_gap_timedelta:
                 #     gaps.append(gap)
-                self.ranges[i] = merged_range
+                ranges[i] = merged_range
                 merged = True
 
                 # Try to merge with subsequent ranges
                 j = i + 1
-                while j < len(self.ranges):
-                    next_merged = merged_range.merge_if_continuous(self.ranges[j], self.max_gap_timedelta)
+                while j < len(ranges):
+                    next_merged = merged_range.merge_if_continuous(ranges[j], self.max_gap_timedelta)
                     if next_merged:
-                        self.ranges[i] = next_merged
-                        self.ranges.pop(j)
+                        ranges[i] = next_merged
+                        ranges.pop(j)
                     else:
                         # if it cannot be merged, escape loop
                         break
@@ -233,38 +238,63 @@ class DataRange:
         if not merged:
             # If we couldn't merge, insert the new range in order
             insert_pos = 0
-            while insert_pos < len(self.ranges) and self.ranges[insert_pos].start < new_range.start:
+            while insert_pos < len(ranges) and ranges[insert_pos].start < new_range.start:
                 insert_pos += 1
 
-            self.ranges.insert(insert_pos, new_range)
+            ranges.insert(insert_pos, new_range)
 
-            # Check for gaps with adjacent ranges
-            # if insert_pos > 0:
-            # gap = self.ranges[insert_pos - 1].get_gap_with(new_range)
-            # if gap and (gap.end - gap.start) > self.max_gap_timedelta:
-            #     gaps.append(gap)
-            # if insert_pos < len(self.ranges) - 1:
-            #     gap = new_range.get_gap_with(self.ranges[insert_pos + 1])
-            #     if gap and (gap.end - gap.start) > self.max_gap_timedelta:
-            #         gaps.append(gap)
+        if inplace:
+            self.ranges = ranges
+            self._update_bounds()
+        return ranges
 
-        self._update_bounds()
-        # return gaps
-        return []
+    def get_gaps(self, start: Optional[datetime] = None, end: Optional[datetime] = None) -> List[TimeRange]:
+        """Get all gaps in the current ranges
 
-    def get_gaps(self) -> List[TimeRange]:
-        """Get all gaps in the current ranges"""
-        gaps = []
+        Notes
+        --------
+        equals to gaps_between([start]+[common time ranges]+[end])
+        """
         if not self.ranges:
-            return gaps
+            return []
+
+        ranges = self.get_common()
+        if start:
+            ranges.append(TimeRange(start=start, end=start, interval=self.interval))
+        if end:
+            ranges.append(TimeRange(start=end, end=end, interval=self.interval))
+        ranges.sort(key=lambda x: (x.start, x.end))
 
         # Iterate through ranges and find gaps
-        for i in range(len(self.ranges) - 1):
-            gap = self.ranges[i].get_gap_with(self.ranges[i + 1])
+        gaps = []
+        for i in range(len(ranges) - 1):
+            gap = ranges[i].get_gap_with(ranges[i + 1])
             if gap:
                 gaps.append(gap)
-
         return gaps
+
+    def get_common(self):
+        """get common time ranges existing in all ranges"""
+        if not self.ranges:
+            return []
+
+        common_ranges = []
+        current_common = self.ranges[0]
+
+        for i in range(1, len(self.ranges)):
+            next_range = self.ranges[i]
+            if current_common.overlaps(next_range):
+                current_common = TimeRange(
+                    start=min(current_common.start, next_range.start),
+                    end=max(current_common.end, next_range.end),
+                    interval=current_common.interval
+                )
+            else:
+                common_ranges.append(current_common)
+                current_common = next_range
+
+        common_ranges.append(current_common)
+        return common_ranges
 
 
 @dataclass
@@ -278,9 +308,17 @@ class BaseOverview:
     time_ranges: List[TimeRange] = field(default_factory=list)
 
     vt_symbol: str = ""
+    overview_key: str = ""
     VTSYMBOL_TEMPLATE: str = field(default=None, init=False)
 
-    def add_range(self, start: datetime, end: datetime) -> List[TimeRange]:
+    def __post_init__(self):
+        self.overview_key = VTSYMBOL_OVERVIEW.format(
+            interval=self.interval.value,
+            symbol=self.symbol,
+            exchange=self.exchange.value
+        )
+
+    def add_range(self, start: datetime, end: datetime):
         """Add a time range and get any gaps"""
         new_range = TimeRange(start=start, end=end, interval=self.interval)
         if not self.time_ranges:
@@ -290,9 +328,8 @@ class BaseOverview:
         # Other time range operations are handled by DataRange class
         data_range = DataRange(interval=self.interval)
         data_range.ranges = self.time_ranges
-        gaps = data_range.add_range(start=start, end=end)
+        data_range.add_range(start=start, end=end)
         self.time_ranges = data_range.ranges
-        return gaps
 
     @property
     def start(self) -> Optional[datetime]:
@@ -315,14 +352,14 @@ class BarOverview(BaseOverview):
     BarOverview of bar data stored in database.
     """
 
-    VTSYMBOL_TEMPLATE = VTSYMBOL_KLINE
+    VTSYMBOL_TEMPLATE = VTSYMBOL
 
     def __post_init__(self):
         self.vt_symbol = self.VTSYMBOL_TEMPLATE.format(
-            interval=self.interval.value,
             symbol=self.symbol,
-            exchange=self.exchange.value
+            exchange=self.exchange.value,
         )
+        super().__post_init__()
 
 
 @dataclass
@@ -331,15 +368,14 @@ class TickOverview(BaseOverview):
     BarOverview of tick data stored in database.
     """
 
-    VTSYMBOL_TEMPLATE = ""
+    VTSYMBOL_TEMPLATE = VTSYMBOL
 
     def __post_init__(self):
-        raise NotImplementedError("TickOverview is not implemented yet.")
         self.vt_symbol = self.VTSYMBOL_TEMPLATE.format(
-            interval=self.interval.value,
             symbol=self.symbol,
-            exchange=self.exchange.value
+            exchange=self.exchange.value,
         )
+        super().__post_init__()
 
 
 @dataclass
@@ -349,21 +385,369 @@ class FactorOverview(BaseOverview):
     """
 
     factor_name: str = ""
-    VTSYMBOL_TEMPLATE = VTSYMBOL_FACTORDATA
+    factor_key: str = ""
+    VTSYMBOL_TEMPLATE = VTSYMBOL
 
     def __post_init__(self):
         self.vt_symbol = self.VTSYMBOL_TEMPLATE.format(
-            interval=self.interval.value,
             symbol=self.symbol,
-            factorname=self.factor_name,
-            exchange=self.exchange.value
+            exchange=self.exchange.value,
         )
+        super().__post_init__()
+
+
+class OverviewEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, (Exchange, Interval)):
+            return o.value
+        elif isinstance(o, datetime):
+            return o.strftime('%Y-%m-%d %H:%M:%S')
+        elif isinstance(o, date):
+            return o.strftime("%Y-%m-%d")
+        elif isinstance(o, DataRange):
+            return {
+                'class': o.__class__.__name__,
+                'start': self.default(o.start),
+                'end': self.default(o.end),
+                'interval': self.default(o.interval),
+                'ranges': [self.default(r) for r in o.ranges]
+            }
+        elif isinstance(o, TimeRange):
+            return {
+                'class': o.__class__.__name__,
+                'start': self.default(o.start),
+                'end': self.default(o.end),
+                'interval': self.default(o.interval),
+                'max_gap_ms': o.max_gap_ms
+            }
+        elif hasattr(o, '__dict__'):
+            dic = {'class': o.__class__.__name__}
+            dic.update(o.__dict__.copy())
+            return dic
+        else:
+            return super().default(o)
+
+
+class OverviewDecoder(json.JSONDecoder):
+    def __init__(self, *args, **kwargs):
+        super().__init__(object_hook=self.dict_to_object, *args, **kwargs)
+
+    def dict_to_object(self, d):
+        # simple attr transformation, change the things in d
+        if 'exchange' in d:
+            d['exchange'] = Exchange(d['exchange'])
+        if 'interval' in d:
+            d['interval'] = Interval(d['interval'])
+        for dt_field in ['start', 'end']:
+            if dt_field in d:
+                try:
+                    d[dt_field] = datetime.strptime(d[dt_field], '%Y-%m-%d %H:%M:%S')
+                except ValueError:
+                    d[dt_field] = datetime.strptime(d[dt_field], '%Y-%m-%d')
+                except TypeError:
+                    print("TypeError", d[dt_field])
+
+        # complex attr transformation, create new objects
+        if 'class' in d and d['class'] == 'TimeRange':
+            d = TimeRange(
+                start=d['start'],
+                end=d['end'],
+                interval=Interval(d['interval'])
+            )
+        elif 'class' in d and d['class'] == 'DataRange':
+            dd = DataRange(
+                interval=Interval(d['interval'])
+            )
+            dd.ranges = [self.dict_to_object(r) for r in d['ranges']]
+            return dd
+        return d
+
+
+"""
+{
+    "ethusdt.BINANCE": {
+        "symbol": "ethusdt",
+        "exchange": "BINANCE",
+        "interval": "1m",
+        "count": 2,
+        "time_ranges": [
+            {
+                "_start": "2025-06-25 12:49:15",
+                "_end": "2025-06-25 12:49:17",
+                "interval": "1m",
+                "_max_gap_ms": 60000.0
+            }
+        ],
+        "vt_symbol": "kline_1m_ethusdt.BINANCE"
+    },
+    "btcusdt.BINANCE": {
+        "symbol": "btcusdt",
+        "exchange": "BINANCE",
+        "interval": "1m",
+        "count": 2,
+        "time_ranges": [
+            {
+                "_start": "2025-06-25 12:49:15",
+                "_end": "2025-06-25 12:49:17",
+                "interval": "1m",
+                "_max_gap_ms": 60000.0
+            }
+        ],
+        "vt_symbol": "kline_1m_btcusdt.BINANCE"
+    }
+}
+"""
+
+
+class OverviewHandler:
+    """Manages data overviews with gap detection and data retrieval"""
+    bar_overview_filepath = str(get_file_path(BAR_OVERVIEW_FILENAME))
+    tick_overview_filepath = str(get_file_path(TICK_OVERVIEW_FILENAME))
+    factor_overview_filepath = str(get_file_path(FACTOR_OVERVIEW_FILENAME))
+
+    def __init__(self, event_engine: Optional[EventEngine] = None):
+        """Initialize the overview manager"""
+        # Register the save function to execute when the program exits
+        # atexit.register(self.save_overview, type_='bar')  # why this fails?? the original overview will be re-written into json file
+        # atexit.register(self.save_overview, type_='factor')  # why this fails?? the original overview will be re-written into json file
+        # atexit.register(self.save_overview, type_='tick')  # why this fails?? the original overview will be re-written into json file
+
+        self.overview_dict: Dict[str, BarOverview] = {}  # Stores metadata in memory
+        # init database overview file
+        # todo: collect them in one dict
+        self.bar_overview = self.load_overview(filename=self.bar_overview_filepath, overview_cls=BarOverview)
+        self.tick_overview = self.load_overview(filename=self.tick_overview_filepath, overview_cls=TickOverview)
+        self.factor_overview = self.load_overview(filename=self.factor_overview_filepath,
+                                                  overview_cls=FactorOverview)
+
+        self.data_ranges: Dict[str, Dict[str, DataRange]] = {
+            "bar": {},
+            "factor": {},
+            "tick": {}
+        }
+        self._event_engine = event_engine
+
+    def load_overview(self, filename: str, overview_cls: TV_BaseOverview.__class__) -> Dict[str, TV_BaseOverview]:
+
+        # use vnpy load json
+        overviews: Dict[str, TV_BaseOverview] = {}
+        overview_dict = load_json(filename=filename, cls=OverviewDecoder)
+        for k, v in overview_dict.items():
+            overviews[k] = overview_cls(**v)
+        return overviews
+
+    def save_overview(self, type_: Literal['bar', 'factor', 'tick']) -> None:
+        if type_ == 'bar':
+            overview_data = self.bar_overview
+            filename = os.path.basename(self.bar_overview_filepath)
+        elif type_ == 'factor':
+            overview_data = self.factor_overview
+            filename = os.path.basename(self.factor_overview_filepath)
+        elif type_ == 'tick':
+            overview_data = self.tick_overview
+            filename = os.path.basename(self.tick_overview_filepath)
+        else:
+            raise ValueError(f"task_type {type_} is not supported.")
+
+        # convert overview_data to dict
+        overview_data_dict = {k: v.__dict__ for k, v in overview_data.items()}  # v is TV_BaseOverview
+
+        # use vnpy save json
+        save_json(filename, overview_data_dict, cls=OverviewEncoder, mode='w')
+
+    def get_overview_dict(self, type_: Optional[Literal["bar", "factor", "tick"]]) -> Dict[str, TV_BaseOverview]:
+        if type_ == 'bar':
+            return self.bar_overview
+        elif type_ == 'factor':
+            return self.factor_overview
+        elif type_ == 'tick':
+            return self.tick_overview
+        else:
+            raise ValueError(f"task_type {type_} is not supported.")
+
+    def __update_overview_dict__(self, type_: Optional[Literal["bar", "factor", "tick"]] = None,
+                                 overview_dict: Dict[str, TV_BaseOverview] = None):
+        if type_ == 'bar':
+            self.bar_overview = copy.deepcopy(overview_dict)
+        elif type_ == 'factor':
+            self.factor_overview = copy.deepcopy(overview_dict)
+        elif type_ == 'tick':
+            self.tick_overview = copy.deepcopy(overview_dict)
+        else:
+            raise ValueError(f"task_type {type_} is not supported.")
+
+    def update_overview(self, type_: Literal["bar", "factor", "tick"],
+                        overview_dict: Dict[str, TV_BaseOverview] = None):
+        self.__update_overview_dict__(type_=type_, overview_dict=overview_dict)
+
+    def update_bar_overview(self, symbol: str, exchange: Exchange, interval: Interval, bars: List[tuple]):
+        """
+        Update the in-memory overview data when new bars arrive.
+
+        Parameters:
+            symbol (str): Trading symbol (e.g., BTCUSDT).
+            exchange (Exchange): Exchange (e.g., Binance, CME).
+            interval (Interval): Candlestick interval (e.g., 1m, 1h, 1d).
+            bars (List[tuple]): List of bar data in tuple format (datetime, price, volume, etc.).
+        """
+        # todo: update overview here
+        if not bars:
+            return
+
+        vt_symbol = VTSYMBOL_KLINE.format(interval=interval.value, symbol=symbol, exchange=exchange.name)
+
+        # If this symbol has no stored overview, create a new entry
+        if vt_symbol not in self.overview_dict:
+            self.overview_dict[vt_symbol] = BarOverview(
+                symbol=symbol,
+                exchange=exchange,
+                interval=interval,
+                start=bars[0][0],  # First bar's timestamp
+                end=bars[-1][0],  # Last bar's timestamp
+                count=len(bars)
+            )
+        else:
+            overview = self.overview_dict[vt_symbol]
+
+            # Update start/end timestamps and bar count
+            overview.start = min(overview.start, bars[0][0])
+            overview.end = max(overview.end, bars[-1][0])
+            overview.count += len(bars)
+
+        print(f"OverviewHandler: Updated {vt_symbol} with {len(bars)} new bars.")
+
+    def check_subscribe_stream(self) -> List[SubscribeRequest]:
+        """
+        Scan all overview records and generate subscription requests for real-time tick data updates.
+
+        Returns:
+            List[SubscribeRequest]: A list of tick data subscription requests.
+        """
+        subscribe_requests = []
+        for vt_symbol, bar_overview in self.overview_dict.items():
+            print(f"OverviewHandler: Subscribing to real-time data for {vt_symbol}.")
+            subscribe_requests.append(
+                SubscribeRequest(
+                    symbol=bar_overview.symbol,
+                    exchange=bar_overview.exchange,
+                    interval=bar_overview.interval
+                )
+            )
+
+        return subscribe_requests
+
+    @property
+    def event_engine(self) -> Optional[EventEngine]:
+        return self._event_engine
+
+    def add_data(self,
+                 type_: Literal["bar", "factor", "tick"],
+                 vt_symbol: str,
+                 exchange: Exchange,
+                 start: Union[datetime, int, float, str],
+                 end: Union[datetime, int, float, str],
+                 interval: Optional[Interval] = None,
+                 ):
+        """Add data range and optionally handle gaps"""
+        if type_ == "bar" and not interval:
+            raise ValueError("interval is required for bar data")
+
+        if not isinstance(exchange, Exchange):
+            raise ValueError(f"exchange must be an Exchange instance, got {type(exchange)}")
+
+        # Convert times to datetime
+        start_dt = ensure_datetime(start)
+        end_dt = ensure_datetime(end)
+
+        # Get or create data range
+        ranges = self.data_ranges[type_]
+        if vt_symbol not in ranges:
+            ranges[vt_symbol] = DataRange(interval=interval)
+
+        # Add range and get gaps
+        ranges[vt_symbol].add_range(start=start_dt, end=end_dt)
+
+    def get_gaps(self, end_time: Optional[datetime] = None, start_time: Optional[datetime] = None) -> \
+            dict[str, list[TimeRange]]:
+        """Get requests for all missing data up to current_time"""
+        if end_time is None:
+            end_time = datetime.now()
+
+        # get all existing data ranges and store them together
+        exist_dict = {}
+        for type_ in ['bar', 'factor', 'tick']:
+            overview_dict = self.get_overview_dict(type_=type_)
+            for vt_symbol, overview in overview_dict.items():
+                # why here we can use overview_key, that's because downloading data is only relate to interval, symbol and exchange, which is the same as overview_key
+                if exist_dict.get(overview.overview_key) is None:
+                    exist_dict[overview.overview_key]=DataRange(
+                        interval=overview.interval, ranges=overview.time_ranges)
+                else:
+                    exist_dict[overview.overview_key].add_ranges(overview.time_ranges)
+
+        # merge gaps
+        gap_dict={}
+        for overview_key, data_range in exist_dict.items():
+            gaps=data_range.get_gaps(start=start_time,end=end_time)
+            gap_dict[overview_key] = gaps
+            # if not gaps:
+            #     continue
+            # # merge all gaps into one DataRange
+            # merged_range = None
+            # for gap in gaps:
+            #     if merged_range is None:
+            #         merged_range = DataRange(interval=gaps[0].interval)
+            #     else:
+            #         merged_range.add_range(start=gap.start, end=gap.end)
+            # gap_dict[overview_key] = merged_range.ranges
+
+        return gap_dict
+
+    def process_missing_data(self, download_requests: List[HistoryRequest]) -> None:
+        """Process missing data requests by downloading and processing the data"""
+        if not self.event_engine:
+            raise RuntimeError("EventEngine is required for processing missing data")
+
+        if not download_requests:
+            return
+
+        # Sort requests by time to maintain order
+        download_requests.sort(key=lambda x: (x.symbol, x.start))
+
+        for request in download_requests:
+            try:
+                # Create and emit bar events
+                # Note: The actual data downloading should be handled by a data manager
+                # This is just the event emission part
+                if request.interval:  # Bar data
+                    event = Event(
+                        type=EVENT_BAR,
+                        data=BarData(
+                            symbol=request.symbol,
+                            exchange=request.exchange,
+                            datetime=request.start,
+                            interval=request.interval,
+                            volume=0,
+                            open_price=0,
+                            high_price=0,
+                            low_price=0,
+                            close_price=0,
+                            open_interest=0,
+                            turnover=0,
+                        )
+                    )
+                    self.event_engine.put(event)
+            except Exception as e:
+                print(f"Error processing request for {request.symbol}: {str(e)}")
+                continue
 
 
 class BaseDatabase(ABC):
     """
     Abstract database class for connecting to different database.
     """
+    overview_handler: OverviewHandler = field(default_factory=OverviewHandler)
+    database_name: str = ""
 
     @abstractmethod
     def save_bar_data(self, bars: List[BarData], stream: bool = False) -> bool:
@@ -450,6 +834,13 @@ class BaseDatabase(ABC):
         """
         pass
 
+    def get_gaps(self, end_time: Optional[datetime] = None, start_time: Optional[datetime] = None) -> dict[
+        str, list[TimeRange]]:
+        """
+        Get gaps in data for a specific type, vt_symbol, exchange and interval.
+        """
+        gap_dict: dict = self.overview_handler.get_gaps(end_time=end_time, start_time=start_time)
+        return gap_dict
 
 database: Optional[BaseDatabase] = None
 TV_BaseOverview = TypeVar('TV_BaseOverview', bound=BaseOverview)  # TV means TypeVar
@@ -476,283 +867,3 @@ def get_database(*args, **kwargs) -> BaseDatabase:
     # Create database object from module
     database = module.Database(args, kwargs)
     return database
-
-
-class OverviewHandler:
-    """Manages data overviews with gap detection and data retrieval"""
-    bar_overview_filepath = str(get_file_path(BAR_OVERVIEW_FILENAME))
-    tick_overview_filepath = str(get_file_path(TICK_OVERVIEW_FILENAME))
-    factor_overview_filepath = str(get_file_path(FACTOR_OVERVIEW_FILENAME))
-
-    def __init__(self, event_engine: Optional[EventEngine] = None):
-        """Initialize the overview manager"""
-        self.overview_dict: Dict[str, BarOverview] = {}  # Stores metadata in memory
-        # init database overview file
-        # todo: collect them in one dict
-        self.bar_overview = self.load_overview_hyf(filename=self.bar_overview_filepath, overview_cls=BarOverview)
-        self.tick_overview = self.load_overview_hyf(filename=self.tick_overview_filepath, overview_cls=TickOverview)
-        self.factor_overview = self.load_overview_hyf(filename=self.factor_overview_filepath,
-                                                      overview_cls=FactorOverview)
-
-        # Register the save function to execute when the program exits
-        atexit.register(self.save_overview_hyf, type_='bar')
-        atexit.register(self.save_overview_hyf, type_='factor')
-        atexit.register(self.save_overview_hyf, type_='tick')
-        self.data_ranges: Dict[str, Dict[str, DataRange]] = {
-            "bar": {},
-            "factor": {},
-            "tick": {}
-        }
-        self._event_engine = event_engine
-
-    def load_overview_hyf(self, filename: str, overview_cls: TV_BaseOverview.__class__) -> Dict[str, TV_BaseOverview]:
-
-        # use vnpy load json
-        overviews: Dict[str, TV_BaseOverview] = {}
-        overview_dict = load_json(filename=filename, cls=OverviewDecoder)
-        for k, v in overview_dict.items():
-            overviews[k] = overview_cls(**v)
-        return overviews
-
-    def save_overview_hyf(self, type_: Literal['bar', 'factor', 'tick']) -> None:
-        if type_ == 'bar':
-            overview_data = self.bar_overview
-            filename = os.path.basename(self.bar_overview_filepath)
-        elif type_ == 'factor':
-            overview_data = self.factor_overview
-            filename = os.path.basename(self.factor_overview_filepath)
-        elif type_ == 'tick':
-            overview_data = self.tick_overview
-            filename = os.path.basename(self.tick_overview_filepath)
-        else:
-            raise ValueError(f"task_type {type_} is not supported.")
-
-        # convert overview_data to dict
-        overview_data_dict = {k: v.__dict__ for k, v in overview_data.items()}  # v is TV_BaseOverview
-
-        # use vnpy save json
-        save_json(filename, overview_data_dict, cls=OverviewEncoder, mode='w')
-
-    def get_overview_dict(self, type_: Optional[Literal["bar", "factor", "tick"]]) -> Dict[str, TV_BaseOverview]:
-        if type_ == 'bar':
-            return self.bar_overview
-        elif type_ == 'factor':
-            return self.factor_overview
-        elif type_ == 'tick':
-            return self.tick_overview
-        else:
-            raise ValueError(f"task_type {type_} is not supported.")
-
-    def __update_overview_dict__(self, type_: Optional[Literal["bar", "factor", "tick"]] = None,
-                                 overview_dict: Dict[str, TV_BaseOverview] = None):
-        if type_ == 'bar':
-            self.bar_overview = overview_dict
-        elif type_ == 'factor':
-            self.factor_overview = overview_dict
-        elif type_ == 'tick':
-            self.tick_overview = overview_dict
-        else:
-            raise ValueError(f"task_type {type_} is not supported.")
-
-    def update_overview_20250302(self, type_: Literal["bar", "factor", "tick"],
-                                 overview_dict: Dict[str, TV_BaseOverview] = None):
-        self.__update_overview_dict__(type_=type_, overview_dict=overview_dict)
-
-    def update_bar_overview(self, symbol: str, exchange: Exchange, interval: Interval, bars: List[tuple]):
-        """
-        Update the in-memory overview data when new bars arrive.
-
-        Parameters:
-            symbol (str): Trading symbol (e.g., BTCUSDT).
-            exchange (Exchange): Exchange (e.g., Binance, CME).
-            interval (Interval): Candlestick interval (e.g., 1m, 1h, 1d).
-            bars (List[tuple]): List of bar data in tuple format (datetime, price, volume, etc.).
-        """
-        # todo: update overview here
-        if not bars:
-            return
-
-        vt_symbol = VTSYMBOL_KLINE.format(interval=interval.value, symbol=symbol, exchange=exchange.name)
-
-        # If this symbol has no stored overview, create a new entry
-        if vt_symbol not in self.overview_dict:
-            self.overview_dict[vt_symbol] = BarOverview(
-                symbol=symbol,
-                exchange=exchange,
-                interval=interval,
-                start=bars[0][0],  # First bar's timestamp
-                end=bars[-1][0],  # Last bar's timestamp
-                count=len(bars)
-            )
-        else:
-            overview = self.overview_dict[vt_symbol]
-
-            # Update start/end timestamps and bar count
-            overview.start = min(overview.start, bars[0][0])
-            overview.end = max(overview.end, bars[-1][0])
-            overview.count += len(bars)
-
-        print(f"OverviewHandler: Updated {vt_symbol} with {len(bars)} new bars.")
-
-    def check_missing_data(self) -> List[HistoryRequest]:
-        """
-        Scan all overview records and detect missing historical data.
-        Generates a list of HistoryRequest objects for any missing data.
-
-        Returns:
-            List[HistoryRequest]: List of missing data requests.
-        """
-
-        missing_requests = []
-        current_time = datetime.datetime.now(tz=datetime.timezone.utc)
-
-        for vt_symbol, overview in self.overview_dict.items():
-            if overview.start is None:
-                expected_end = datetime.datetime(2024, 1, 1, 0, 0, 0)
-            else:
-                expected_end = overview.end + DatetimeUtils.interval2unix(overview.interval)
-
-            # If current time is significantly ahead, request missing data
-            if current_time > expected_end:
-                print(
-                    f"OverviewVT: Missing data detected for {vt_symbol}. Expected end: {expected_end}, Current time: {current_time}")
-
-                missing_requests.append(
-                    HistoryRequest(
-                        symbol=overview.symbol,
-                        exchange=overview.exchange,
-                        start=expected_end,
-                        end=current_time,
-                        interval=overview.interval
-                    )
-                )
-
-        return missing_requests
-
-    def check_subscribe_stream(self) -> List[SubscribeRequest]:
-        """
-        Scan all overview records and generate subscription requests for real-time tick data updates.
-
-        Returns:
-            List[SubscribeRequest]: A list of tick data subscription requests.
-        """
-        subscribe_requests = []
-        for vt_symbol, bar_overview in self.overview_dict.items():
-            print(f"OverviewHandler: Subscribing to real-time data for {vt_symbol}.")
-            subscribe_requests.append(
-                SubscribeRequest(
-                    symbol=bar_overview.symbol,
-                    exchange=bar_overview.exchange,
-                    interval=bar_overview.interval
-                )
-            )
-
-        return subscribe_requests
-
-    @property
-    def event_engine(self) -> Optional[EventEngine]:
-        return self._event_engine
-
-    def add_data(self,
-                 type_: Literal["bar", "factor", "tick"],
-                 vt_symbol: str,
-                 exchange: Exchange,
-                 start: Union[datetime, int, float, str],
-                 end: Union[datetime, int, float, str],
-                 interval: Optional[Interval] = None,
-                 ):
-        """Add data range and optionally handle gaps"""
-        if type_ == "bar" and not interval:
-            raise ValueError("interval is required for bar data")
-
-        if not isinstance(exchange, Exchange):
-            raise ValueError(f"exchange must be an Exchange instance, got {type(exchange)}")
-
-        # Convert times to datetime
-        start_dt = ensure_datetime(start)
-        end_dt = ensure_datetime(end)
-
-        # Get or create data range
-        ranges = self.data_ranges[type_]
-        if vt_symbol not in ranges:
-            ranges[vt_symbol] = DataRange(interval=interval)
-
-        # Add range and get gaps
-        ranges[vt_symbol].add_range(start=start_dt, end=end_dt)
-
-    def get_missing_data_requests(self, end_time: Optional[datetime] = None, start_time: Optional[datetime] = None) -> List[HistoryRequest]:
-        """Get requests for all missing data up to current_time"""
-        if end_time is None:
-            end_time = datetime.now()
-
-        requests = []
-        for type_, ranges in self.data_ranges.items():
-            for vt_symbol, data_range in ranges.items():
-                if not data_range.end:
-                    continue
-
-                # Calculate expected next data point
-                gaps= data_range.get_gaps()
-                if start_time and start_time < data_range.start:
-                    gaps=[TimeRange(start=start_time, end=data_range.start, interval=data_range.interval)] + gaps
-                if end_time > data_range.end+IntervalUtil.get_interval_timedelta(data_range.interval):
-                    gaps.append(TimeRange(start=data_range.end, end=end_time, interval=data_range.interval))
-
-                if gaps:
-                    # We have missing data
-                    # For bar data, extract interval from vt_symbol
-                    interval = data_range.interval
-
-                    # Extract symbol and exchange
-                    base_symbol, exchange_str = vt_symbol.rsplit(".", 1)
-                    exchange = Exchange(exchange_str)
-
-                    requests.extend([
-                        HistoryRequest(
-                            symbol=base_symbol,
-                            exchange=exchange,
-                            start=gap.start,
-                            end=gap.end,
-                            interval=interval
-                        ) for gap in gaps]
-                    )
-
-        return requests
-
-    def process_missing_data(self, download_requests: List[HistoryRequest]) -> None:
-        """Process missing data requests by downloading and processing the data"""
-        if not self.event_engine:
-            raise RuntimeError("EventEngine is required for processing missing data")
-
-        if not download_requests:
-            return
-
-        # Sort requests by time to maintain order
-        download_requests.sort(key=lambda x: (x.symbol, x.start))
-
-        for request in download_requests:
-            try:
-                # Create and emit bar events
-                # Note: The actual data downloading should be handled by a data manager
-                # This is just the event emission part
-                if request.interval:  # Bar data
-                    event = Event(
-                        type=EVENT_BAR,
-                        data=BarData(
-                            symbol=request.symbol,
-                            exchange=request.exchange,
-                            datetime=request.start,
-                            interval=request.interval,
-                            volume=0,
-                            open_price=0,
-                            high_price=0,
-                            low_price=0,
-                            close_price=0,
-                            open_interest=0,
-                            turnover=0,
-                        )
-                    )
-                    self.event_engine.put(event)
-            except Exception as e:
-                print(f"Error processing request for {request.symbol}: {str(e)}")
-                continue

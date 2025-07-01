@@ -8,10 +8,60 @@ from vnpy.trader.constant import Exchange
 from vnpy.trader.constant import Interval
 from vnpy.trader.engine import MainEngine
 
+import multiprocessing
+from time import sleep
+import time
+import json
+from datetime import datetime
+from pathlib import Path
+from typing import List, Dict
+
+from vnpy.trader.constant import Exchange, Interval
+from vnpy.factor.engine import FactorEngine
+from vnpy.factor import FactorMakerApp
+from vnpy.event import EventEngine
+from vnpy.gateway.mimicgateway.mimicgateway import MimicGateway
+from vnpy.trader.engine import MainEngine
+from vnpy.app.data_recorder import DataRecorderApp
+from vnpy.trader.object import BarData
+from vnpy.app.vnpy_datamanager import DataManagerEngine,DataManagerApp
+
 
 class TestDataManagerEngine(TestCase):
     def setUp(self):
-        self.main_engine = MainEngine(EventEngine())
+        event_engine = EventEngine()
+        self.main_engine = MainEngine(event_engine)
+        self.main_engine.write_log("Main engine created successfully")
+
+        gateway_settings = {
+            "symbols": [],
+            "simulation_interval_seconds": 4.0,  # Bars every second for each symbol
+            "open_price_range_min": 100,
+            "open_price_range_max": 105,
+            "price_change_range_min": -1,
+            "price_change_range_max": 1,
+            "volume_range_min": 50,
+            "volume_range_max": 200
+        }
+
+        # start factor engine
+        self.factor_maker_engine: FactorEngine = self.main_engine.add_app(FactorMakerApp)
+        self.factor_maker_engine.init_engine(fake=True)
+        self.main_engine.write_log(f"Started [{self.factor_maker_engine.__class__.__name__}]")
+
+        # start data recorder
+        self.data_recorder_engine = self.main_engine.add_app(DataRecorderApp)
+        self.data_recorder_engine.update_schema(database_name=self.data_recorder_engine.database_manager.database_name,
+                                           exchanges=self.main_engine.exchanges,
+                                           intervals=self.main_engine.intervals,
+                                           factor_keys=[key for key in self.factor_maker_engine.flattened_factors.keys()])
+        self.data_recorder_engine.start()
+        self.main_engine.write_log(f"Started [{self.data_recorder_engine.__class__.__name__}]")
+
+        # Start engines after data is backfilled
+        self.factor_maker_engine = self.main_engine.add_app(FactorMakerApp)
+        self.main_engine.write_log(f"Started [{self.factor_maker_engine.__class__.__name__}]")
+
         self.data_manager = DataManagerEngine(self.main_engine, self.main_engine.event_engine)
         
     def test_get_bar_overview(self):
@@ -31,16 +81,30 @@ class TestDataManagerEngine(TestCase):
 
     def test_download_bar_data(self):
         self.setUp()
-        symbol = "BTCUSDT"
-        exchange = Exchange.BINANCE
-        interval = Interval.MINUTE
-        start = datetime(2023, 7, 20, 12, 0, 0)
-        end = datetime(2023, 7, 20, 12, 59, 59)
-        result:list[dict] = self.data_manager.download_bar_data(
-            symbol, exchange, interval.value, start, end,save=False
-        )
-        print(result)
+        self.data_recorder_engine.database_manager.overview_handler.get
+        # symbol = "BTCUSDT"
+        # exchange = Exchange.BINANCE
+        # interval = Interval.MINUTE
+        # start = datetime(2023, 7, 20, 12, 0, 0)
+        # end = datetime(2023, 7, 20, 12, 59, 59)
+        # result:list[dict] = self.data_manager.download_bar_data(
+        #     symbol, exchange, interval.value, start, end,save=False
+        # )
+        # print(result)
 
+    def download_bar_data_20250629(self):
+        self.setUp()
+        requests = [
+            {
+                "symbol": "BTCUSDT",
+                "exchange": Exchange.BINANCE,
+                "interval": Interval.MINUTE.value,
+                "start": datetime(2023, 7, 20, 12, 0, 0),
+                "end": datetime(2023, 7, 20, 12, 59, 59)
+            }
+        ]
+        result = self.data_manager.download_bar_data_20250629(requests)
+        print(result)
 
 
     @patch("vnpy.app.vnpy_datamanager.engine.get_database")

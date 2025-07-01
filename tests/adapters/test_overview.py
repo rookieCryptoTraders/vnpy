@@ -184,13 +184,13 @@ class TestOverviewHandler(unittest.TestCase):
 
         # no gaps
         end_time = self.end + timedelta(minutes=1)
-        requests = self.handler.get_missing_data_requests(end_time=end_time)
+        requests = self.handler.get_gaps(end_time=end_time)
         self.assertEqual(len(requests), 0)
         print(requests)
 
         # 1h
         end_time = self.end + timedelta(hours=1)
-        requests = self.handler.get_missing_data_requests(end_time=end_time)
+        requests = self.handler.get_gaps(end_time=end_time)
         self.assertEqual(len(requests), 1)
         print(requests)
 
@@ -201,7 +201,7 @@ class TestOverviewHandler(unittest.TestCase):
             end=self.end + timedelta(days=1)
         )
         end_time = self.end + timedelta(days=2)
-        requests = self.handler.get_missing_data_requests(end_time=end_time)
+        requests = self.handler.get_gaps(end_time=end_time)
         self.assertEqual(len(requests), 2)
         print(requests)
 
@@ -212,7 +212,7 @@ class TestOverviewHandler(unittest.TestCase):
         )
         start_time= self.start - timedelta(days=1)
         end_time = self.end + timedelta(days=2)
-        requests = self.handler.get_missing_data_requests(end_time=end_time,start_time=start_time)
+        requests = self.handler.get_gaps(end_time=end_time, start_time=start_time)
         self.assertEqual(len(requests), 3)
         print(requests)
 

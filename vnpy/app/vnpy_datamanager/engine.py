@@ -3,17 +3,20 @@ from collections.abc import Callable
 from datetime import datetime
 from logging import INFO
 from typing import List, Optional, Union
+from collections import defaultdict
 
 from vnpy.event import Event, EventEngine
 from vnpy.trader.constant import Interval, Exchange
 from vnpy.trader.database import BaseDatabase, get_database, BarOverview, DB_TZ, TV_BaseOverview, TickOverview, \
-    FactorOverview
+    FactorOverview, TimeRange, DataRange, VTSYMBOL_OVERVIEW
 from vnpy.trader.datafeed import BaseDatafeed, get_datafeed
 from vnpy.trader.engine import BaseEngine, MainEngine
 from vnpy.trader.event import EVENT_LOG
 from vnpy.trader.object import BarData, LogData
 from vnpy.trader.object import TickData, ContractData, HistoryRequest
 from vnpy.trader.utility import ZoneInfo
+from vnpy.trader.object import HistoryRequest, SubscribeRequest, BarData, TickData
+from vnpy.config import match_format_string
 
 from .base import APP_NAME
 
@@ -25,12 +28,14 @@ class DataManagerEngine(BaseEngine):
             self,
             main_engine: MainEngine,
             event_engine: EventEngine,
+            database: BaseDatabase | None = None
     ) -> None:
         """"""
         super().__init__(main_engine, event_engine, APP_NAME)
 
         # self.database: BaseDatabase = get_database()
-        self.database: BaseDatabase = None  # fixme: database should not affiliated to data_manager. database is event driven
+        self.database: Union[
+            BaseDatabase] = database  # fixme: database should not affiliated to data_manager. database is event driven
         self.datafeed: BaseDatafeed = get_datafeed()
 
     def import_data_from_csv(
@@ -196,7 +201,7 @@ class DataManagerEngine(BaseEngine):
             self,
             symbol: str,
             exchange: Exchange,
-            interval: str,
+            interval: Union[str, Interval],
             start: datetime,
             end: datetime = None,
             save: bool = False
@@ -206,10 +211,12 @@ class DataManagerEngine(BaseEngine):
         """
         if end is None:
             end = datetime.now(DB_TZ)
+        if isinstance(interval, str):
+            interval = Interval(interval)
         req: HistoryRequest = HistoryRequest(
             symbol=symbol,
             exchange=exchange,
-            interval=Interval(interval),
+            interval=interval,
             start=start,
             end=end
         )
@@ -228,13 +235,31 @@ class DataManagerEngine(BaseEngine):
 
         if save:
             if data:
-                status=self.database.save_bar_data(data)
+                status = self.database.save_bar_data(data)
                 return status
         else:
             # If not saving, just return the data
             return data
 
         return 0
+
+    def download_bar_data_20250629(
+            self,
+            requests: list[HistoryRequest],
+            gateway_name: str = "",
+    ) -> Union[int, List[BarData]]:
+        """
+        Query bar data from datafeed.
+        """
+
+        bar_data_list: List[BarData] = []
+        for req in requests:
+            data: List[BarData] = self.main_engine.query_history(
+                req, gateway_name
+            )
+            bar_data_list.extend(data)
+
+        return bar_data_list
 
     def download_tick_data(
             self,
@@ -260,6 +285,26 @@ class DataManagerEngine(BaseEngine):
             return len(data)
 
         return 0
+
+    def download_missing_bars(self, requests: HistoryRequest) -> Union[TV_BaseOverview, None]:
+        return None
+
+    def download_bar_data_gaps(self, gap_dict: dict[str, list[TimeRange]]):
+        """
+        Download bar data for gaps in the overview.
+        """
+        res = defaultdict(list)
+        for overview_key, time_ranges in gap_dict.items():
+            print(f"download_bar_data_gaps Processing overview key: {overview_key}")
+            info = match_format_string(VTSYMBOL_OVERVIEW, overview_key)
+            for time_range in time_ranges:
+                res[overview_key].extend(self.download_bar_data(symbol=info['symbol'],
+                                                  exchange=Exchange(info['exchange']),
+                                                  interval=Interval(info['interval']),
+                                                  start=time_range.start,
+                                                  end=time_range.end,
+                                                  save=False))
+        return res
 
     def write_log(self, msg: str, level=INFO) -> None:
         """

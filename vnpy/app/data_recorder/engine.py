@@ -11,7 +11,6 @@ from vnpy_clickhouse.clickhouse_database import ClickhouseDatabase
 
 from vnpy.event.engine import Event
 from vnpy.trader.constant import Exchange, Interval
-from vnpy.trader.database import OverviewHandler
 
 from vnpy.trader.engine import BaseEngine, EventEngine, MainEngine
 from vnpy.trader.event import (
@@ -65,13 +64,13 @@ class RecorderEngine(BaseEngine):
         # Buffers for batch database writes
         self.buffer_bar: defaultdict = defaultdict(list)
         self.buffer_factor: defaultdict = defaultdict(list)
-        self.buffer_size: int = 1000  # Number of records to buffer before writing
+        self.buffer_size: int = 1000 if SYSTEM_MODE != 'TEXT' else 1  # Number of records to buffer before writing
 
         # Database manager instance
         self.database_manager = ClickhouseDatabase(event_engine=event_engine)
 
         # Overview handler for data consistency checks (optional)
-        self.overview_handler_for_result_check = OverviewHandler()
+        # self.overview_handler_for_result_check = OverviewHandler()
 
     def update_schema(
         self,
