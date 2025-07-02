@@ -32,7 +32,7 @@ from vnpy.factor.utils.factor_utils import (
 )  # Ensure these utils are compatible
 from vnpy.factor.utils.memory_utils import truncate_memory as truncate_bar_memory
 from vnpy.trader.engine import BaseEngine, MainEngine
-from vnpy.trader.event import EVENT_BAR, EVENT_FACTOR, EVENT_LOG, EVENT_TICK
+from vnpy.trader.event import EVENT_BAR, EVENT_FACTOR, EVENT_LOG, EVENT_TICK,EVENT_FACTOR_FILLING
 from vnpy.trader.object import BarData, LogData
 
 from .setting import (
@@ -73,10 +73,10 @@ class FactorEngine(BaseEngine):
             "datetime_col", "datetime"
         )
         self.max_memory_length_bar = FACTOR_MODULE_SETTINGS.get(
-            "max_memory_length_bar", 100
+            "max_memory_length_bar", 600
         )
         self.max_memory_length_factor = FACTOR_MODULE_SETTINGS.get(
-            "max_memory_length_factor", 500
+            "max_memory_length_factor", 600
         )
         self.error_threshold = FACTOR_MODULE_SETTINGS.get("error_threshold", 3)
 
@@ -170,6 +170,8 @@ class FactorEngine(BaseEngine):
     def register_event(self) -> None:
         self.event_engine.register(EVENT_TICK, self.process_tick_event)
         self.event_engine.register(EVENT_BAR, self.process_bar_event)
+        self.event_engine.register(EVENT_FACTOR_FILLING, self.process_factor_filling_event)
+
 
     def init_all_factors(self) -> None:
         """Loads factor settings, initializes FactorTemplate instances, and determines max lookback periods."""
@@ -241,12 +243,8 @@ class FactorEngine(BaseEngine):
             if isinstance(fm_max_rows, int) and fm_max_rows > 0:
                 all_factor_mem_max_rows.append(fm_max_rows)
 
-        self.max_memory_length_bar = (
-            max(all_bar_lookbacks) if all_bar_lookbacks else 100
-        )
-        self.max_memory_length_factor = (
-            max(all_factor_mem_max_rows) if all_factor_mem_max_rows else 500
-        )
+        self.max_memory_length_bar = max(all_bar_lookbacks)
+        self.max_memory_length_factor = max(all_factor_mem_max_rows)
         # Note: max_memory_length_factor will be used as default if a factor doesn't specify its own.
         # It's better to set FactorMemory max_rows per factor if needed, or use a generous global default.
 
@@ -905,6 +903,15 @@ class FactorEngine(BaseEngine):
             self.dt = None
             self.bars.clear()
             self.receiving_status = {sym: False for sym in self.vt_symbols}
+
+    def process_factor_filling_event(self, event: Event) -> None:
+        """Processes a factor filling event, typically used for batch updates."""
+        # 1. fetch bar data and factor data using database related event
+        # 2. replace bar memory and factor memory
+        # 3. for gap in gaps:
+        #   4. calculate factors
+        #   5. put event with factor data
+
 
     def stop_all_factors(self) -> None:
         self.write_log("Stopping all factors...", level=INFO)

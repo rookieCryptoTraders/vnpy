@@ -12,7 +12,7 @@ from .event import (
     EVENT_ACCOUNT,
     EVENT_CONTRACT,
     EVENT_LOG,
-    EVENT_QUOTE, EVENT_BAR,
+    EVENT_QUOTE, EVENT_BAR, EVENT_BAR_FILLING, EVENT_FACTOR_FILLING
 )
 from .object import (
     TickData,
@@ -111,6 +111,22 @@ class BaseGateway(ABC):
         self.on_event(EVENT_BAR, bar)
         specific_event_type = EVENT_BAR + bar.vt_symbol
         self.on_event(specific_event_type, bar)
+
+    def on_bar_filling(self, bar: BarData) -> None:
+        """
+        Bar event push.
+        Bar event of a specific vt_symbol is also pushed.
+        """
+        self.on_event(EVENT_BAR_FILLING, bar)
+        specific_event_type = EVENT_BAR_FILLING + bar.vt_symbol
+        self.on_event(specific_event_type, bar)
+
+    def on_factor_filling(self, gap_dict: dict) -> None:
+        """
+        Bar event push.
+        Bar event of a specific vt_symbol is also pushed.
+        """
+        self.on_event(EVENT_FACTOR_FILLING, gap_dict)
 
     def on_trade(self, trade: TradeData) -> None:
         """
@@ -310,7 +326,7 @@ class LocalOrderManager:
         # For generating local orderid
         self.order_prefix: str = order_prefix
         self.order_count: int = 0
-        self.orders: dict[str, OrderData] = {}        # local_orderid: order
+        self.orders: dict[str, OrderData] = {}  # local_orderid: order
 
         # Map between local and system orderid
         self.local_sys_orderid_map: dict[str, str] = {}
@@ -323,7 +339,7 @@ class LocalOrderManager:
         self.push_data_callback: Callable = None
 
         # Cancel request buf
-        self.cancel_request_buf: dict[str, CancelRequest] = {}    # local_orderid: req
+        self.cancel_request_buf: dict[str, CancelRequest] = {}  # local_orderid: req
 
         # Hook cancel order function
         self._cancel_order: Callable = gateway.cancel_order

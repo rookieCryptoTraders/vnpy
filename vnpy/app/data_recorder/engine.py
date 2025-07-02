@@ -18,7 +18,7 @@ from vnpy.trader.event import (
     EVENT_CONTRACT,
     EVENT_FACTOR,
     EVENT_LOG,
-    EVENT_RECORDER_UPDATE,
+    EVENT_RECORDER_UPDATE, EVENT_BAR_FILLING
 )
 from vnpy.trader.object import (
     BarData,
@@ -73,11 +73,11 @@ class RecorderEngine(BaseEngine):
         # self.overview_handler_for_result_check = OverviewHandler()
 
     def update_schema(
-        self,
-        database_name: str,
-        exchanges: list[Exchange],
-        intervals: Interval | list[Interval],
-        factor_keys: list[str] | None = None,
+            self,
+            database_name: str,
+            exchanges: list[Exchange],
+            intervals: Interval | list[Interval],
+            factor_keys: list[str] | None = None,
     ):
         """Dynamically updates the database schema based on external info."""
         # This function remains as is, assuming it works in your environment.
@@ -106,6 +106,7 @@ class RecorderEngine(BaseEngine):
     def register_event(self) -> None:
         """Registers the engine for relevant events."""
         self.event_engine.register(EVENT_BAR, self.process_bar_event)
+        self.event_engine.register(EVENT_BAR_FILLING, self.process_bar_event)
         self.event_engine.register(EVENT_FACTOR, self.process_factor_event)
         self.event_engine.register(EVENT_CONTRACT, self.process_contract_event)
 
@@ -276,10 +277,10 @@ class RecorderEngine(BaseEngine):
     # ----------------------------------------------------------------------
 
     def save_data(
-        self,
-        task_type: Literal["bar", "factor", "tick"] | None = None,
-        data=None,
-        force_save: bool = False,
+            self,
+            task_type: Literal["bar", "factor", "tick"] | None = None,
+            data=None,
+            force_save: bool = False,
     ):
         """Routes data from the queue to the appropriate processing helper."""
         self.write_log(
@@ -303,7 +304,7 @@ class RecorderEngine(BaseEngine):
             to_remove = []
             for k, v in self.buffer_bar.items():
                 if len(v) >= self.buffer_size or (force_save and v):
-                    self._save_bar_buffer(v)
+                    self._save_bar_buffer(v,stream=False)
                     to_remove.append(k)
             for k in to_remove:
                 self.buffer_bar.pop(k, None)
@@ -337,7 +338,7 @@ class RecorderEngine(BaseEngine):
             self.write_log("Flushing all data buffers...")
             for v in self.buffer_bar.values():
                 if v:
-                    self._save_bar_buffer(v)
+                    self._save_bar_buffer(v,stream=False)
             self.buffer_bar.clear()
             for v in self.buffer_factor.values():
                 if v:
@@ -345,13 +346,14 @@ class RecorderEngine(BaseEngine):
             self.buffer_factor.clear()
             self.write_log("Buffers flushed.")
 
-    def _save_bar_buffer(self, bar_list: list[BarData]):
+    def _save_bar_buffer(self, bar_list: list[BarData],stream=True):
         """Saves a list of bars from the buffer to the database."""
         sample_data = bar_list[0]
         self.database_manager.save_bar_data(
             bar_list,
             interval=sample_data.interval,
-            exchange=sample_data.exchange
+            exchange=sample_data.exchange,
+            stream=stream
         )
 
     def _process_factor_dict(self, data: dict):

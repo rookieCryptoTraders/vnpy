@@ -20,7 +20,6 @@ from vnpy.gateway.mimicgateway.mimicgateway import MimicGateway
 from vnpy.trader.constant import Exchange, Interval
 from vnpy.trader.database import VTSYMBOL_OVERVIEW
 from vnpy.trader.engine import MainEngine
-from vnpy.trader.event import EVENT_BAR
 from vnpy.trader.object import BarData
 
 
@@ -102,7 +101,10 @@ def run_child():
                     taker_buy_base_asset_volume=d['taker_buy_base_asset_volume'],
                     taker_buy_quote_asset_volume=d['taker_buy_quote_asset_volume'],
                 )
-                gateway.on_bar(bar)
+                gateway.on_bar_filling(bar)
+
+        # filling missing factor
+        gateway.on_factor_filling(gap_dict)
 
     # Start live data subscription
     main_engine.subscribe_all(gateway_name='MIMIC')

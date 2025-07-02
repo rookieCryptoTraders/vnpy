@@ -328,7 +328,7 @@ class BaseOverview:
         # Other time range operations are handled by DataRange class
         data_range = DataRange(interval=self.interval)
         data_range.ranges = self.time_ranges
-        data_range.add_range(start=start, end=end)
+        data_range.add_range(start=start, end=end,inplace=True)  # the default value of inplace in overview's add range should be true
         self.time_ranges = data_range.ranges
 
     @property

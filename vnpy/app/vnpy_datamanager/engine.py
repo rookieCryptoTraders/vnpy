@@ -38,6 +38,16 @@ class DataManagerEngine(BaseEngine):
             BaseDatabase] = database  # fixme: database should not affiliated to data_manager. database is event driven
         self.datafeed: BaseDatafeed = get_datafeed()
 
+
+    def on_bar_filling(self, bar: BarData) -> None:
+        """
+        Bar event push.
+        Bar event of a specific vt_symbol is also pushed.
+        """
+        self.on_event(EVENT_BAR_FILLING, bar)
+        specific_event_type = EVENT_BAR_FILLING + bar.vt_symbol
+        self.on_event(specific_event_type, bar)
+
     def import_data_from_csv(
             self,
             file_path: str,
