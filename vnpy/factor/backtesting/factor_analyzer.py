@@ -39,13 +39,13 @@ def get_annualization_factor(datetimes: pl.Series) -> float:
     in a datetime series.
     """
     if datetimes.len() < 2:
-        return 252.0  # Default to daily if not enough data
+        return 365.0  # Default to daily if not enough data
 
     # Calculate the median difference in seconds
     median_delta_seconds = datetimes.diff().dt.total_seconds().median()
 
     if median_delta_seconds is None:
-        return 252.0  # Default
+        return 365.0  # Default
 
     # Compare to one day in seconds
     one_day_seconds = timedelta(days=1).total_seconds()
@@ -54,11 +54,11 @@ def get_annualization_factor(datetimes: pl.Series) -> float:
     if median_delta_seconds > 0:
         periods_per_day = one_day_seconds / median_delta_seconds
     else:
-        return 252.0  # Default if no time difference
+        return 365.0  # Default if no time difference
 
     # For intraday, it's total periods in a year.
     if periods_per_day < 2:  # Daily or longer
-        return 252.0
+        return 365.0
     else:  # Hourly, minutely, etc.
         # Using 365 days for intraday frequencies
         return 365.0 * periods_per_day
@@ -73,7 +73,6 @@ class AnalysisConfig:
 
     num_quantiles: int = 5
     long_short_percentile: float = 0.3
-    annualization_factor: float = 24*365  # Assumes hours data, will be auto-detected
     risk_free_rate: float = 0.0
 
 
@@ -128,6 +127,7 @@ class FactorAnalyser:
         )
         self.factor_datetime_col: str = DEFAULT_DATETIME_COL
         self.config = config or AnalysisConfig()
+        self.annualization_factor: float = 252.0  # Default to daily
 
         # --- Result attributes ---
         self.quantile_analysis_results: QuantileResults | None = None
@@ -330,7 +330,7 @@ class FactorAnalyser:
         # Avoid division by zero
         if std_ret is not None and std_ret > 0:
             sharpe = (
-                (mean_ret / std_ret) * (self.config.annualization_factor**0.5)
+                (mean_ret / std_ret) * (self.annualization_factor**0.5)
                 if mean_ret is not None
                 else None
             )
@@ -528,7 +528,7 @@ class FactorAnalyser:
                 returns=returns_pd,
                 benchmark=benchmark_pd,
                 rf=self.config.risk_free_rate,
-                periods_per_year=self.config.annualization_factor,
+                periods_per_year=self.annualization_factor,
                 title=f"Factor Analysis Report: {factor_key}",
                 output=str(filepath),
                 download_filename=filename,
@@ -586,13 +586,13 @@ class FactorAnalyser:
         # Update config with parameters from this specific run
         self.config.num_quantiles = num_quantiles
         self.config.long_short_percentile = long_short_percentile
-        
+
         # Auto-detect annualization factor from the data
         if not factor_data_df.is_empty():
-            self.config.annualization_factor = get_annualization_factor(
+            self.annualization_factor = get_annualization_factor(
                 factor_data_df[self.factor_datetime_col]
             )
-            self._write_log(f"Auto-detected annualization factor: {self.config.annualization_factor}", level=DEBUG)
+            self._write_log(f"Auto-detected annualization factor: {self.annualization_factor}", level=DEBUG)
 
         # --- 1. Data Validation and Preparation ---
         if factor_data_df.is_empty() or market_close_prices_df.is_empty():

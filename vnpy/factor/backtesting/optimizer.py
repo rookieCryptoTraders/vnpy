@@ -15,7 +15,10 @@ from bayes_opt import BayesianOptimization
 from loguru import logger
 
 from vnpy.factor.backtesting.backtesting import BacktestEngine
-from vnpy.factor.backtesting.factor_analyzer import FactorAnalyser
+from vnpy.factor.backtesting.factor_analyzer import (
+    FactorAnalyser,
+    get_annualization_factor,
+)
 from vnpy.factor.template import FactorTemplate
 from vnpy.factor.utils.factor_utils import apply_params_to_definition_dict
 from vnpy.trader.constant import Interval
@@ -341,6 +344,12 @@ class FactorOptimizer:
         analyser = FactorAnalyser()
         analyser.config.num_quantiles = num_quantiles
         analyser.config.long_short_percentile = long_short_percentile
+
+        # Auto-detect annualization factor from the training data
+        if not factor_df.is_empty():
+            analyser.annualization_factor = get_annualization_factor(
+                factor_df[DEFAULT_DATETIME_COL]
+            )
 
         market_close = data_to_use["close"]
         symbol_returns_df = analyser._prepare_symbol_returns(market_close, vt_symbols)

@@ -10,7 +10,7 @@ import polars as pl
 import numpy as np  # For placeholder data loading
 
 # VnTrader imports
-from vnpy.factor.backtesting.factor_analyzer import FactorAnalyser
+from vnpy.factor.backtesting.factor_analyzer import FactorAnalyser, get_annualization_factor
 from vnpy.factor.backtesting.factor_calculator import FactorCalculator
 from vnpy.factor.template import FactorTemplate
 from vnpy.trader.constant import Interval
@@ -439,6 +439,13 @@ class BacktestEngine:
         self._write_log("Starting factor analysis...", level=INFO)
         analyser = FactorAnalyser(
             output_data_dir_for_reports=self.output_data_dir_for_analyser_reports
+        )
+
+        analyser.annualization_factor = get_annualization_factor(market_close_prices_df[DEFAULT_DATETIME_COL])
+
+        self._write_log(
+            f"annualization_factor set to {analyser.annualization_factor} based on market close prices.",
+            level=DEBUG,
         )
 
         if market_close_prices_df.is_empty():
