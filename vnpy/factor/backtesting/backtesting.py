@@ -91,8 +91,8 @@ class BacktestEngine:
         THIS IS A PLACEHOLDER. Replace with actual data loading logic.
         """
         self._write_log(
-            f"Orchestrator Placeholder: load_bar_data called for {start} to {end}, interval {interval.value}, symbols: {vt_symbols}",
-            level=DEBUG,
+            f"Loading bar data for {len(vt_symbols)} symbols from {start} to {end} ({interval.value}).",
+            level=INFO,
         )
         self.memory_bar.clear()
 
@@ -141,7 +141,7 @@ class BacktestEngine:
         if not datetime_values:
             self.num_data_rows = 0
             self._write_log(
-                "Placeholder: No datetime values generated. Check start/end dates and interval.",
+                "No datetime values generated. Check start/end dates and interval.",
                 level=WARNING,
             )
             return True
@@ -193,14 +193,14 @@ class BacktestEngine:
                 self.memory_bar[bar_field] = pl.DataFrame(data_for_field)
             except Exception as e:
                 self._write_log(
-                    f"Placeholder: Error creating DataFrame for field '{bar_field}': {e}",
+                    f"Error creating DataFrame for field '{bar_field}': {e}",
                     level=ERROR,
                 )
                 return False
 
         if "close" not in self.memory_bar or self.memory_bar["close"].is_empty():
             self._write_log(
-                "Placeholder: 'close' data is missing or empty after simulated loading.",
+                "'close' data is missing or empty after simulated loading.",
                 level=ERROR,
             )
             self.num_data_rows = 0
@@ -209,13 +209,13 @@ class BacktestEngine:
         self.num_data_rows = self.memory_bar["close"].height
         if self.num_data_rows == 0:
             self._write_log(
-                "Placeholder: Loaded 'close' data is empty. No data rows available.",
+                "Loaded 'close' data is empty. No data rows available.",
                 level=WARNING,
             )
             return True
 
         self._write_log(
-            f"Orchestrator Placeholder: Successfully simulated loading of {self.num_data_rows} rows for {len(vt_symbols)} symbols.",
+            f"Successfully simulated loading of {self.num_data_rows} rows for {len(vt_symbols)} symbols.",
             level=DEBUG,
         )
         return True
@@ -231,7 +231,7 @@ class BacktestEngine:
         Returns the target factor instance and the dictionary of all flattened factors.
         """
         self._write_log(
-            f"Initializing and flattening factor based on definition. Symbols: {vt_symbols_for_factor}",
+            f"Initializing factor graph for symbols: {vt_symbols_for_factor}",
             level=INFO,
         )
         if not self.module_factors:
@@ -345,7 +345,7 @@ class BacktestEngine:
 
         self._write_log(
             f"Target factor instance created: {target_factor_instance.factor_key}",
-            level=INFO,
+            level=DEBUG,
         )
 
         # Flatten the dependency tree
@@ -406,7 +406,7 @@ class BacktestEngine:
         vt_symbols_for_run: list[str],  # Pass the current run's symbols
     ) -> pl.DataFrame | None:
         """Uses the calculator to compute factor values using its loaded data."""
-        self._write_log("Starting factor value computation phase...", level=DEBUG)
+        self._write_log("Starting factor computation...", level=INFO)
 
         factor_df = calculator.compute_factor_values(
             target_factor_instance_input=target_factor_instance,
@@ -430,7 +430,7 @@ class BacktestEngine:
         report_filename_prefix: str,
     ) -> Path | None:
         """Uses the analyser to process results and generate a report."""
-        self._write_log("Starting factor analysis phase...", level=DEBUG)
+        self._write_log("Starting factor analysis...", level=INFO)
         analyser = FactorAnalyser(
             output_data_dir_for_reports=self.output_data_dir_for_analyser_reports
         )
@@ -476,33 +476,9 @@ class BacktestEngine:
         Runs a complete single factor backtest by coordinating FactorCalculator and FactorAnalyser.
         """
         self._write_log(
-            f"Orchestrating single factor backtest for symbols: {vt_symbols_for_factor}",
+            f"Running single factor backtest for {target_factor_instance.factor_key}",
             level=INFO,
         )
-
-        # Step 1: Load Data (Orchestrator handles this)
-        if not self._load_bar_data_engine(
-            start_datetime, end_datetime, data_interval, vt_symbols_for_factor
-        ):
-            self._write_log("Failed to load bar data in orchestrator. Aborting.", ERROR)
-            return None
-        if self.num_data_rows == 0:
-            self._write_log(
-                "No bar data rows loaded by orchestrator. Aborting.", WARNING
-            )
-            return None
-
-        # Step 2: Initialize Factor and Flatten Dependency Tree
-        target_factor_instance, flattened_factors = self._init_and_flatten_factor(
-            factor_definition=factor_definition,
-            vt_symbols_for_factor=vt_symbols_for_factor,
-            factor_json_conf_path=factor_json_conf_path,
-        )
-        if not target_factor_instance or not flattened_factors:
-            self._write_log(
-                "Failed to initialize or flatten factor. Aborting.", level=ERROR
-            )
-            return None
 
         # Step 3: Calculate Factor Values
         calculator = self._create_calculator()
@@ -520,6 +496,7 @@ class BacktestEngine:
                 "Factor calculation failed. Aborting analysis.", level=ERROR
             )
             return None
+        self._write_log("Factor calculation complete.", level=INFO)
 
         # Prepare market data (close prices) for the analyser, aligned with factor_df
         market_close_prices_df: pl.DataFrame | None = None
@@ -542,6 +519,7 @@ class BacktestEngine:
             return None
 
         # Step 4: Analyse Factor Results
+        self._write_log("Analyzing factor performance.", level=INFO)
         actual_analysis_start_dt = start_datetime
         actual_analysis_end_dt = end_datetime
         if not factor_df.is_empty():
@@ -573,9 +551,7 @@ class BacktestEngine:
             analysis_start_dt=actual_analysis_start_dt,
             analysis_end_dt=actual_analysis_end_dt,
             num_quantiles=num_quantiles,
-            returns_look_ahead_period=returns_look_ahead_period,
-            long_percentile_threshold=long_percentile_threshold,
-            short_percentile_threshold=short_percentile_threshold,
+            long_short_percentile=long_short_percentile,
             report_filename_prefix=report_filename_prefix,
         )
 

@@ -32,7 +32,14 @@ from vnpy.factor.utils.factor_utils import (
 )  # Ensure these utils are compatible
 from vnpy.factor.utils.memory_utils import truncate_memory as truncate_bar_memory
 from vnpy.trader.engine import BaseEngine, MainEngine
-from vnpy.trader.event import EVENT_BAR, EVENT_FACTOR, EVENT_LOG, EVENT_TICK,EVENT_FACTOR_FILLING
+from vnpy.trader.event import (
+    EVENT_BAR,
+    EVENT_FACTOR,
+    EVENT_LOG,
+    EVENT_TICK,
+    EVENT_FACTOR_FILLING,
+    EVENT_FACTOR_BAR_UPDATE,
+)
 from vnpy.trader.object import BarData, LogData
 
 from .setting import (
@@ -171,6 +178,7 @@ class FactorEngine(BaseEngine):
         self.event_engine.register(EVENT_TICK, self.process_tick_event)
         self.event_engine.register(EVENT_BAR, self.process_bar_event)
         self.event_engine.register(EVENT_FACTOR_FILLING, self.process_factor_filling_event)
+        self.event_engine.register(EVENT_FACTOR_BAR_UPDATE, self.process_factor_bar_update_event)
 
 
     def init_all_factors(self) -> None:
@@ -912,6 +920,43 @@ class FactorEngine(BaseEngine):
         #   4. calculate factors
         #   5. put event with factor data
 
+    def process_factor_bar_update_event(self, event: Event) -> None:
+        """
+        Processes the event to query bar data from the database and initialize it into memory.
+        """
+        bars_data = event.data
+        if not bars_data:
+            self.write_log("No bar data received for factor bar update.", level=WARNING)
+            return
+
+        self.process_database_bar_data(bars_data)
+
+    def process_database_bar_data(self, bars: list[BarData]) -> None:
+        """
+        Initializes the bar memory with historical data queried from the database.
+        """
+        if not bars:
+            self.write_log("No bars to process for database initialization.", level=INFO)
+            return
+
+        # Convert list of BarData objects to a dictionary of lists for polars DataFrame
+        data_dict = {
+            "datetime": [bar.datetime for bar in bars],
+            "open": [bar.open_price for bar in bars],
+            "high": [bar.high_price for bar in bars],
+            "low": [bar.low_price for bar in bars],
+            "close": [bar.close_price for bar in bars],
+            "volume": [bar.volume for bar in bars],
+            "vt_symbol": [bar.vt_symbol for bar in bars]
+        }
+        df = pl.DataFrame(data_dict)
+
+        # Pivot the DataFrame to have symbols as columns
+        for col in ["open", "high", "low", "close", "volume"]:
+            pivoted_df = df.pivot(index="datetime", columns="vt_symbol", values=col)
+            self.memory_bar[col] = pivoted_df.sort("datetime")
+
+        self.write_log(f"Initialized bar memory with {len(df)} bars from database.", level=INFO)
 
     def stop_all_factors(self) -> None:
         self.write_log("Stopping all factors...", level=INFO)

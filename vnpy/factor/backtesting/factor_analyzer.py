@@ -315,7 +315,7 @@ class FactorAnalyser:
         self.long_short_stats = LongShortStats(
             mean_return=mean_ret, std_return=std_ret, sharpe_ratio=sharpe, t_stat=t_stat
         )
-        self._write_log(f"L/S Portfolio Stats: {self.long_short_stats}", level=INFO)
+        self._write_log(f"L/S Portfolio Stats: {self.long_short_stats}", level=DEBUG)
         return True
 
     def calculate_performance_metrics(
@@ -449,7 +449,7 @@ class FactorAnalyser:
         try:
             with open(filepath, "w", encoding="utf-8") as f:
                 json.dump(report_data, f, indent=4, ensure_ascii=False)
-            self._write_log(f"JSON report saved successfully: {filepath}", level=INFO)
+            self._write_log(f"JSON report saved successfully: {filepath}", level=DEBUG)
             return filepath
         except Exception as e:
             self._write_log(f"Error saving JSON report: {e}", level=ERROR)
@@ -503,7 +503,7 @@ class FactorAnalyser:
                 download_filename=filename,
             )
             # https://github.com/ranaroussi/quantstats/issues/381
-            self._write_log(f"HTML report saved successfully: {filepath}", level=INFO)
+            self._write_log(f"HTML report saved successfully: {filepath}", level=DEBUG)
             webbrowser.open(f"file://{filepath.resolve()}")
             return filepath
         except Exception as e:
@@ -548,8 +548,8 @@ class FactorAnalyser:
             Optional[Path]: The path to the saved JSON report, or None if failed.
         """
         self._write_log(
-            f"--- Starting Full Analysis for Factor: {factor_instance.factor_key} ---",
-            level=INFO,
+            f"--- Starting Analysis for Factor: {factor_instance.factor_key} ---",
+            level=DEBUG,
         )
 
         # Update config with parameters from this specific run
@@ -623,24 +623,21 @@ class FactorAnalyser:
         )
 
         self._write_log(
-            f"--- Analysis for {factor_instance.factor_key} Complete. ---", level=INFO
+            f"--- Analysis for {factor_instance.factor_key} Complete. ---", level=DEBUG
         )
 
         # Return path to JSON report for backward compatibility
         return json_report_path
 
     def _write_log(self, msg: str, level: int = INFO) -> None:
-        contextual_logger = logger.bind(gateway_name=self.engine_name)
-        if level == DEBUG:
-            contextual_logger.debug(msg)
-        elif level == INFO:
-            contextual_logger.info(msg)
-        elif level == WARNING:
-            contextual_logger.warning(msg)
-        elif level == ERROR:
-            contextual_logger.error(msg)
-        else:
-            contextual_logger.info(msg)
+        level_map = {
+            DEBUG: logger.debug,
+            INFO: logger.info,
+            WARNING: logger.warning,
+            ERROR: logger.error,
+        }
+        log_func = level_map.get(level, logger.info)
+        log_func(msg, gateway_name=self.engine_name)
 
     def close(self) -> None:
         self._write_log("FactorAnalyser closed.", level=INFO)

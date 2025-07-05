@@ -166,7 +166,7 @@ class FactorCalculator:
 
         self._write_log(
             f"Starting calculation for: {self.target_factor_instance.factor_key} with symbols {self.vt_symbols}",
-            level=INFO,
+            level=DEBUG,
         )
 
         if not self._determine_sorted_keys_from_flattened_graph():
@@ -188,8 +188,12 @@ class FactorCalculator:
                 )
                 return None
             self._write_log(
-                f"Successfully retrieved data for '{target_key}'. Shape: {factor_data_df.shape}",
-                level=INFO,
+                f"Successfully calculated factor '{target_key}'.",
+                level=DEBUG,
+            )
+            self._write_log(
+                f"'{target_key}' data shape: {factor_data_df.shape}",
+                level=DEBUG,
             )
             return factor_data_df
         else:
@@ -284,7 +288,7 @@ class FactorCalculator:
     def _build_dask_computational_graph(self) -> bool:
         self._write_log(
             f"Building Dask graph for {len(self.sorted_factor_keys)} factors...",
-            level=INFO,
+            level=DEBUG,
         )
         if not self.memory_bar:
             self._write_log("memory_bar empty. Cannot build Dask graph.", level=ERROR)
@@ -308,10 +312,10 @@ class FactorCalculator:
 
     def _execute_batch_dask_graph(self) -> bool:
         if not self.dask_tasks:
-            self._write_log("No Dask tasks to execute.", level=INFO)
+            self._write_log("No Dask tasks to execute.", level=DEBUG)
             return True
         self._write_log(
-            f"Executing Dask graph for {len(self.dask_tasks)} factors...", level=INFO
+            f"Executing Dask graph for {len(self.dask_tasks)} factors...", level=DEBUG
         )
         with self.calculation_lock:
             #start_time = time.time()

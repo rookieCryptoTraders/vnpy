@@ -78,7 +78,7 @@ class FactorOptimizer:
             - A dictionary of all tested parameters and their scores.
             - The path to the final report generated from the test set.
         """
-        self._write_log(f"Starting optimization for symbols: {vt_symbols}", INFO)
+        self._write_log("Starting factor parameter optimization.", INFO)
 
         # 1. Load all necessary data via the BacktestEngine
         if not self.backtest_engine._load_bar_data_engine(
@@ -101,9 +101,16 @@ class FactorOptimizer:
             return None, None, None
 
         # 3. Grid search on training data
+        total_combinations = 1
+        if parameter_grid:
+            for p_list in parameter_grid.values():
+                total_combinations *= len(p_list)
+        self._write_log(f"Grid search space: {total_combinations} combinations.", INFO)
+
         param_combinations = self._generate_param_combinations(parameter_grid)
         best_params, search_results = self._run_grid_search(
             param_combinations=param_combinations,
+            total_combinations=total_combinations,
             factor_definition_template=factor_definition_template,
             vt_symbols=vt_symbols,
             factor_json_conf_path=factor_json_conf_path,
@@ -117,8 +124,9 @@ class FactorOptimizer:
             return None, search_results, None
 
         self._write_log(
-            f"Best parameters found: {best_params} with score {search_results['best_score']:.4f}",
-            INFO,
+            f"Best parameters found with score {search_results['best_score']:.4f}",
+            data=best_params,
+            level=INFO,
         )
 
         # 4. Create final factor and evaluate on the test set
@@ -142,6 +150,7 @@ class FactorOptimizer:
     def _run_grid_search(
         self,
         param_combinations: Iterator[dict[str, Any]],
+        total_combinations: int,
         factor_definition_template: FactorTemplate | dict,
         vt_symbols: list[str],
         factor_json_conf_path: str | None,
@@ -155,7 +164,7 @@ class FactorOptimizer:
         search_results = {"params": [], "scores": []}
 
         for i, params in enumerate(param_combinations):
-            self._write_log(f"Evaluating combo {i + 1}, Params:{params}", level=DEBUG)
+            self._write_log(f"Evaluating combo {i + 1}/{total_combinations}", data=params, level=DEBUG)
             score = self._calculate_factor_score(
                 base_factor_definition=factor_definition_template,
                 params_to_set=params,
@@ -252,7 +261,7 @@ class FactorOptimizer:
             score = analyser.long_short_stats.sharpe_ratio
 
         analyser.close()
-        self._write_log(f"Score:{score}, Parameters:{params_to_set}", DEBUG)
+        self._write_log(f"Score:{score}", data=params_to_set, level=DEBUG)
         return score
 
     def _evaluate_on_test_set(
@@ -357,15 +366,12 @@ class FactorOptimizer:
         for combo in itertools.product(*param_values):
             yield dict(zip(param_names, combo, strict=False))
 
-    def _write_log(self, msg: str, level: int = INFO) -> None:
-        contextual_logger = logger.bind(gateway_name=self.engine_name)
-        if level == DEBUG:
-            contextual_logger.debug(msg)
-        elif level == INFO:
-            contextual_logger.info(msg)
-        elif level == WARNING:
-            contextual_logger.warning(msg)
-        elif level == ERROR:
-            contextual_logger.error(msg)
-        else:
-            contextual_logger.info(msg)
+    def _write_log(self, msg: str, data=None, level: int = INFO) -> None:
+        level_map = {
+            DEBUG: logger.debug,
+            INFO: logger.info,
+            WARNING: logger.warning,
+            ERROR: logger.error,
+        }
+        log_func = level_map.get(level, logger.info)
+        log_func(msg, data=data, gateway_name=self.engine_name)
