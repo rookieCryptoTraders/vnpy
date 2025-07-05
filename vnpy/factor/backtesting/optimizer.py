@@ -10,7 +10,7 @@ from typing import Any
 from collections.abc import Iterator
 
 import polars as pl
-
+from bayes_opt import BayesianOptimization
 
 from loguru import logger
 
@@ -130,6 +130,106 @@ class FactorOptimizer:
         )
 
         # 4. Create final factor and evaluate on the test set
+        self._write_log("Running final analysis on the out-of-sample test set.", INFO)
+        final_factor = self._create_final_factor(
+            factor_definition_template, best_params
+        )
+
+        report_path = self._evaluate_on_test_set(
+            final_factor=final_factor,
+            test_data=test_data,
+            vt_symbols=vt_symbols,
+            factor_json_conf_path=factor_json_conf_path,
+            num_quantiles=num_quantiles,
+            long_short_percentile=long_short_percentile,
+            report_filename_prefix=report_filename_prefix,
+        )
+
+        return best_params, search_results, report_path
+
+    def optimize_factor_bayes(
+        self,
+        factor_definition_template: FactorTemplate | dict,
+        parameter_bounds: dict[str, tuple[float, float]],
+        start_datetime: datetime,
+        end_datetime: datetime,
+        vt_symbols: list[str],
+        data_interval: Interval,
+        factor_json_conf_path: str | None = None,
+        test_size_ratio: float = 0.3,
+        num_quantiles: int = 5,
+        long_short_percentile: float = 0.5,
+        report_filename_prefix: str = "optimized_factor_bayes",
+        n_iter: int = 25,
+        init_points: int = 5,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, Path | None]:
+        """
+        Performs Bayesian optimization and evaluates the best factor on test data.
+        """
+        self._write_log("Starting factor parameter optimization with Bayesian method.", INFO)
+
+        if not self.backtest_engine._load_bar_data_engine(
+            start_datetime, end_datetime, data_interval, vt_symbols
+        ):
+            self._write_log("Failed to load data, aborting optimization.", ERROR)
+            return None, None, None
+
+        try:
+            train_data, test_data = self._split_data(test_size_ratio)
+            train_rows = train_data["close"].height
+            test_rows = test_data["close"].height
+            self._write_log(
+                f"Data split into {train_rows} train rows and {test_rows} test rows.",
+                level=DEBUG,
+            )
+        except ValueError as e:
+            self._write_log(f"Error splitting data: {e}", ERROR)
+            return None, None, None
+
+        def black_box_function(**params):
+            # Convert float params to int if they are integers
+            for p_name, p_value in params.items():
+                if p_value == int(p_value):
+                    params[p_name] = int(p_value)
+
+            return self._calculate_factor_score(
+                base_factor_definition=factor_definition_template,
+                params_to_set=params,
+                vt_symbols=vt_symbols,
+                factor_json_conf_path=factor_json_conf_path,
+                data_to_use=train_data,
+                num_quantiles=num_quantiles,
+                long_short_percentile=long_short_percentile,
+            )
+
+        optimizer = BayesianOptimization(
+            f=black_box_function,
+            pbounds=parameter_bounds,
+            random_state=1,
+        )
+
+        optimizer.maximize(
+            init_points=init_points,
+            n_iter=n_iter,
+        )
+
+        best_params = optimizer.max["params"]
+        # Convert float params to int if they are integers
+        for p_name, p_value in best_params.items():
+            if p_value == int(p_value):
+                best_params[p_name] = int(p_value)
+
+        search_results = {
+            "best_score": optimizer.max["target"],
+            "all_results": optimizer.res
+        }
+
+        self._write_log(
+            f"Best parameters found with score {search_results['best_score']:.4f}",
+            data=best_params,
+            level=INFO,
+        )
+
         self._write_log("Running final analysis on the out-of-sample test set.", INFO)
         final_factor = self._create_final_factor(
             factor_definition_template, best_params
