@@ -31,6 +31,7 @@ EVENT_FACTOR = "eFactor."
 EVENT_FACTOR_CALCULATE = "eFactorCalculate"
 EVENT_FACTOR_FILLING = "eFactorFilling"  # factor data is filled into the database
 EVENT_FACTOR_BAR_UPDATE = "eFactorBarUpdate"
+EVENT_HISTORY_DATA_REQUEST = "eHistoryDataRequest"
 
 # EVENT_FACTORMAKER_LOG = "eFactorMakerLog"   # tell the LogEngine to log the message
 EVENT_FACTORMAKER = "eFactorMaker"

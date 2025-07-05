@@ -39,6 +39,7 @@ from vnpy.trader.event import (
     EVENT_TICK,
     EVENT_FACTOR_FILLING,
     EVENT_FACTOR_BAR_UPDATE,
+    EVENT_HISTORY_DATA_REQUEST,
 )
 from vnpy.trader.object import BarData, LogData
 
@@ -261,6 +262,25 @@ class FactorEngine(BaseEngine):
         self.write_log(
             "Initializing memory structures...", level=INFO
         )  # Changed DEBUG to INFO
+
+        # If vt_symbols are not yet defined, collect them from all factors and request data
+        if not self.vt_symbols:
+            all_factor_symbols = set()
+            for factor in self.flattened_factors.values():
+                if hasattr(factor, 'vt_symbols') and factor.vt_symbols:
+                    all_factor_symbols.update(factor.vt_symbols)
+
+            if all_factor_symbols:
+                self.vt_symbols = sorted(list(all_factor_symbols))
+                self.write_log(f"Collected {len(self.vt_symbols)} symbols from factors. Requesting history data.", level=INFO)
+
+                # Dispatch event to request historical bar data
+                # The data provider should listen to this and send back EVENT_FACTOR_BAR_UPDATE
+                request_event = Event(EVENT_HISTORY_DATA_REQUEST, {"symbols": self.vt_symbols})
+                self.event_engine.put(request_event)
+            else:
+                self.write_log("No vt_symbols defined in factors and no symbols loaded from main_engine.", level=WARNING)
+
         # 1. Initialize memory_bar (OHLCV)
         # Use a consistent schema for bar data DataFrames
         bar_data_schema = {"datetime": pl.Datetime(time_unit="us")}  # Datetime column
