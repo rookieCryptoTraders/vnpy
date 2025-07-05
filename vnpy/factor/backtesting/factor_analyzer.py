@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from logging import INFO, DEBUG, WARNING, ERROR
 from pathlib import Path
 import re
@@ -33,6 +33,37 @@ def safe_filename(name: str) -> str:
     return re.sub(r"[^\w\.\-@]", "_", name)
 
 
+def get_annualization_factor(datetimes: pl.Series) -> float:
+    """
+    Calculates the annualization factor based on the median time difference
+    in a datetime series.
+    """
+    if datetimes.len() < 2:
+        return 252.0  # Default to daily if not enough data
+
+    # Calculate the median difference in seconds
+    median_delta_seconds = datetimes.diff().dt.total_seconds().median()
+
+    if median_delta_seconds is None:
+        return 252.0  # Default
+
+    # Compare to one day in seconds
+    one_day_seconds = timedelta(days=1).total_seconds()
+
+    # Estimate periods per day
+    if median_delta_seconds > 0:
+        periods_per_day = one_day_seconds / median_delta_seconds
+    else:
+        return 252.0  # Default if no time difference
+
+    # For intraday, it's total periods in a year.
+    if periods_per_day < 2:  # Daily or longer
+        return 252.0
+    else:  # Hourly, minutely, etc.
+        # Using 365 days for intraday frequencies
+        return 365.0 * periods_per_day
+
+
 # --- Data Structures for Configuration and Results ---
 
 
@@ -42,7 +73,7 @@ class AnalysisConfig:
 
     num_quantiles: int = 5
     long_short_percentile: float = 0.3
-    annualization_factor: int = 24*365  # Assumes hours data
+    annualization_factor: float = 24*365  # Assumes hours data, will be auto-detected
     risk_free_rate: float = 0.0
 
 
@@ -555,6 +586,13 @@ class FactorAnalyser:
         # Update config with parameters from this specific run
         self.config.num_quantiles = num_quantiles
         self.config.long_short_percentile = long_short_percentile
+        
+        # Auto-detect annualization factor from the data
+        if not factor_data_df.is_empty():
+            self.config.annualization_factor = get_annualization_factor(
+                factor_data_df[self.factor_datetime_col]
+            )
+            self._write_log(f"Auto-detected annualization factor: {self.config.annualization_factor}", level=DEBUG)
 
         # --- 1. Data Validation and Preparation ---
         if factor_data_df.is_empty() or market_close_prices_df.is_empty():

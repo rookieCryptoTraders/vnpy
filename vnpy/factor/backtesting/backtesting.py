@@ -403,19 +403,25 @@ class BacktestEngine:
         calculator: FactorCalculator,
         target_factor_instance: FactorTemplate,
         flattened_factors: dict[str, FactorTemplate],
-        vt_symbols_for_run: list[str],  # Pass the current run's symbols
+        vt_symbols_for_run: list[str],
+        data_to_use: dict[str, pl.DataFrame],
     ) -> pl.DataFrame | None:
-        """Uses the calculator to compute factor values using its loaded data."""
+        """Uses the calculator to compute factor values on the given data."""
         self._write_log("Starting factor computation...", level=INFO)
+
+        if "close" not in data_to_use or data_to_use["close"].is_empty():
+            self._write_log("No data provided for computation.", level=WARNING)
+            return None
+
+        num_rows = data_to_use["close"].height
 
         factor_df = calculator.compute_factor_values(
             target_factor_instance_input=target_factor_instance,
             flattened_factors_input=flattened_factors,
-            memory_bar_input=self.memory_bar,  # Pass orchestrator's loaded data
-            num_data_rows_input=self.num_data_rows,
+            memory_bar_input=data_to_use,
+            num_data_rows_input=num_rows,
             vt_symbols_for_run=vt_symbols_for_run,
         )
-        # calculator.close() # Calculator can be closed after all computations if it were long-lived
         return factor_df
 
     def _run_factor_analysis(
@@ -467,14 +473,32 @@ class BacktestEngine:
         data_interval: Interval = Interval.MINUTE,
         # Analysis parameters
         num_quantiles: int = 5,
-        returns_look_ahead_period: int = 1,
-        long_percentile_threshold: float = 0.7,
-        short_percentile_threshold: float = 0.3,
+        long_short_percentile: float = 0.5,
         report_filename_prefix: str = "factor_analysis_report",
     ) -> Path | None:
         """
         Runs a complete single factor backtest by coordinating FactorCalculator and FactorAnalyser.
         """
+        # Step 1: Load Data
+        if not self._load_bar_data_engine(
+            start_datetime, end_datetime, data_interval, vt_symbols_for_factor
+        ):
+            self._write_log("Data loading failed. Aborting backtest.", level=ERROR)
+            return None
+        self._write_log("Data loading complete.", level=INFO)
+
+        # Step 2: Initialize Factor
+        target_factor_instance, flattened_factors = self._init_and_flatten_factor(
+            factor_definition=factor_definition,
+            vt_symbols_for_factor=vt_symbols_for_factor,
+            factor_json_conf_path=factor_json_conf_path,
+        )
+
+        if not target_factor_instance or not flattened_factors:
+            self._write_log(
+                "Factor initialization failed. Aborting backtest.", level=ERROR
+            )
+            return None
         self._write_log(
             f"Running single factor backtest for {target_factor_instance.factor_key}",
             level=INFO,
@@ -487,7 +511,8 @@ class BacktestEngine:
             calculator=calculator,
             target_factor_instance=target_factor_instance,
             flattened_factors=flattened_factors,
-            vt_symbols_for_run=vt_symbols_for_factor,  # Use the symbols for this specific run
+            vt_symbols_for_run=vt_symbols_for_factor,
+            data_to_use=self.memory_bar,
         )
         calculator.close()  # Close calculator after computation is done
 
@@ -563,6 +588,162 @@ class BacktestEngine:
             self._write_log("Analysis and reporting failed.", level=WARNING)
 
         return report_path
+
+    def run_train_test_backtest(
+        self,
+        factor_definition: FactorTemplate | dict | str,
+        start_datetime: datetime,
+        end_datetime: datetime,
+        vt_symbols_for_factor: list[str],
+        factor_json_conf_path: str | None = None,
+        data_interval: Interval = Interval.MINUTE,
+        test_size_ratio: float = 0.3,
+        num_quantiles: int = 5,
+        long_short_percentile: float = 0.5,
+        report_filename_prefix: str = "factor_analysis_report",
+    ) -> tuple[Path | None, Path | None]:
+        """
+        Runs a backtest with separate training and testing sets.
+
+        It loads the full data, splits it, calculates the factor on each subset,
+        and generates separate analysis reports for both training and testing periods.
+
+        Args:
+            factor_definition: The factor to be backtested.
+            start_datetime: The start date for the entire data period.
+            end_datetime: The end date for the entire data period.
+            vt_symbols_for_factor: List of symbols for the backtest.
+            factor_json_conf_path: Path to factor configuration JSON.
+            data_interval: The interval of the historical data.
+            test_size_ratio: The proportion of data to use for the test set.
+            num_quantiles: Number of quantiles for factor analysis.
+            long_short_percentile: Percentile for long/short portfolio construction.
+            report_filename_prefix: Prefix for the report filenames.
+
+        Returns:
+            A tuple containing the paths to the training report and the testing report.
+        """
+        # 1. Load all necessary data
+        if not self._load_bar_data_engine(
+            start_datetime, end_datetime, data_interval, vt_symbols_for_factor
+        ):
+            self._write_log("Data loading failed, aborting backtest.", level=ERROR)
+            return None, None
+
+        # 2. Split data into training and testing sets
+        try:
+            train_data, test_data = self._split_data(test_size_ratio)
+            train_rows = train_data["close"].height
+            test_rows = test_data["close"].height
+            self._write_log(
+                f"Data split into {train_rows} train rows and {test_rows} test rows.",
+                level=INFO,
+            )
+        except ValueError as e:
+            self._write_log(f"Error splitting data: {e}", level=ERROR)
+            return None, None
+
+        # 3. Initialize the factor
+        target_factor, flattened_factors = self._init_and_flatten_factor(
+            factor_definition=factor_definition,
+            vt_symbols_for_factor=vt_symbols_for_factor,
+            factor_json_conf_path=factor_json_conf_path,
+        )
+        if not target_factor or not flattened_factors:
+            self._write_log("Factor initialization failed.", level=ERROR)
+            return None, None
+
+        # 4. Process Training Data
+        self._write_log("Processing training data...", level=INFO)
+        train_report = self._process_data_subset(
+            target_factor,
+            flattened_factors,
+            train_data,
+            vt_symbols_for_factor,
+            num_quantiles,
+            long_short_percentile,
+            f"{report_filename_prefix}_train",
+        )
+
+        # 5. Process Testing Data
+        self._write_log("Processing testing data...", level=INFO)
+        test_report = self._process_data_subset(
+            target_factor,
+            flattened_factors,
+            test_data,
+            vt_symbols_for_factor,
+            num_quantiles,
+            long_short_percentile,
+            f"{report_filename_prefix}_test",
+        )
+
+        return train_report, test_report
+
+    def _process_data_subset(
+        self,
+        target_factor: FactorTemplate,
+        flattened_factors: dict[str, FactorTemplate],
+        data_subset: dict[str, pl.DataFrame],
+        vt_symbols: list[str],
+        num_quantiles: int,
+        long_short_percentile: float,
+        report_prefix: str,
+    ) -> Path | None:
+        """
+        A helper function to run factor computation and analysis on a subset of data.
+        """
+        if data_subset["close"].is_empty():
+            self._write_log(f"Data subset for '{report_prefix}' is empty.", WARNING)
+            return None
+
+        calculator = self._create_calculator()
+        factor_df = self._run_factor_computation(
+            calculator, target_factor, flattened_factors, vt_symbols, data_subset
+        )
+        calculator.close()
+
+        if factor_df is None or factor_df.is_empty():
+            self._write_log(f"Factor calculation failed for '{report_prefix}'.", WARNING)
+            return None
+
+        start_dt = data_subset["close"][self.factor_datetime_col].min()
+        end_dt = data_subset["close"][self.factor_datetime_col].max()
+
+        report_path = self._run_factor_analysis(
+            factor_df=factor_df,
+            market_close_prices_df=data_subset["close"],
+            target_factor_instance=target_factor,
+            analysis_start_dt=start_dt,
+            analysis_end_dt=end_dt,
+            num_quantiles=num_quantiles,
+            long_short_percentile=long_short_percentile,
+            report_filename_prefix=report_prefix,
+        )
+        return report_path
+
+    def _split_data(
+        self, test_size_ratio: float
+    ) -> tuple[dict[str, pl.DataFrame], dict[str, pl.DataFrame]]:
+        """Splits the loaded data into training and testing sets."""
+        if not self.memory_bar or "close" not in self.memory_bar or self.memory_bar["close"].is_empty():
+            raise ValueError("Memory bar is not loaded or 'close' data is missing.")
+
+        total_rows = self.num_data_rows
+        if total_rows == 0:
+            raise ValueError("No data available to split.")
+
+        train_size = int(total_rows * (1 - test_size_ratio))
+        train_data, test_data = {}, {}
+
+        for key, df in self.memory_bar.items():
+            if isinstance(df, pl.DataFrame) and not df.is_empty():
+                train_data[key] = df.slice(0, train_size)
+                test_data[key] = df.slice(train_size)
+            else:
+                train_data[key] = df
+                test_data[key] = df
+
+        return train_data, test_data
 
     def _write_log(self, msg: str, level: int = INFO) -> None:
         level_map = {
