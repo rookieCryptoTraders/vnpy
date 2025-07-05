@@ -6,7 +6,7 @@ import itertools
 from datetime import datetime
 from logging import DEBUG, ERROR, INFO, WARNING
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from collections.abc import Iterator
 
 import polars as pl
@@ -29,13 +29,12 @@ DEFAULT_DATETIME_COL = "datetime"
 
 class FactorOptimizer:
     """
-    Optimizes factor parameters using a grid search methodology.
+    Optimizes factor parameters using grid search or Bayesian optimization.
 
-    This optimizer loads a full dataset using a BacktestEngine, splits it
-    into training and testing sets, and then iterates through a grid of
-    parameters to find the combination that yields the highest score (Sharpe Ratio)
-    on the training data. The best parameters are then validated on the
-    out-of-sample test data.
+    This optimizer loads a full dataset, splits it into training and testing
+    sets, and then uses the specified optimization method to find the best
+    parameter combination on the training data. The best parameters are then
+    validated on the out-of-sample test data.
     """
 
     engine_name = APP_NAME
@@ -45,52 +44,21 @@ class FactorOptimizer:
         self.backtest_engine = backtest_engine
         self._write_log(f"{self.engine_name} initialized.", level=INFO)
 
-    def optimize_factor(
+    def _prepare_data(
         self,
-        factor_definition_template: FactorTemplate | dict,
-        parameter_grid: dict[str, list[Any]],
         start_datetime: datetime,
         end_datetime: datetime,
-        vt_symbols: list[str],
         data_interval: Interval,
-        factor_json_conf_path: str | None = None,
-        test_size_ratio: float = 0.3,
-        num_quantiles: int = 5,
-        long_short_percentile: float = 0.5,
-        report_filename_prefix: str = "optimized_factor",
-    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, Path | None]:
-        """
-        Performs grid search optimization and evaluates the best factor on test data.
-
-        Args:
-            factor_definition_template: A template of the factor to be optimized.
-            parameter_grid: A dictionary defining the parameter space for the grid search.
-            start_datetime: The start date for data loading.
-            end_datetime: The end date for data loading.
-            vt_symbols: A list of symbols to include in the backtest.
-            data_interval: The interval of the historical data.
-            factor_json_conf_path: Path to factor configuration JSON (if needed).
-            test_size_ratio: The proportion of data to hold out for testing.
-            num_quantiles: Number of quantiles for factor analysis.
-            long_short_percentile: Percentile for long/short portfolio construction.
-            report_filename_prefix: The prefix for the final report file.
-
-        Returns:
-            A tuple containing:
-            - The best parameter combination found.
-            - A dictionary of all tested parameters and their scores.
-            - The path to the final report generated from the test set.
-        """
-        self._write_log("Starting factor parameter optimization.", INFO)
-
-        # 1. Load all necessary data via the BacktestEngine
+        vt_symbols: list[str],
+        test_size_ratio: float,
+    ) -> tuple[dict[str, pl.DataFrame] | None, dict[str, pl.DataFrame] | None]:
+        """Loads and splits data into training and testing sets."""
         if not self.backtest_engine._load_bar_data_engine(
             start_datetime, end_datetime, data_interval, vt_symbols
         ):
             self._write_log("Failed to load data, aborting optimization.", ERROR)
-            return None, None, None
+            return None, None
 
-        # 2. Split data into training and testing sets
         try:
             train_data, test_data = self._split_data(test_size_ratio)
             train_rows = train_data["close"].height
@@ -99,31 +67,38 @@ class FactorOptimizer:
                 f"Data split into {train_rows} train rows and {test_rows} test rows.",
                 level=DEBUG,
             )
+            return train_data, test_data
         except ValueError as e:
             self._write_log(f"Error splitting data: {e}", ERROR)
+            return None, None
+
+    def _run_optimization(
+        self,
+        factor_definition_template: FactorTemplate | dict,
+        start_datetime: datetime,
+        end_datetime: datetime,
+        vt_symbols: list[str],
+        data_interval: Interval,
+        factor_json_conf_path: str | None,
+        test_size_ratio: float,
+        num_quantiles: int,
+        long_short_percentile: float,
+        report_filename_prefix: str,
+        optimizer_callable: Callable[
+            [dict[str, pl.DataFrame]], tuple[dict | None, dict | None]
+        ],
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, Path | None]:
+        """Orchestrates the optimization workflow."""
+        train_data, test_data = self._prepare_data(
+            start_datetime, end_datetime, data_interval, vt_symbols, test_size_ratio
+        )
+        if not train_data or not test_data:
             return None, None, None
 
-        # 3. Grid search on training data
-        total_combinations = 1
-        if parameter_grid:
-            for p_list in parameter_grid.values():
-                total_combinations *= len(p_list)
-        self._write_log(f"Grid search space: {total_combinations} combinations.", INFO)
-
-        param_combinations = self._generate_param_combinations(parameter_grid)
-        best_params, search_results = self._run_grid_search(
-            param_combinations=param_combinations,
-            total_combinations=total_combinations,
-            factor_definition_template=factor_definition_template,
-            vt_symbols=vt_symbols,
-            factor_json_conf_path=factor_json_conf_path,
-            train_data=train_data,
-            num_quantiles=num_quantiles,
-            long_short_percentile=long_short_percentile,
-        )
+        best_params, search_results = optimizer_callable(train_data)
 
         if not best_params:
-            self._write_log("Grid search failed to find any valid parameters.", ERROR)
+            self._write_log("Optimization failed to find any valid parameters.", ERROR)
             return None, search_results, None
 
         self._write_log(
@@ -132,7 +107,6 @@ class FactorOptimizer:
             level=INFO,
         )
 
-        # 4. Create final factor and evaluate on the test set
         self._write_log("Running final analysis on the out-of-sample test set.", INFO)
         final_factor = self._create_final_factor(
             factor_definition_template, best_params
@@ -149,6 +123,60 @@ class FactorOptimizer:
         )
 
         return best_params, search_results, report_path
+
+    def optimize_factor(
+        self,
+        factor_definition_template: FactorTemplate | dict,
+        parameter_grid: dict[str, list[Any]],
+        start_datetime: datetime,
+        end_datetime: datetime,
+        vt_symbols: list[str],
+        data_interval: Interval,
+        factor_json_conf_path: str | None = None,
+        test_size_ratio: float = 0.3,
+        num_quantiles: int = 5,
+        long_short_percentile: float = 0.5,
+        report_filename_prefix: str = "optimized_factor",
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, Path | None]:
+        """Performs grid search optimization."""
+        self._write_log("Starting factor parameter optimization with Grid Search.", INFO)
+
+        def grid_search_optimizer(
+            train_data: dict[str, pl.DataFrame]
+        ) -> tuple[dict | None, dict | None]:
+            total_combinations = 1
+            if parameter_grid:
+                for p_list in parameter_grid.values():
+                    total_combinations *= len(p_list)
+            self._write_log(
+                f"Grid search space: {total_combinations} combinations.", INFO
+            )
+
+            param_combinations = self._generate_param_combinations(parameter_grid)
+            return self._run_grid_search(
+                param_combinations=param_combinations,
+                total_combinations=total_combinations,
+                factor_definition_template=factor_definition_template,
+                vt_symbols=vt_symbols,
+                factor_json_conf_path=factor_json_conf_path,
+                train_data=train_data,
+                num_quantiles=num_quantiles,
+                long_short_percentile=long_short_percentile,
+            )
+
+        return self._run_optimization(
+            factor_definition_template=factor_definition_template,
+            start_datetime=start_datetime,
+            end_datetime=end_datetime,
+            vt_symbols=vt_symbols,
+            data_interval=data_interval,
+            factor_json_conf_path=factor_json_conf_path,
+            test_size_ratio=test_size_ratio,
+            num_quantiles=num_quantiles,
+            long_short_percentile=long_short_percentile,
+            report_filename_prefix=report_filename_prefix,
+            optimizer_callable=grid_search_optimizer,
+        )
 
     def optimize_factor_bayes(
         self,
@@ -166,89 +194,55 @@ class FactorOptimizer:
         n_iter: int = 25,
         init_points: int = 5,
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, Path | None]:
-        """
-        Performs Bayesian optimization and evaluates the best factor on test data.
-        """
+        """Performs Bayesian optimization."""
         self._write_log("Starting factor parameter optimization with Bayesian method.", INFO)
 
-        if not self.backtest_engine._load_bar_data_engine(
-            start_datetime, end_datetime, data_interval, vt_symbols
-        ):
-            self._write_log("Failed to load data, aborting optimization.", ERROR)
-            return None, None, None
+        def bayesian_optimizer(
+            train_data: dict[str, pl.DataFrame]
+        ) -> tuple[dict | None, dict | None]:
+            def black_box_function(**params):
+                for p_name, p_value in params.items():
+                    if p_value == int(p_value):
+                        params[p_name] = int(p_value)
+                return self._calculate_factor_score(
+                    base_factor_definition=factor_definition_template,
+                    params_to_set=params,
+                    vt_symbols=vt_symbols,
+                    factor_json_conf_path=factor_json_conf_path,
+                    data_to_use=train_data,
+                    num_quantiles=num_quantiles,
+                    long_short_percentile=long_short_percentile,
+                )
 
-        try:
-            train_data, test_data = self._split_data(test_size_ratio)
-            train_rows = train_data["close"].height
-            test_rows = test_data["close"].height
-            self._write_log(
-                f"Data split into {train_rows} train rows and {test_rows} test rows.",
-                level=DEBUG,
+            optimizer = BayesianOptimization(
+                f=black_box_function, pbounds=parameter_bounds, random_state=1
             )
-        except ValueError as e:
-            self._write_log(f"Error splitting data: {e}", ERROR)
-            return None, None, None
+            optimizer.maximize(init_points=init_points, n_iter=n_iter)
 
-        def black_box_function(**params):
-            # Convert float params to int if they are integers
-            for p_name, p_value in params.items():
+            best_params = optimizer.max["params"]
+            for p_name, p_value in best_params.items():
                 if p_value == int(p_value):
-                    params[p_name] = int(p_value)
+                    best_params[p_name] = int(p_value)
 
-            return self._calculate_factor_score(
-                base_factor_definition=factor_definition_template,
-                params_to_set=params,
-                vt_symbols=vt_symbols,
-                factor_json_conf_path=factor_json_conf_path,
-                data_to_use=train_data,
-                num_quantiles=num_quantiles,
-                long_short_percentile=long_short_percentile,
-            )
+            search_results = {
+                "best_score": optimizer.max["target"],
+                "all_results": optimizer.res,
+            }
+            return best_params, search_results
 
-        optimizer = BayesianOptimization(
-            f=black_box_function,
-            pbounds=parameter_bounds,
-            random_state=1,
-        )
-
-        optimizer.maximize(
-            init_points=init_points,
-            n_iter=n_iter,
-        )
-
-        best_params = optimizer.max["params"]
-        # Convert float params to int if they are integers
-        for p_name, p_value in best_params.items():
-            if p_value == int(p_value):
-                best_params[p_name] = int(p_value)
-
-        search_results = {
-            "best_score": optimizer.max["target"],
-            "all_results": optimizer.res
-        }
-
-        self._write_log(
-            f"Best parameters found with score {search_results['best_score']:.4f}",
-            data=best_params,
-            level=INFO,
-        )
-
-        self._write_log("Running final analysis on the out-of-sample test set.", INFO)
-        final_factor = self._create_final_factor(
-            factor_definition_template, best_params
-        )
-
-        report_path = self._evaluate_on_test_set(
-            final_factor=final_factor,
-            test_data=test_data,
+        return self._run_optimization(
+            factor_definition_template=factor_definition_template,
+            start_datetime=start_datetime,
+            end_datetime=end_datetime,
             vt_symbols=vt_symbols,
+            data_interval=data_interval,
             factor_json_conf_path=factor_json_conf_path,
+            test_size_ratio=test_size_ratio,
             num_quantiles=num_quantiles,
             long_short_percentile=long_short_percentile,
             report_filename_prefix=report_filename_prefix,
+            optimizer_callable=bayesian_optimizer,
         )
-
-        return best_params, search_results, report_path
 
     def _run_grid_search(
         self,
@@ -267,7 +261,11 @@ class FactorOptimizer:
         search_results = {"params": [], "scores": []}
 
         for i, params in enumerate(param_combinations):
-            self._write_log(f"Evaluating combo {i + 1}/{total_combinations}", data=params, level=DEBUG)
+            self._write_log(
+                f"Evaluating combo {i + 1}/{total_combinations}",
+                data=params,
+                level=DEBUG,
+            )
             score = self._calculate_factor_score(
                 base_factor_definition=factor_definition_template,
                 params_to_set=params,
@@ -300,18 +298,11 @@ class FactorOptimizer:
     ) -> float:
         """
         Calculates the performance score (Sharpe Ratio) for a single set of parameters.
-        This function orchestrates the re-initialization, calculation, and analysis.
         """
-        # 1. Create a working copy and apply current parameters
-        if isinstance(base_factor_definition, FactorTemplate):
-            current_factor_def = copy.deepcopy(base_factor_definition)
-            current_factor_def.set_nested_params_for_optimizer(params_to_set)
-        else:
-            current_factor_def = apply_params_to_definition_dict(
-                copy.deepcopy(base_factor_definition), params_to_set
-            )
+        current_factor_def = self._create_final_factor(
+            base_factor_definition, params_to_set
+        )
 
-        # 2. Re-initialize the factor and flatten its dependency graph
         target_factor, flat_factors = self.backtest_engine._init_and_flatten_factor(
             factor_definition=current_factor_def,
             vt_symbols_for_factor=vt_symbols,
@@ -323,7 +314,6 @@ class FactorOptimizer:
             )
             return -float("inf")
 
-        # 3. Calculate factor values using the provided data (i.e., training data)
         calculator = self.backtest_engine._create_calculator()
         factor_df = calculator.compute_factor_values(
             target_factor_instance_input=target_factor,
@@ -340,20 +330,17 @@ class FactorOptimizer:
             )
             return -float("inf")
 
-        # 4. Analyze results and extract Sharpe Ratio
         analyser = FactorAnalyser()
         analyser.config.num_quantiles = num_quantiles
         analyser.config.long_short_percentile = long_short_percentile
 
-        # Auto-detect annualization factor from the training data
-        if not factor_df.is_empty():
-            analyser.annualization_factor = get_annualization_factor(
-                factor_df[DEFAULT_DATETIME_COL]
-            )
-
         market_close = data_to_use["close"]
         symbol_returns_df = analyser._prepare_symbol_returns(market_close, vt_symbols)
         analysis_data = analyser._prepare_analysis_data(factor_df, symbol_returns_df)
+
+        analyser.annualization_factor = get_annualization_factor(
+            datetimes=market_close[DEFAULT_DATETIME_COL]
+        )
 
         if analysis_data is None or analysis_data.is_empty():
             self._write_log(f"Analysis data empty for params: {params_to_set}", WARNING)
@@ -384,7 +371,6 @@ class FactorOptimizer:
         report_filename_prefix: str,
     ) -> Path | None:
         """Runs a full analysis on the hold-out test set and generates a report."""
-        # 1. Initialize and flatten the final factor definition
         target_factor, flat_factors = self.backtest_engine._init_and_flatten_factor(
             factor_definition=final_factor,
             vt_symbols_for_factor=vt_symbols,
@@ -396,7 +382,6 @@ class FactorOptimizer:
             )
             return None
 
-        # 2. Calculate factor values on the test data
         calculator = self.backtest_engine._create_calculator()
         factor_df = calculator.compute_factor_values(
             target_factor_instance_input=target_factor,
@@ -410,10 +395,14 @@ class FactorOptimizer:
             self._write_log("Factor calculation failed on the test set.", ERROR)
             return None
 
-        # 3. Run full analysis and reporting
         analyser = FactorAnalyser(
             output_data_dir_for_reports=self.backtest_engine.output_data_dir_for_analyser_reports,
         )
+
+        analyser.annualization_factor = get_annualization_factor(
+            datetimes=test_data["close"][DEFAULT_DATETIME_COL]
+        )
+
         start_dt = test_data["close"][DEFAULT_DATETIME_COL].min()
         end_dt = test_data["close"][DEFAULT_DATETIME_COL].max()
 
@@ -459,7 +448,7 @@ class FactorOptimizer:
             if isinstance(df, pl.DataFrame) and not df.is_empty():
                 train_data[key] = df.slice(0, train_size)
                 test_data[key] = df.slice(train_size)
-            else:  # Copy non-DataFrame items (like metadata) as is
+            else:
                 train_data[key] = df
                 test_data[key] = df
 

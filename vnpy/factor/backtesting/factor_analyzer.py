@@ -73,7 +73,7 @@ class AnalysisConfig:
 
     num_quantiles: int = 5
     long_short_percentile: float = 0.3
-    risk_free_rate: float = 0.0
+    risk_free_rate: float = 0.05
 
 
 @dataclass
