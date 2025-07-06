@@ -1,29 +1,26 @@
-import importlib
 from datetime import datetime, timedelta
-from logging import INFO, DEBUG, WARNING, ERROR
-from typing import Any
+from logging import DEBUG, ERROR, INFO, WARNING
 from pathlib import Path
+
+import numpy as np  # For placeholder data loading
 
 # Third-party imports
 import pandas as pd
 import polars as pl
-import numpy as np  # For placeholder data loading
 
 # VnTrader imports
-from vnpy.factor.backtesting.factor_analyzer import FactorAnalyser, get_annualization_factor
+from vnpy.factor.backtesting.factor_analyzer import (
+    FactorAnalyser,
+    get_annualization_factor,
+)
 from vnpy.factor.backtesting.factor_calculator import FactorCalculator
 from vnpy.factor.backtesting.factor_initializer import FactorInitializer
+from vnpy.factor.base import (
+    APP_NAME,
+)  # FactorMode might be needed for init_factors
 from vnpy.factor.template import FactorTemplate
 from vnpy.trader.constant import Interval
 from vnpy.trader.setting import SETTINGS
-from vnpy.factor.base import (
-    APP_NAME,
-    FactorMode,
-)  # FactorMode might be needed for init_factors
-from vnpy.factor.utils.factor_utils import (
-    init_factors,
-    load_factor_setting,
-)  # For initializing factors
 
 # Assuming FactorCalculator and FactorAnalyser are in sibling files
 # (e.g., factor_calculator.py, factor_analyser.py) in the same directory.
@@ -275,7 +272,9 @@ class BacktestEngine:
             output_data_dir_for_reports=self.output_data_dir_for_analyser_reports
         )
 
-        analyser.annualization_factor = get_annualization_factor(market_close_prices_df[DEFAULT_DATETIME_COL])
+        analyser.annualization_factor = get_annualization_factor(
+            market_close_prices_df[DEFAULT_DATETIME_COL]
+        )
 
         self._write_log(
             f"annualization_factor set to {analyser.annualization_factor} based on market close prices.",
@@ -392,13 +391,13 @@ class BacktestEngine:
             try:
                 min_dt_val = factor_df.select(pl.col(DEFAULT_DATETIME_COL).min()).item()
                 max_dt_val = factor_df.select(pl.col(DEFAULT_DATETIME_COL).max()).item()
-                if isinstance(min_dt_val, datetime|pd.Timestamp):
+                if isinstance(min_dt_val, datetime | pd.Timestamp):
                     actual_analysis_start_dt = (
                         pd.to_datetime(min_dt_val).to_pydatetime()
                         if isinstance(min_dt_val, pd.Timestamp)
                         else min_dt_val
                     )
-                if isinstance(max_dt_val, datetime|pd.Timestamp):
+                if isinstance(max_dt_val, datetime | pd.Timestamp):
                     actual_analysis_end_dt = (
                         pd.to_datetime(max_dt_val).to_pydatetime()
                         if isinstance(max_dt_val, pd.Timestamp)
@@ -544,7 +543,9 @@ class BacktestEngine:
         calculator.close()
 
         if factor_df is None or factor_df.is_empty():
-            self._write_log(f"Factor calculation failed for '{report_prefix}'.", WARNING)
+            self._write_log(
+                f"Factor calculation failed for '{report_prefix}'.", WARNING
+            )
             return None
 
         start_dt = data_subset["close"][self.factor_datetime_col].min()
@@ -566,7 +567,11 @@ class BacktestEngine:
         self, test_size_ratio: float
     ) -> tuple[dict[str, pl.DataFrame], dict[str, pl.DataFrame]]:
         """Splits the loaded data into training and testing sets."""
-        if not self.memory_bar or "close" not in self.memory_bar or self.memory_bar["close"].is_empty():
+        if (
+            not self.memory_bar
+            or "close" not in self.memory_bar
+            or self.memory_bar["close"].is_empty()
+        ):
             raise ValueError("Memory bar is not loaded or 'close' data is missing.")
 
         total_rows = self.num_data_rows
