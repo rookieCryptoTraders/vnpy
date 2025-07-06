@@ -6,7 +6,8 @@ import itertools
 from datetime import datetime
 from logging import DEBUG, ERROR, INFO, WARNING
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 from collections.abc import Iterator
 
 import polars as pl
