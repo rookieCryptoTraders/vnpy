@@ -13,7 +13,7 @@ from vnpy.trader.constant import Interval
 
 # Add the parent directory of your generated package to the Python path.
 # This ensures that we can import the 'ta_lib' module successfully.
-GENERATED_FACTORS_ROOT = Path(__file__).parent
+GENERATED_FACTORS_ROOT = Path(__file__).parent.parent / "factors"
 if str(GENERATED_FACTORS_ROOT) not in sys.path:
     sys.path.insert(0, str(GENERATED_FACTORS_ROOT))
 

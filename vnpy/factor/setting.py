@@ -27,7 +27,7 @@ if not _SETTINGS_INITIALIZED:
 
     # Default filenames used if not specified in global SETTINGS
     DEFAULT_FACTOR_SETTINGS_FILENAME = "factor_settings.json"
-    DEFAULT_FACTOR_DEFINITIONS_FILENAME = "factor_defination_setting.json"
+    DEFAULT_FACTOR_DEFINITIONS_FILENAME = "factor_definition_setting.json"
 
     # --- MODIFICATION START ---
     # Both settings and definitions files are now treated as filenames only,
