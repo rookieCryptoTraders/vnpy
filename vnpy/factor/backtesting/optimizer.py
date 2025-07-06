@@ -197,16 +197,29 @@ class FactorOptimizer:
         """Performs Bayesian optimization."""
         self._write_log("Starting factor parameter optimization with Bayesian method.", INFO)
 
+        # Auto-detect parameter types (int or float) from bounds
+        param_types = {
+            p_name: "int"
+            if isinstance(bounds[0], int) and isinstance(bounds[1], int)
+            else "float"
+            for p_name, bounds in parameter_bounds.items()
+        }
+
         def bayesian_optimizer(
             train_data: dict[str, pl.DataFrame]
         ) -> tuple[dict | None, dict | None]:
             def black_box_function(**params):
+                # Round and cast parameters to their detected types
+                typed_params = {}
                 for p_name, p_value in params.items():
-                    if p_value == int(p_value):
-                        params[p_name] = int(p_value)
+                    if param_types.get(p_name) == "int":
+                        typed_params[p_name] = int(round(p_value))
+                    else:
+                        typed_params[p_name] = p_value
+
                 return self._calculate_factor_score(
                     base_factor_definition=factor_definition_template,
-                    params_to_set=params,
+                    params_to_set=typed_params,
                     vt_symbols=vt_symbols,
                     factor_json_conf_path=factor_json_conf_path,
                     data_to_use=train_data,
@@ -220,9 +233,10 @@ class FactorOptimizer:
             optimizer.maximize(init_points=init_points, n_iter=n_iter)
 
             best_params = optimizer.max["params"]
+            # Ensure final best parameters are correctly typed
             for p_name, p_value in best_params.items():
-                if p_value == int(p_value):
-                    best_params[p_name] = int(p_value)
+                if param_types.get(p_name) == "int":
+                    best_params[p_name] = int(round(p_value))
 
             search_results = {
                 "best_score": optimizer.max["target"],
