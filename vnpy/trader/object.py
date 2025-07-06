@@ -259,7 +259,7 @@ class LogData(BaseData):
 
     def __post_init__(self) -> None:
         """"""
-        self.msg = f"[{self.gateway_name+']:':<17} {self.msg}"
+        self.msg = f"[{self.gateway_name + ']:':<17} {self.msg}"
         self.time: Datetime = Datetime.now()
 
 
@@ -277,19 +277,19 @@ class ContractData(BaseData):
     pricetick: float = field(default=None, init=True)
     interval: Interval = field(default=None, init=True)  # hyf
 
-    min_volume: float = 1           # minimum trading volume of the contract
-    max_volume: float | None = None      # maximum order volume
-    stop_supported: bool = False    # whether server supports stop order
-    net_position: bool = False      # whether gateway uses net position volume
-    history_data: bool = False      # whether gateway provides bar history data
+    min_volume: float = 1  # minimum trading volume of the contract
+    max_volume: float | None = None  # maximum order volume
+    stop_supported: bool = False  # whether server supports stop order
+    net_position: bool = False  # whether gateway uses net position volume
+    history_data: bool = False  # whether gateway provides bar history data
 
     option_strike: float | None = None
-    option_underlying: str | None = None     # vt_symbol of underlying contract
+    option_underlying: str | None = None  # vt_symbol of underlying contract
     option_type: OptionType | None = None
     option_listed: Datetime | None = None
     option_expiry: Datetime | None = None
     option_portfolio: str | None = None
-    option_index: str | None = None          # for identifying options with same strike price
+    option_index: str | None = None  # for identifying options with same strike price
 
     def __post_init__(self) -> None:
         """"""

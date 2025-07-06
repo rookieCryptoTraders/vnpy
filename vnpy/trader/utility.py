@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo, available_timezones  # noqa
 
 from vnpy.trader.object import BarData, TickData, FactorData
 from vnpy.trader.constant import Exchange, Interval
+from vnpy.config import WORK_DIR
 
 if sys.version_info >= (3, 9):
     from zoneinfo import ZoneInfo, available_timezones  # noqa
@@ -82,7 +83,8 @@ def _get_trader_dir(temp_name: str) -> tuple[Path, Path]:
     """
     Get path where trader is running in.
     """
-    cwd: Path = Path.cwd()
+    # cwd: Path = Path.cwd()  # hyf 20250706
+    cwd: Path = WORK_DIR  # hyf 20250706
     temp_path: Path = cwd.joinpath(temp_name)
 
     # If .vntrader folder exists in current working directory,

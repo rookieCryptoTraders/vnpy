@@ -1,10 +1,14 @@
 import os
 import shutil
+from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
-from typing import Optional
+from typing import Self, Union
 
 import polars as pl
+
+from vnpy.trader.constant import Interval
+from vnpy.trader.database import TimeRange
 
 # To make the FactorMemory class aware of the context it's running in,
 # we import FactorMode. A fallback is provided for standalone use or testing.
@@ -12,6 +16,7 @@ try:
     from vnpy.factor.base import FactorMode
 except ImportError:
     from enum import Enum
+
 
     class FactorMode(Enum):
         LIVE = "live"
@@ -36,12 +41,12 @@ class FactorMemory:
     """
 
     def __init__(
-        self,
-        file_path: str | Path,
-        max_rows: int,
-        schema: dict[str, pl.DataType],
-        datetime_col: str = "datetime",
-        mode: FactorMode = FactorMode.LIVE,
+            self,
+            file_path: str | Path,
+            max_rows: int,
+            schema: dict[str, pl.DataType],
+            datetime_col: str = "datetime",
+            mode: FactorMode = FactorMode.LIVE,
     ):
         """
         Initializes the FactorMemory instance.
@@ -99,7 +104,7 @@ class FactorMemory:
 
                 if should_initialize:
                     empty_df = pl.DataFrame(data={}, schema=self.schema)
-                    self._save_data(empty_df) # Use atomic save for initialization
+                    self._save_data(empty_df)  # Use atomic save for initialization
                     print(
                         f"Initialized or re-initialized factor memory file: {self.file_path}"
                     )
@@ -109,7 +114,7 @@ class FactorMemory:
                 ) from e_init
 
     def _conform_df_to_schema(
-        self, df: pl.DataFrame, df_name: str = "input"
+            self, df: pl.DataFrame, df_name: str = "input"
     ) -> pl.DataFrame:
         """
         Conforms an input DataFrame to the instance's schema, ensuring
@@ -133,14 +138,16 @@ class FactorMemory:
                             expected_dtype, strict=False
                         )
                     except Exception as e:
-                        errors.append(f"Could not cast column '{col_name}' from {current_dtype} to {expected_dtype}: {e}")
+                        errors.append(
+                            f"Could not cast column '{col_name}' from {current_dtype} to {expected_dtype}: {e}")
                         conformed_cols[col_name] = pl.Series([None] * len(df), dtype=expected_dtype, name=col_name)
             else:
                 errors.append(f"Column '{col_name}' missing in {df_name} DataFrame. Adding as nulls.")
                 conformed_cols[col_name] = pl.Series([None] * len(df), dtype=expected_dtype, name=col_name)
 
         if errors:
-            print(f"Warning: Schema conformance issues for {self.file_path} with {df_name} DataFrame:\n" + "\n".join(errors))
+            print(f"Warning: Schema conformance issues for {self.file_path} with {df_name} DataFrame:\n" + "\n".join(
+                errors))
 
         return pl.DataFrame(conformed_cols).select(list(self.schema.keys()))
 
@@ -201,15 +208,19 @@ class FactorMemory:
                 raise ValueError(f"Fatal schema error in new_data for {self.file_path}: {e}") from e
 
             current_data = self._load_data()
-            combined_data = pl.concat([current_data, conformed_new_data], how="vertical_relaxed") if not current_data.is_empty() else conformed_new_data
+            combined_data = pl.concat([current_data, conformed_new_data],
+                                      how="vertical_relaxed") if not current_data.is_empty() else conformed_new_data
 
             if self.datetime_col not in combined_data.columns:
                 raise ValueError(f"Internal error: Datetime column '{self.datetime_col}' not found in combined data.")
 
             if combined_data.get_column(self.datetime_col).null_count() != len(combined_data):
-                combined_data = combined_data.sort(by=self.datetime_col).unique(subset=[self.datetime_col], keep="last", maintain_order=False).sort(by=self.datetime_col)
+                combined_data = combined_data.sort(by=self.datetime_col).unique(subset=[self.datetime_col], keep="last",
+                                                                                maintain_order=False).sort(
+                    by=self.datetime_col)
             else:
-                print(f"Warning: Datetime column '{self.datetime_col}' in {self.file_path} is all nulls. Cannot de-duplicate by time.")
+                print(
+                    f"Warning: Datetime column '{self.datetime_col}' in {self.file_path} is all nulls. Cannot de-duplicate by time.")
 
             if len(combined_data) > self.max_rows:
                 combined_data = combined_data.tail(self.max_rows)
@@ -294,3 +305,56 @@ class FactorMemory:
             f"FactorMemory(file_path='{self.file_path}', max_rows={self.max_rows}, "
             f"mode={self.mode.name}, schema_cols={list(self.schema.keys())})"
         )
+
+
+@dataclass
+class MemoryData(pl.DataFrame):
+    """
+    MemoryData is a subclass of polars DataFrame that is used to store
+    data in memory for fast access and manipulation.
+    It is used for storing tick data, bar data, and factor data.
+    """
+
+    _max_rows: int = field(default=None, init=False)
+    interval: Interval = field(default=None, init=False)
+    time_range: TimeRange = field(default=None, init=False)
+    datetime_col: str = field(default="datetime", init=False)
+
+    def __init__(self,
+                 data=None,
+                 schema=None,
+                 schema_overrides=None,
+                 strict=True,
+                 orient=None,
+                 infer_schema_length=100,
+                 nan_to_null=False,
+                 max_rows: int = None,
+                 interval: Interval = None,
+                 datetime_col: str = "datetime",
+                 **kwargs):
+        super().__init__(data=data,
+                         schema=schema,
+                         schema_overrides=schema_overrides,
+                         strict=strict,
+                         orient=orient,
+                         infer_schema_length=infer_schema_length,
+                         nan_to_null=nan_to_null)
+
+        self._max_rows = max_rows if max_rows is not None else 1000  # Default max rows to 1k
+        self.interval = interval
+        self.datetime_col = datetime_col
+        self.sort(by=self.datetime_col, descending=False, nulls_last=False)
+        self.time_range: TimeRange = TimeRange(start=self[0, "datetime"],
+                                               end=self[-1, "datetime"],
+                                               interval=interval)  # Used to store the time range of the data
+
+    def vstack_truncated(self, other: Union[Self, pl.DataFrame]) -> None:
+        """
+        Append data to the MemoryData DataFrame.
+        If the number of rows exceeds max_rows, it will drop the oldest rows.
+        """
+        assert self.time_range.overlaps(TimeRange(start=other[0, "datetime"],
+                                                  end=other[-1, "datetime"], interval=self.interval))
+        self.vstack(other, in_place=True)
+        if self._max_rows and self.height > self._max_rows:
+            self._df = self._df.tail(self._max_rows)

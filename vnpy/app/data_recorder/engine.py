@@ -300,7 +300,7 @@ class RecorderEngine(BaseEngine):
     def _process_bar_data(self, data: BarData, force_save: bool):
         """Helper to process and buffer bar data."""
         with self.lock:
-            self.buffer_bar[data.vt_symbol].append(data)
+            self.buffer_bar[data.vt_symbol].vstack_truncated(data)
             to_remove = []
             for k, v in self.buffer_bar.items():
                 if len(v) >= self.buffer_size or (force_save and v):
@@ -313,7 +313,7 @@ class RecorderEngine(BaseEngine):
         """Helper to process and buffer/save factor data."""
         with self.lock:
             if isinstance(data, FactorData):
-                self.buffer_factor[data.vt_symbol].append(data)
+                self.buffer_factor[data.vt_symbol].vstack_truncated(data)
                 to_remove = []
                 for k, v in self.buffer_factor.items():
                     if len(v) >= self.buffer_size or (force_save and v):

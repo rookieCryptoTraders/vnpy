@@ -1,5 +1,5 @@
 # main_engine.py
-
+from __future__ import annotations
 import logging
 from logging import Logger, INFO
 import smtplib
@@ -10,7 +10,7 @@ from email.message import EmailMessage
 from queue import Empty, Queue
 from threading import Thread
 from itertools import product
-from typing import TypeVar
+from typing import TypeVar,TYPE_CHECKING
 from collections.abc import Callable
 from datetime import datetime as Datetime
 from pathlib import Path
@@ -29,7 +29,6 @@ from .event import (
     EVENT_LOG,
     EVENT_QUOTE
 )
-from .gateway import BaseGateway
 from .object import (
     CancelRequest,
     LogData,
@@ -52,6 +51,9 @@ from .setting import SETTINGS
 from .utility import get_folder_path, TRADER_DIR, virtual
 from .converter import OffsetConverter
 from .logger import DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+if TYPE_CHECKING:
+    from .gateway import BaseGateway
 
 APP_NAME = 'MainEngine'
 
@@ -76,7 +78,7 @@ class MainEngine:
             self.event_engine = EventEngine()
         self.event_engine.start()
 
-        self.gateways: dict[str, BaseGateway] = {}
+        self.gateways: dict[str, "BaseGateway"] = {}
         self.engines: dict[str, BaseEngine] = {}
         self.apps: dict[str, BaseApp] = {}
         self.intervals = [Interval(interval) for interval in SETTINGS.get('gateway.intervals', [])]  # hyf
@@ -97,7 +99,7 @@ class MainEngine:
         self.engines[engine.engine_name] = engine
         return engine
 
-    def add_gateway(self, gateway_class: type[BaseGateway], gateway_name: str = "") -> BaseGateway:
+    def add_gateway(self, gateway_class: type["BaseGateway"], gateway_name: str = "") -> "BaseGateway":
         """
         Add gateway.
         """
@@ -105,7 +107,7 @@ class MainEngine:
         if not gateway_name:
             gateway_name: str = gateway_class.default_name
 
-        gateway: BaseGateway = gateway_class(self.event_engine, gateway_name)
+        gateway: "BaseGateway" = gateway_class(self.event_engine, gateway_name)
         self.gateways[gateway_name] = gateway
 
         # Add gateway supported exchanges into engine
@@ -168,11 +170,11 @@ class MainEngine:
         event: Event = Event(EVENT_LOG, log)
         self.event_engine.put(event)
 
-    def get_gateway(self, gateway_name: str) -> BaseGateway:
+    def get_gateway(self, gateway_name: str) -> "BaseGateway":
         """
         Return gateway object by name.
         """
-        gateway: BaseGateway = self.gateways.get(gateway_name, None)
+        gateway: "BaseGateway" = self.gateways.get(gateway_name, None)
         if not gateway:
             self.write_log(f"Cannot find gateway: {gateway_name}")
         return gateway
@@ -190,7 +192,7 @@ class MainEngine:
         """
         Get default setting dict of a specific gateway.
         """
-        gateway: BaseGateway = self.get_gateway(gateway_name)
+        gateway: "BaseGateway" = self.get_gateway(gateway_name)
         if gateway:
             return gateway.get_default_setting()
         return None
@@ -217,7 +219,7 @@ class MainEngine:
         """
         Start connection of a specific gateway.
         """
-        gateway: BaseGateway = self.get_gateway(gateway_name)
+        gateway: "BaseGateway" = self.get_gateway(gateway_name)
         if gateway:
             gateway.connect(setting)
 
@@ -225,7 +227,7 @@ class MainEngine:
         """
         Subscribe tick data update of a specific gateway.
         """
-        gateway: BaseGateway = self.get_gateway(gateway_name)
+        gateway: "BaseGateway" = self.get_gateway(gateway_name)
         if gateway:
             gateway.subscribe(req)
 
@@ -242,7 +244,7 @@ class MainEngine:
         """
         Send new order request to a specific gateway.
         """
-        gateway: BaseGateway = self.get_gateway(gateway_name)
+        gateway: "BaseGateway" = self.get_gateway(gateway_name)
         if gateway:
             return gateway.send_order(req)
         else:
@@ -252,7 +254,7 @@ class MainEngine:
         """
         Send cancel order request to a specific gateway.
         """
-        gateway: BaseGateway = self.get_gateway(gateway_name)
+        gateway: "BaseGateway" = self.get_gateway(gateway_name)
         if gateway:
             gateway.cancel_order(req)
 
@@ -260,7 +262,7 @@ class MainEngine:
         """
         Send new quote request to a specific gateway.
         """
-        gateway: BaseGateway = self.get_gateway(gateway_name)
+        gateway: "BaseGateway" = self.get_gateway(gateway_name)
         if gateway:
             return gateway.send_quote(req)
         else:
@@ -270,7 +272,7 @@ class MainEngine:
         """
         Send cancel quote request to a specific gateway.
         """
-        gateway: BaseGateway = self.get_gateway(gateway_name)
+        gateway: "BaseGateway" = self.get_gateway(gateway_name)
         if gateway:
             gateway.cancel_quote(req)
 
@@ -278,7 +280,7 @@ class MainEngine:
         """
         Query bar history data from a specific gateway.
         """
-        gateway: BaseGateway = self.get_gateway(gateway_name)
+        gateway: "BaseGateway" = self.get_gateway(gateway_name)
         if gateway:
             return gateway.query_history(req)
         else:

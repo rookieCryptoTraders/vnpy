@@ -1,8 +1,9 @@
+from __future__ import annotations
 import csv
 from collections.abc import Callable
 from datetime import datetime
 from logging import INFO
-from typing import List, Optional, Union
+from typing import List, Optional, Union,TYPE_CHECKING
 from collections import defaultdict
 
 from vnpy.event import Event, EventEngine
@@ -20,6 +21,9 @@ from vnpy.config import match_format_string
 
 from .base import APP_NAME
 
+if TYPE_CHECKING:
+    from vnpy_clickhouse.clickhouse_database import ClickhouseDatabase
+
 
 class DataManagerEngine(BaseEngine):
     """"""
@@ -28,14 +32,15 @@ class DataManagerEngine(BaseEngine):
             self,
             main_engine: MainEngine,
             event_engine: EventEngine,
-            database: BaseDatabase | None = None
+            database: Union[
+            BaseDatabase, ClickhouseDatabase] | None = None
     ) -> None:
         """"""
         super().__init__(main_engine, event_engine, APP_NAME)
 
         # self.database: BaseDatabase = get_database()
         self.database: Union[
-            BaseDatabase] = database  # fixme: database should not affiliated to data_manager. database is event driven
+            BaseDatabase, ClickhouseDatabase] = database  # fixme: database should not affiliated to data_manager. database is event driven
         self.datafeed: BaseDatafeed = get_datafeed()
 
 
@@ -305,7 +310,7 @@ class DataManagerEngine(BaseEngine):
         """
         res = defaultdict(list)
         for overview_key, time_ranges in gap_dict.items():
-            print(f"download_bar_data_gaps Processing overview key: {overview_key}")
+            print(f"download_bar_data_gaps Processing overview key: {overview_key},{time_ranges}")
             info = match_format_string(VTSYMBOL_OVERVIEW, overview_key)
             for time_range in time_ranges:
                 res[overview_key].extend(self.download_bar_data(symbol=info['symbol'],

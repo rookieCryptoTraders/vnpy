@@ -7,6 +7,7 @@ from tzlocal import get_localzone_name
 
 from .utility import load_json
 
+
 _VT_SETTING_LOADED = False
 
 

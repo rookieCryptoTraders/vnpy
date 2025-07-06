@@ -82,7 +82,7 @@ def run_child():
         gap_data_dict = data_manager_engine.download_bar_data_gaps(gap_dict)
 
         for overview_key, data_list in gap_data_dict.items():
-            print(f"main Processing overview key: {overview_key}, data count: {len(data_list)}")
+            # print(f"main Processing overview key: {overview_key}, data count: {len(data_list)}")
             info = match_format_string(VTSYMBOL_OVERVIEW, overview_key)
             for d in data_list:
                 bar = BarData(

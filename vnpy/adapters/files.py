@@ -268,7 +268,7 @@ class ConverterCSV2Clickhouse(BaseConverter):
             # Process each OHLCV type and store the ticker's data
             for key in ohlcv_data.keys():
                 # Combine datetime with the specific column (renamed to the ticker)
-                ohlcv_data[key].append(
+                ohlcv_data[key].vstack_truncated(
                     pl.concat([datetime_col, df.select([key]).rename({key: ticker})], how="horizontal")
                 )
 
