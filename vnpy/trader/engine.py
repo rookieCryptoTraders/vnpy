@@ -10,7 +10,7 @@ from email.message import EmailMessage
 from queue import Empty, Queue
 from threading import Thread
 from itertools import product
-from typing import TypeVar,TYPE_CHECKING
+from typing import TypeVar, TYPE_CHECKING
 from collections.abc import Callable
 from datetime import datetime as Datetime
 from pathlib import Path
@@ -51,6 +51,7 @@ from .setting import SETTINGS
 from .utility import get_folder_path, TRADER_DIR, virtual
 from .converter import OffsetConverter
 from .logger import DEBUG, INFO, WARNING, ERROR, CRITICAL
+from ..utils.datetimes import DatetimeUtils, TimeFreq
 
 if TYPE_CHECKING:
     from .gateway import BaseGateway
@@ -81,7 +82,8 @@ class MainEngine:
         self.gateways: dict[str, "BaseGateway"] = {}
         self.engines: dict[str, BaseEngine] = {}
         self.apps: dict[str, BaseApp] = {}
-        self.intervals = [Interval(interval) for interval in SETTINGS.get('gateway.intervals', [])]  # hyf
+        self.intervals: list[Interval] = [Interval(interval) for interval in SETTINGS.get('gateway.intervals', [])]
+        self.minimum_freq: TimeFreq = min([DatetimeUtils.interval2freq(intvl) for intvl in self.intervals])
         self.symbols = SETTINGS.get("gateway.symbols", [])  # hyf
         self.exchanges: list[Exchange] = [Exchange(ex) for ex in SETTINGS.get("gateway.exchanges", [])]  # hyf
         self.vt_symbols: list[str] = [f"{s}.{e.value}" for s, e in product(self.symbols, self.exchanges)]
@@ -341,6 +343,14 @@ class BaseEngine(ABC):
         """
         source = source if source else self.engine_name
         self.main_engine.write_log(msg=msg, source=source, level=level)
+
+    @virtual
+    def register_event(self) -> None:
+        pass
+
+    @virtual
+    def put_event(self,event):
+        self.event_engine.put(event=event)
 
 
 class LogEngine(BaseEngine):

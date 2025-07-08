@@ -25,6 +25,9 @@ EVENT_RECORDER_UPDATE = "eRecorderUpdate"  # signal to indicate the recorder has
 EVENT_RECORDER_RECORD = "eRecorderRecord"  # signal to trigger the recorder to record data
 EVENT_RECORDER_EXCEPTION = "eRecorderException"  # signal to indicate the recorder has an exception
 
+EVENT_DATAMANAGER_LOAD_BAR = "eDataManagerLoadBar"  # DataManager load bar data from the database
+EVENT_DATAMANAGER_LOAD_FACTOR = "eDataManagerLoadFactor"  # DataManager load factor data from the database
+
 # factor maker. fixme: annotations are not specified
 EVENT_BAR_FACTOR = "eBarFactor."
 EVENT_FACTOR = "eFactor."

@@ -1,24 +1,25 @@
 from __future__ import annotations
+
 import csv
+from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime
 from logging import INFO
-from typing import List, Optional, Union,TYPE_CHECKING
-from collections import defaultdict
+from typing import List, Optional, Union, TYPE_CHECKING, Literal
 
+from vnpy.config import match_format_string
 from vnpy.event import Event, EventEngine
 from vnpy.trader.constant import Interval, Exchange
-from vnpy.trader.database import BaseDatabase, get_database, BarOverview, DB_TZ, TV_BaseOverview, TickOverview, \
-    FactorOverview, TimeRange, DataRange, VTSYMBOL_OVERVIEW
+from vnpy.trader.database import BaseDatabase, BarOverview, DB_TZ, TV_BaseOverview, TickOverview, \
+    FactorOverview, TimeRange, VTSYMBOL_OVERVIEW
 from vnpy.trader.datafeed import BaseDatafeed, get_datafeed
 from vnpy.trader.engine import BaseEngine, MainEngine
-from vnpy.trader.event import EVENT_LOG
-from vnpy.trader.object import BarData, LogData
-from vnpy.trader.object import TickData, ContractData, HistoryRequest
+from vnpy.trader.event import EVENT_LOG,EVENT_BAR_FILLING
+from vnpy.trader.event import EVENT_DATAMANAGER_LOAD_BAR, EVENT_DATAMANAGER_LOAD_FACTOR
+from vnpy.trader.object import ContractData
+from vnpy.trader.object import HistoryRequest, BarData, TickData, FactorData
+from vnpy.trader.object import LogData
 from vnpy.trader.utility import ZoneInfo
-from vnpy.trader.object import HistoryRequest, SubscribeRequest, BarData, TickData
-from vnpy.config import match_format_string
-
 from .base import APP_NAME
 
 if TYPE_CHECKING:
@@ -33,7 +34,7 @@ class DataManagerEngine(BaseEngine):
             main_engine: MainEngine,
             event_engine: EventEngine,
             database: Union[
-            BaseDatabase, ClickhouseDatabase] | None = None
+                          BaseDatabase, ClickhouseDatabase] | None = None
     ) -> None:
         """"""
         super().__init__(main_engine, event_engine, APP_NAME)
@@ -43,15 +44,28 @@ class DataManagerEngine(BaseEngine):
             BaseDatabase, ClickhouseDatabase] = database  # fixme: database should not affiliated to data_manager. database is event driven
         self.datafeed: BaseDatafeed = get_datafeed()
 
+    def register_event(self) -> None:
+        """
+        Register event handlers.
+        """
+        self.event_engine.register(EVENT_DATAMANAGER_LOAD_BAR, self.on_load_bar_data)
+        self.event_engine.register(EVENT_DATAMANAGER_LOAD_FACTOR, self.on_load_factor_data)
+
+    def on_load_bar_data(self, event: Event) -> None:
+        # todo
+        pass
+
+    def on_load_factor_data(self, event: Event) -> None:
+        # todo
+        pass
 
     def on_bar_filling(self, bar: BarData) -> None:
         """
         Bar event push.
         Bar event of a specific vt_symbol is also pushed.
         """
-        self.on_event(EVENT_BAR_FILLING, bar)
-        specific_event_type = EVENT_BAR_FILLING + bar.vt_symbol
-        self.on_event(specific_event_type, bar)
+        self.put_event(Event(EVENT_BAR_FILLING, bar))
+        self.put_event(Event(EVENT_BAR_FILLING + bar.vt_symbol, bar))
 
     def import_data_from_csv(
             self,
@@ -197,6 +211,27 @@ class DataManagerEngine(BaseEngine):
 
         return bars
 
+    def load_factor_data(
+            self,
+            symbol: str,
+            exchange: Exchange,
+            interval: Interval,
+            factor_list: Union[list[str], str],
+            start: datetime,
+            end: datetime,
+            ret: Literal["rows", "numpy", "pandas", "polars"] = "polars",
+    ) -> list[FactorData]:
+        factors: List[FactorData] = self.database.load_factor_data(
+            symbol=symbol,
+            exchange=exchange,
+            interval=interval,
+            factor_list=factor_list,
+            start=start,
+            end=end,
+            ret=ret
+        )
+        return factors
+
     def delete_bar_data(
             self,
             symbol: str,
@@ -314,11 +349,11 @@ class DataManagerEngine(BaseEngine):
             info = match_format_string(VTSYMBOL_OVERVIEW, overview_key)
             for time_range in time_ranges:
                 res[overview_key].extend(self.download_bar_data(symbol=info['symbol'],
-                                                  exchange=Exchange(info['exchange']),
-                                                  interval=Interval(info['interval']),
-                                                  start=time_range.start,
-                                                  end=time_range.end,
-                                                  save=False))
+                                                                exchange=Exchange(info['exchange']),
+                                                                interval=Interval(info['interval']),
+                                                                start=time_range.start,
+                                                                end=time_range.end,
+                                                                save=False))
         return res
 
     def write_log(self, msg: str, level=INFO) -> None:

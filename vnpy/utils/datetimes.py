@@ -5,25 +5,30 @@
 # @Email    : 939778128@qq.com
 # @Description: Date and time utility functions.
 
-from enum import Enum
 import datetime
-import polars as pl
 import os
+from dataclasses import dataclass
+from enum import Enum
+from functools import total_ordering
+
+import polars as pl
 
 # Assuming vnpy is installed in the environment.
 # If Interval does not have TICK, the functions will still work safely.
 from vnpy.trader.constant import Interval
 
+from enum import Enum
+from functools import total_ordering
 
+@total_ordering
 class TimeFreq(Enum):
     """
     Represents time frequency. The minimum frequency is milliseconds (ms).
     The enum values are indicative and used for calculations. Note that 'months'
     and 'years' are approximations and do not have a fixed duration in milliseconds.
     """
-
     unknown = 0
-    us = 0.001  # microseconds
+    # us = 0.001  # microseconds
     ms = 1  # milliseconds
     s = ms * 1000  # seconds
     m = s * 60  # minutes
@@ -32,6 +37,72 @@ class TimeFreq(Enum):
     W = d * 7  # weeks
     M = d * 30  # months (approximated as 30 days)
     Y = d * 365  # years (approximated as 365 days)
+
+    def faster_freq(self):
+        members = sorted(self.__class__, key=lambda x: x.value)
+        idx = members.index(self)
+        if idx == 0:
+            print(f"{self.name} has no faster member")
+            return self
+        return TimeFreq(members[idx - 1])
+
+    def slower_freq(self):
+        members = sorted(self.__class__, key=lambda x: x.value)
+        idx = members.index(self)
+        if idx == len(members) - 1:
+            print(f"{self.name} has no slower member")
+            return self
+        return TimeFreq(members[idx + 1])
+
+    # Arithmetic
+    def __add__(self, other):
+        return self.value + self._val(other)
+
+    def __sub__(self, other):
+        return self.value - self._val(other)
+
+    def __mul__(self, other):
+        return self.value * self._val(other)
+
+    def __truediv__(self, other):
+        return self.value / self._val(other)
+
+    def __floordiv__(self, other):
+        return self.value // self._val(other)
+
+    def __mod__(self, other):
+        return self.value % self._val(other)
+
+    def __divmod__(self, other):
+        return divmod(self.value, self._val(other))
+
+    # Comparison
+    def __eq__(self, other):
+        return self.value == self._val(other)
+
+    def __lt__(self, other):
+        return self.value < self._val(other)
+
+    def __le__(self, other):
+        return self.value <= self._val(other)
+
+    def __ge__(self, other):
+        return self.value >= self._val(other)
+
+    def __gt__(self, other):
+        return self.value > self._val(other)
+
+    # helper
+    def _val(self, other):
+        if isinstance(other, TimeFreq):
+            return other.value
+        elif isinstance(other, (int, float)):
+            return other
+        else:
+            raise TypeError(f"Unsupported operand type: {type(other)}")
+
+
+
 
 
 class DatetimeUtils:
@@ -89,7 +160,7 @@ class DatetimeUtils:
 
     @classmethod
     def normalize_unix(
-        cls, unix: int | float, to_precision: str = "s"
+            cls, unix: int | float, to_precision: str = "s"
     ) -> float | int:
         """
         Converts a Unix timestamp to the specified precision (seconds or milliseconds).
@@ -155,7 +226,7 @@ class DatetimeUtils:
 
     @classmethod
     def str2freq(
-        cls, time_str: str, ret_unit: TimeFreq | str
+            cls, time_str: str, ret_unit: TimeFreq | str
     ) -> tuple[int, TimeFreq]:
         """
         Converts a time string into an integer multiple of a specified return unit.
@@ -187,7 +258,7 @@ class DatetimeUtils:
 
     @classmethod
     def freq2str(
-        cls, freq: TimeFreq, ret_unit: TimeFreq | str | None = TimeFreq.m
+            cls, freq: TimeFreq, ret_unit: TimeFreq | str | None = TimeFreq.m
     ) -> str:
         """
         Converts a TimeFreq enum member into a string relative to a return unit.
@@ -221,7 +292,7 @@ class DatetimeUtils:
 
     @classmethod
     def unix2datetime(
-        cls, unix: int | float, tz: str = "UTC"
+            cls, unix: int | float, tz: str = "UTC"
     ) -> datetime.datetime:
         """
         Converts a Unix timestamp to a naive datetime object relative to a specified timezone.
@@ -265,7 +336,7 @@ class DatetimeUtils:
 
     @classmethod
     def unix2datetime_polars(
-        cls, df: pl.DataFrame, col: str = "datetime", tz: str = "UTC"
+            cls, df: pl.DataFrame, col: str = "datetime", tz: str = "UTC"
     ) -> pl.DataFrame:
         """
         Converts a Polars DataFrame column of Unix timestamps to a timezone-aware datetime column.
@@ -314,7 +385,7 @@ class DatetimeUtils:
 
     @classmethod
     def datetime2unix_polars(
-        cls, df: pl.DataFrame, col: str, time_unit: str = "ms", tz: str = "UTC"
+            cls, df: pl.DataFrame, col: str, time_unit: str = "ms", tz: str = "UTC"
     ) -> pl.DataFrame:
         """
         Converts a naive datetime column in a Polars DataFrame to a Unix timestamp.
@@ -343,7 +414,7 @@ class DatetimeUtils:
 
     @classmethod
     def interval2unix(
-        cls, interval: Interval, ret_unit: TimeFreq | str = TimeFreq.ms
+            cls, interval: Interval, ret_unit: TimeFreq | str = TimeFreq.ms
     ) -> int | float:
         """
         Get the time duration in specified units for a given vnpy Interval.
