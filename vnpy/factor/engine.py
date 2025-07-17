@@ -16,6 +16,7 @@ from typing import Mapping, Optional, TypeVar, Union
 import dask
 import dask.diagnostics
 import numpy as np
+import pandas as pd
 import polars as pl  # Ensure polars is imported
 import psutil
 from dask.delayed import Delayed
@@ -43,6 +44,7 @@ from vnpy.trader.event import (
     EVENT_FACTOR_FILLING,
     EVENT_FACTOR_BAR_UPDATE,
     EVENT_HISTORY_DATA_REQUEST,
+EVENT_DATAMANAGER_LOAD_BAR_RESPONSE,EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE
 )
 from vnpy.trader.object import BarData, LogData
 
@@ -85,12 +87,12 @@ class FactorEngine(BaseEngine):
         self.factor_datetime_col = FACTOR_MODULE_SETTINGS.get(
             "datetime_col", "datetime"
         )
-        self.max_memory_length_bar = FACTOR_MODULE_SETTINGS.get(
+        self.max_memory_length_bar = int(FACTOR_MODULE_SETTINGS.get(
             "max_memory_length_bar", 60
-        ) * FACTOR_MODULE_SETTINGS.get("loosen_ratio", 1.2)
-        self.max_memory_length_factor = FACTOR_MODULE_SETTINGS.get(
+        ) * FACTOR_MODULE_SETTINGS.get("loosen_ratio", 1.2))
+        self.max_memory_length_factor = int(FACTOR_MODULE_SETTINGS.get(
             "max_memory_length_factor", 60
-        ) * FACTOR_MODULE_SETTINGS.get("loosen_ratio", 1.2)
+        ) * FACTOR_MODULE_SETTINGS.get("loosen_ratio", 1.2))
         self.error_threshold = FACTOR_MODULE_SETTINGS.get("error_threshold", 3)
 
         try:
@@ -183,7 +185,9 @@ class FactorEngine(BaseEngine):
         self.event_engine.register(EVENT_TICK, self.process_tick_event)
         self.event_engine.register(EVENT_BAR, self.process_bar_event)
         self.event_engine.register(EVENT_FACTOR_FILLING, self.process_factor_filling_event)
-        self.event_engine.register(EVENT_FACTOR_BAR_UPDATE, self.process_factor_bar_update_event)
+        self.event_engine.register(EVENT_DATAMANAGER_LOAD_BAR_RESPONSE, self.process_load_bar_response_event)
+        # self.event_engine.register(EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE,)
+
 
     def init_all_factors(self, flat_factors: bool = True) -> None:
         """Loads factor settings, initializes FactorTemplate instances, and determines max lookback periods."""
@@ -264,8 +268,8 @@ class FactorEngine(BaseEngine):
                 if isinstance(fm_max_rows, int) and fm_max_rows > 0:
                     all_factor_mem_max_rows.append(fm_max_rows * freq_multiplier)
 
-        self.max_memory_length_bar = max(all_bar_lookbacks)
-        self.max_memory_length_factor = max(all_factor_mem_max_rows)
+        self.max_memory_length_bar = int(max(all_bar_lookbacks))
+        self.max_memory_length_factor = int(max(all_factor_mem_max_rows))
         print(
             f"Max memory length for bar data: {self.max_memory_length_bar}, for factor data: {self.max_memory_length_factor}")
         # Note: max_memory_length_factor will be used as default if a factor doesn't specify its own.
@@ -456,7 +460,7 @@ class FactorEngine(BaseEngine):
                 level=DEBUG,
             )
         elif not fake and self.vt_symbols:
-            # retrieve data from database with event
+            # TODO: retrieve data from database with event
             pass
 
     def complete_factor_tree(
@@ -1202,7 +1206,7 @@ class FactorEngine(BaseEngine):
             # Clean up and reset state
             self.consecutive_errors = 0
 
-    def process_factor_bar_update_event(self, event: Event) -> None:
+    def process_load_bar_response_event(self, event: Event) -> None:
         """
         Processes the event to query bar data from the database and initialize it into memory.
         """
@@ -1213,7 +1217,7 @@ class FactorEngine(BaseEngine):
 
         self.process_database_bar_data(bars_data)
 
-    def process_database_bar_data(self, bars: list[BarData]) -> None:
+    def process_database_bar_data(self, bars: Union[list[BarData],pl.DataFrame,pd.DataFrame]) -> None:
         """
         Initializes the bar memory with historical data queried from the database.
         """
@@ -1221,17 +1225,29 @@ class FactorEngine(BaseEngine):
             self.write_log("No bars to process for database initialization.", level=INFO)
             return
 
+        # data conversion
         # Convert list of BarData objects to a dictionary of lists for polars DataFrame
-        data_dict = {
-            "datetime": [bar.datetime for bar in bars],
-            "open": [bar.open_price for bar in bars],
-            "high": [bar.high_price for bar in bars],
-            "low": [bar.low_price for bar in bars],
-            "close": [bar.close_price for bar in bars],
-            "volume": [bar.volume for bar in bars],
-            "vt_symbol": [bar.vt_symbol for bar in bars]
-        }
-        df = pl.DataFrame(data_dict)
+        if isinstance(bars, list) and isinstance(bars[0],BarData):
+            data_dict = {
+                "datetime": [bar.datetime for bar in bars],
+                "open": [bar.open_price for bar in bars],
+                "high": [bar.high_price for bar in bars],
+                "low": [bar.low_price for bar in bars],
+                "close": [bar.close_price for bar in bars],
+                "volume": [bar.volume for bar in bars],
+                "vt_symbol": [bar.vt_symbol for bar in bars]
+            }
+            df = pl.DataFrame(data_dict)
+        elif isinstance(bars, pd.DataFrame):
+            df = pl.from_pandas(bars)
+        elif isinstance(bars, pl.DataFrame):
+            df = bars
+        else:
+            self.write_log(
+                "Invalid bar data format. Expected list of BarData, pandas DataFrame, or polars DataFrame.",
+                level=ERROR
+            )
+            return
 
         # Transform DataFrame to wide format with symbols as columns
         for col in ["open", "high", "low", "close", "volume"]:

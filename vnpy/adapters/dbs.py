@@ -942,7 +942,7 @@ class BinanceKlineSchema(BaseSchema):
         self.number_of_trades: str = ""
         self.taker_buy_base_asset_volume: str = ""
         self.taker_buy_quote_asset_volume: str = ""
-
+        additional_columns={} if not additional_columns else additional_columns
         default_schema_type.update(additional_columns)
         self.assign_schema_type(schema_type=default_schema_type)
 
@@ -956,7 +956,7 @@ class BinanceFactorSchema(BaseSchema):
         super().__init__()
         self.datetime: str = ""
         self.ticker: str = ""
-
+        additional_columns={} if not additional_columns else additional_columns
         default_schema_type.update(additional_columns)
         self.assign_schema_type(schema_type=default_schema_type)
 

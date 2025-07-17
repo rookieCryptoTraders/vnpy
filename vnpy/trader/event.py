@@ -25,14 +25,16 @@ EVENT_RECORDER_UPDATE = "eRecorderUpdate"  # signal to indicate the recorder has
 EVENT_RECORDER_RECORD = "eRecorderRecord"  # signal to trigger the recorder to record data
 EVENT_RECORDER_EXCEPTION = "eRecorderException"  # signal to indicate the recorder has an exception
 
-EVENT_DATAMANAGER_LOAD_BAR = "eDataManagerLoadBar"  # DataManager load bar data from the database
-EVENT_DATAMANAGER_LOAD_FACTOR = "eDataManagerLoadFactor"  # DataManager load factor data from the database
+EVENT_DATAMANAGER_LOAD_BAR = "eDataManagerLoadBar"  # DataManager simply load bar data from the database
+EVENT_DATAMANAGER_LOAD_FACTOR = "eDataManagerLoadFactor"  # DataManager simply load factor data from the database
+EVENT_DATAMANAGER_LOAD_BAR_RESPONSE = "eDataManagerLoadBarResponse"  # data receiver app receives responded bar data
+EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE = "eDataManagerLoadFactorResponse"  # data receiver app receives responded factor data
 
-# factor maker. fixme: annotations are not specified
+# factor maker. fixme: comments are not specified
 EVENT_BAR_FACTOR = "eBarFactor."
 EVENT_FACTOR = "eFactor."
 EVENT_FACTOR_CALCULATE = "eFactorCalculate"
-EVENT_FACTOR_FILLING = "eFactorFilling"  # factor data is filled into the database
+EVENT_FACTOR_FILLING = "eFactorFilling"  # factor data is filled into the database, this will trigger the data recorder to record the factor data and factor maker calucation
 EVENT_FACTOR_BAR_UPDATE = "eFactorBarUpdate"
 EVENT_HISTORY_DATA_REQUEST = "eHistoryDataRequest"
 

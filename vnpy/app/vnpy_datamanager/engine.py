@@ -14,8 +14,8 @@ from vnpy.trader.database import BaseDatabase, BarOverview, DB_TZ, TV_BaseOvervi
     FactorOverview, TimeRange, VTSYMBOL_OVERVIEW
 from vnpy.trader.datafeed import BaseDatafeed, get_datafeed
 from vnpy.trader.engine import BaseEngine, MainEngine
-from vnpy.trader.event import EVENT_LOG,EVENT_BAR_FILLING
-from vnpy.trader.event import EVENT_DATAMANAGER_LOAD_BAR, EVENT_DATAMANAGER_LOAD_FACTOR
+from vnpy.trader.event import EVENT_LOG, EVENT_BAR_FILLING
+from vnpy.trader.event import EVENT_DATAMANAGER_LOAD_BAR, EVENT_DATAMANAGER_LOAD_FACTOR,EVENT_DATAMANAGER_LOAD_BAR_RESPONSE,EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE
 from vnpy.trader.object import ContractData
 from vnpy.trader.object import HistoryRequest, BarData, TickData, FactorData
 from vnpy.trader.object import LogData
@@ -52,12 +52,20 @@ class DataManagerEngine(BaseEngine):
         self.event_engine.register(EVENT_DATAMANAGER_LOAD_FACTOR, self.on_load_factor_data)
 
     def on_load_bar_data(self, event: Event) -> None:
-        # todo
-        pass
+        event_type, data = event.type, event.data
+        res=self.database.load_bar_data(
+            **data
+        )
+        self.put_event(Event(EVENT_DATAMANAGER_LOAD_BAR_RESPONSE, res))
+        self.write_log(f"Successfully processed {EVENT_DATAMANAGER_LOAD_BAR}, response count: {len(res)}")
 
     def on_load_factor_data(self, event: Event) -> None:
-        # todo
-        pass
+        event_type, data = event.type, event.data
+        res = self.database.load_factor_data(
+            **data)
+        self.put_event(Event(EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE, res))
+        self.write_log(f"Successfully processed {EVENT_DATAMANAGER_LOAD_FACTOR}, response count: {len(res)}")
+
 
     def on_bar_filling(self, bar: BarData) -> None:
         """
@@ -362,6 +370,12 @@ class DataManagerEngine(BaseEngine):
         """
         log: LogData = LogData(msg=msg, gateway_name=APP_NAME, level=level)
         event = Event(type=EVENT_LOG, data=log)
+        self.put_event(event)
+
+    def put_event(self,event):
+        """
+        Put event to the event engine.
+        """
         self.event_engine.put(event)
 
     def close(self) -> None:

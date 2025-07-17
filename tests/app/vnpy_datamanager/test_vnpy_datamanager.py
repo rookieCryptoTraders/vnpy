@@ -2,6 +2,8 @@ from datetime import datetime
 from unittest import TestCase
 from unittest.mock import patch, MagicMock
 
+import pandas as pd
+
 from vnpy.app.vnpy_datamanager import DataManagerEngine
 from vnpy.event import EventEngine
 from vnpy.trader.constant import Exchange
@@ -15,16 +17,17 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict
+from vnpy.trader.event import EVENT_DATAMANAGER_LOAD_BAR, EVENT_DATAMANAGER_LOAD_FACTOR
 
 from vnpy.trader.constant import Exchange, Interval
 from vnpy.factor.engine import FactorEngine
 from vnpy.factor import FactorMakerApp
-from vnpy.event import EventEngine
+from vnpy.event import EventEngine, Event
 from vnpy.gateway.mimicgateway.mimicgateway import MimicGateway
 from vnpy.trader.engine import MainEngine
 from vnpy.app.data_recorder import DataRecorderApp
 from vnpy.trader.object import BarData
-from vnpy.app.vnpy_datamanager import DataManagerEngine,DataManagerApp
+from vnpy.app.vnpy_datamanager import DataManagerEngine, DataManagerApp
 
 
 class TestDataManagerEngine(TestCase):
@@ -32,17 +35,6 @@ class TestDataManagerEngine(TestCase):
         event_engine = EventEngine()
         self.main_engine = MainEngine(event_engine)
         self.main_engine.write_log("Main engine created successfully")
-
-        gateway_settings = {
-            "symbols": [],
-            "simulation_interval_seconds": 4.0,  # Bars every second for each symbol
-            "open_price_range_min": 100,
-            "open_price_range_max": 105,
-            "price_change_range_min": -1,
-            "price_change_range_max": 1,
-            "volume_range_min": 50,
-            "volume_range_max": 200
-        }
 
         # start factor engine
         self.factor_maker_engine: FactorEngine = self.main_engine.add_app(FactorMakerApp)
@@ -52,18 +44,15 @@ class TestDataManagerEngine(TestCase):
         # start data recorder
         self.data_recorder_engine = self.main_engine.add_app(DataRecorderApp)
         self.data_recorder_engine.update_schema(database_name=self.data_recorder_engine.database_manager.database_name,
-                                           exchanges=self.main_engine.exchanges,
-                                           intervals=self.main_engine.intervals,
-                                           factor_keys=[key for key in self.factor_maker_engine.flattened_factors.keys()])
+                                                exchanges=self.main_engine.exchanges,
+                                                intervals=self.main_engine.intervals,
+                                                factor_keys=[key for key in
+                                                             self.factor_maker_engine.flattened_factors.keys()])
         self.data_recorder_engine.start()
         self.main_engine.write_log(f"Started [{self.data_recorder_engine.__class__.__name__}]")
 
-        # Start engines after data is backfilled
-        self.factor_maker_engine = self.main_engine.add_app(FactorMakerApp)
-        self.main_engine.write_log(f"Started [{self.factor_maker_engine.__class__.__name__}]")
-
         self.data_manager = DataManagerEngine(self.main_engine, self.main_engine.event_engine)
-        
+
     def test_get_bar_overview(self):
         self.setUp()
         result = self.data_manager.get_bar_overview()
@@ -79,32 +68,30 @@ class TestDataManagerEngine(TestCase):
         result = self.data_manager.get_factor_overview()
         print(result)
 
-    def test_download_bar_data(self):
+    def test_on_load_bar_data(self):
         self.setUp()
-        self.data_recorder_engine.database_manager.overview_handler.get
-        # symbol = "BTCUSDT"
-        # exchange = Exchange.BINANCE
-        # interval = Interval.MINUTE
-        # start = datetime(2023, 7, 20, 12, 0, 0)
-        # end = datetime(2023, 7, 20, 12, 59, 59)
-        # result:list[dict] = self.data_manager.download_bar_data(
-        #     symbol, exchange, interval.value, start, end,save=False
-        # )
-        # print(result)
 
-    def download_bar_data_20250629(self):
+        data = {"symbol": 'btcusdt', "exchange": Exchange('BINANCE'), "interval": Interval.MINUTE,
+                "start": pd.to_datetime('2025-07-05 16:36:00.000'),
+                "end": pd.to_datetime('2025-07-05 16:40:00.000'),
+                "ret": 'polars'}
+        self.main_engine.event_engine.put(event=Event(type=EVENT_DATAMANAGER_LOAD_BAR, data=data))
+        # Simulate a delay to allow the event to be processed
+        sleep(5)
+        print(1)
+
+    def test_on_load_factor_data(self):
         self.setUp()
-        requests = [
-            {
-                "symbol": "BTCUSDT",
+
+        data = {"factor_list": ['factor_1m_emafactor@period_12'],
                 "exchange": Exchange.BINANCE,
-                "interval": Interval.MINUTE.value,
-                "start": datetime(2023, 7, 20, 12, 0, 0),
-                "end": datetime(2023, 7, 20, 12, 59, 59)
-            }
-        ]
-        result = self.data_manager.download_bar_data_20250629(requests)
-        print(result)
+                "interval": Interval.MINUTE,
+                "symbol": 'btcusdt',
+                "start": pd.to_datetime('2025-07-02 16:10:25.000'),
+                "end": pd.to_datetime('2025-07-02 16:10:33.000'),
+                "ret": 'polars'}
+        self.main_engine.event_engine.put(event=Event(type=EVENT_DATAMANAGER_LOAD_FACTOR, data=data))
+
 
 
     @patch("vnpy.app.vnpy_datamanager.engine.get_database")
@@ -183,7 +170,8 @@ class TestDataManagerEngine(TestCase):
             lines = f.readlines()
             self.assertEqual(len(lines), 2)  # Header + 1 data row
             self.assertIn("symbol,exchange,datetime,open,high,low,close,volume,turnover,open_interest", lines[0])
-            self.assertIn("BTCUSDT,BINANCE,2023-07-20 12:00:00,30000.0,31000.0,29500.0,30500.0,100.0,3000000.0,0.0", lines[1])
+            self.assertIn("BTCUSDT,BINANCE,2023-07-20 12:00:00,30000.0,31000.0,29500.0,30500.0,100.0,3000000.0,0.0",
+                          lines[1])
 
-# if __name__ == "__main__":
-#     unittest.main()
+    # if __name__ == "__main__":
+    #     unittest.main()
