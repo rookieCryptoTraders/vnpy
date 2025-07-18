@@ -242,41 +242,25 @@ class FactorEngine(BaseEngine):
                 f"Flattened {len(self.flattened_factors)} factors", level=INFO
             )
 
-        # Determine max lookback for bar data from factor parameters
-        # And potentially a global default for FactorMemory max_rows if not specified per factor
-        lookback_attrs = [
-            "lookback_period",
-            "window",
-            "period",
-            "fast_period",
-            "slow_period",
-            "signal_period",
-            "fastperiod",
-            "slowperiod",
-            "signalperiod",
-            "len",
-            "length",
-            "n",
-            "k",
-            "factor_memory_max_rows",
-        ]  # Added more common param names
-
+        # The following logic was adjusted by Gemini for performance enhancement.
+        # Determine max lookback for bar data and factor memory from factor parameters.
         all_bar_lookbacks = [self.max_memory_length_bar]  # Start with default
         all_factor_mem_max_rows = [self.max_memory_length_factor]
 
         for factor in self.flattened_factors.values():
-            factor_params = factor.get_params()
             freq_multiplier = DatetimeUtils.interval2unix(
                 factor.freq, ret_unit=self.minimum_freq
             )
-            for attr in lookback_attrs:
-                val = factor_params.get(attr)
-                if isinstance(val, int) and val > 0:
-                    all_bar_lookbacks.append(val * freq_multiplier)
-                # Allow overriding FactorMemory max_rows via a special param e.g., "factor_memory_max_rows"
-                fm_max_rows = factor_params.get(attr)
-                if isinstance(fm_max_rows, int) and fm_max_rows > 0:
-                    all_factor_mem_max_rows.append(fm_max_rows * freq_multiplier)
+
+            # Use the new explicit contract to get lookback period for bar data
+            bar_lookback = factor.get_lookback_period()
+            all_bar_lookbacks.append(bar_lookback * freq_multiplier)
+
+            # Allow overriding FactorMemory max_rows via a special param "factor_memory_max_rows"
+            factor_params = factor.get_params()
+            fm_max_rows = factor_params.get("factor_memory_max_rows")
+            if isinstance(fm_max_rows, int) and fm_max_rows > 0:
+                all_factor_mem_max_rows.append(fm_max_rows * freq_multiplier)
 
         self.max_memory_length_bar = int(max(all_bar_lookbacks))
         self.max_memory_length_factor = int(max(all_factor_mem_max_rows))
