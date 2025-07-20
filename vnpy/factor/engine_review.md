@@ -23,12 +23,22 @@ This revised review provides more precise, actionable recommendations for the cr
 ### 3.1. Dask Scheduler Configuration (Performance)
 
 -   **Issue:** The code explicitly forces Dask to run in `single-threaded` mode, negating its primary benefit of parallel computation. The comment `this would fix the interpreter shut down issue` points to a critical thread-safety problem.
--   **Analysis:** The crash likely originates from non-thread-safe operations within a factor's `calculate` method, especially when accessing shared resources like `FactorMemory` instances. While `FactorMemory` has a write lock, concurrent reads during a multi-threaded computation could still lead to instability in underlying C extensions (e.g., in file access or NumPy/Polars operations).
--   **Recommendations:**
-    1.  **Adopt a Stateless Calculation Model:** The most robust solution is to make factor calculations pure and stateless. Instead of passing the stateful `FactorMemory` object to Dask workers, pre-fetch the required historical data in the main thread and pass it as an immutable Polars DataFrame.
-        -   **Action:** Modify `create_task` to read the necessary lookback data from `FactorMemory` and pass this static DataFrame to the `dask.delayed` call. This isolates workers and eliminates the root cause of thread-safety issues.
-    2.  **Isolate and Diagnose:** As a first step, re-enable the `threads` scheduler (`scheduler='threads'`) and wrap the `dask.compute` call in a `try...except` block to identify which specific factor is causing the crash.
-    3.  **Enforce Read-Only Contract:** Ensure all factor implementations use the `memory` object in a strictly read-only fashion.
+-   **Analysis:** The crash likely originates from non-thread-safe operations within a factor's `calculate` method, especially when accessing shared resources like `FactorMemory` instances. While `FactorMemory` has a write lock, concurrent reads during a multi-threaded computation could still lead to instability. Passing stateful objects to Dask workers is not a safe practice.
+-   **Recommendations (Revised Plan):** To solve this, we will implement a stateless calculation model by decoupling Dask tasks from the stateful `FactorMemory` objects. This involves creating a thread-safe, in-memory mirror of the factor data that can be safely used in parallel computations.
+    1.  **Introduce a Mirrored DataFrame Cache:**
+        -   Add a new `FactorEngine` attribute: `self.factor_dataframes: dict[str, pl.DataFrame]`. This dictionary will serve as an in-memory, read-only cache that mirrors the data within each factor's `FactorMemory` instance.
+        -   This cache will be initialized during `init_memory` and updated after every calculation cycle.
+    2.  **Decouple Dask from Stateful Memory:**
+        -   Modify the `create_task` method. Instead of passing the stateful `FactorMemory` object to the Dask task, it will now pass the corresponding immutable Polars `DataFrame` from the `self.factor_dataframes` cache.
+        -   This change makes the `calculate` function pure from the Dask worker's perspective, as it only operates on a static DataFrame, eliminating the root cause of thread-safety issues.
+    3.  **Adapt the Factor Calculation Interface:**
+        -   The `FactorTemplate.calculate` method signature must be updated. It will no longer receive a `FactorMemory` object. Instead, it will receive the necessary historical data as a Polars `DataFrame`. The method's responsibility is to compute new factor values and return them as a new DataFrame row.
+    4.  **Implement a Sync-After-Compute Workflow:**
+        -   In `execute_calculation`, after `dask.compute` returns the results, the engine will perform a two-step update for each factor:
+            a.  First, update the persistent `FactorMemory` instance with the new result DataFrame.
+            b.  Second, update the corresponding DataFrame in the `self.factor_dataframes` cache to ensure it is synchronized and ready for the next calculation cycle.
+    5.  **Enable Parallel Scheduler:**
+        -   With this stateless calculation model in place, the Dask scheduler configuration can be safely changed from `scheduler='single-threaded'` to `scheduler='threads'` to unlock multi-core performance.
 
 ### 3.2. Historical Data Filling (Reliability)
 
