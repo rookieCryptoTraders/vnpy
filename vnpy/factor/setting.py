@@ -10,6 +10,7 @@ if not _SETTINGS_INITIALIZED:
     try:
         from vnpy.trader.setting import SETTINGS
         from vnpy.trader.utility import load_json as load_json_main
+        from vnpy.trader.utility import get_file_path,get_folder_path
     except ImportError:
         # Fallback for standalone use if core vnpy parts are not available
         SETTINGS: dict[str, Any] = {}
@@ -69,7 +70,8 @@ if not _SETTINGS_INITIALIZED:
     FACTOR_MODULE_SETTINGS: dict[str, Any] = _CACHED_FACTOR_MODULE_SETTINGS
 
     # Base paths for factor data, cache, etc., relative to the main .vnpy folder
-    ROOT_PATH = Path(SETTINGS.get("factor.root_path", Path.cwd() / ".vnpy" / "factor"))
+    # ROOT_PATH = Path(SETTINGS.get("factor.root_path", Path.cwd() / ".vnpy" / "factor"))
+    ROOT_PATH = get_folder_path(".vnpy/factor")
     DATA_PATH = ROOT_PATH / "data"
     REPORT_PATH = ROOT_PATH / "reports"
     CACHE_PATH = ROOT_PATH / "cache"

@@ -222,6 +222,7 @@ MULTI_OUTPUT_FUNCTIONS = {
     "stoch": ["slowk", "slowd"],
     "stochf": ["fastk", "fastd"],
     "aroon": ["aroondown", "aroonup"],
+    "stochrsi": ["fastk", "fastd"],
 }
 
 INPUT_COLUMN_MAP = {
@@ -350,7 +351,7 @@ def generate_single_factor_file(
 
     file_path = output_path / f"{module_filename}.py"
     file_path.write_text(code, encoding="utf-8")
-    class_list.vstack_truncated((module_filename, class_name))
+    class_list.append((module_filename, class_name))
 
 
 def create_init_files(generated_files_by_group):

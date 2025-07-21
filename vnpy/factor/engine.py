@@ -44,7 +44,7 @@ from vnpy.trader.event import (
     EVENT_FACTOR_FILLING,
     EVENT_FACTOR_BAR_UPDATE,
     EVENT_HISTORY_DATA_REQUEST,
-EVENT_DATAMANAGER_LOAD_BAR_RESPONSE,EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE
+    EVENT_DATAMANAGER_LOAD_BAR_RESPONSE, EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE
 )
 from vnpy.trader.object import BarData, LogData
 
@@ -186,8 +186,7 @@ class FactorEngine(BaseEngine):
         self.event_engine.register(EVENT_BAR, self.process_bar_event)
         self.event_engine.register(EVENT_FACTOR_FILLING, self.process_factor_filling_event)
         self.event_engine.register(EVENT_DATAMANAGER_LOAD_BAR_RESPONSE, self.process_load_bar_response_event)
-        # self.event_engine.register(EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE,)
-
+        self.event_engine.register(EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE, self.process_load_factor_response_event)
 
     def init_all_factors(self, flat_factors: bool = True) -> None:
         """Loads factor settings, initializes FactorTemplate instances, and determines max lookback periods."""
@@ -1217,7 +1216,18 @@ class FactorEngine(BaseEngine):
 
         self.process_database_bar_data(bars_data)
 
-    def process_database_bar_data(self, bars: Union[list[BarData],pl.DataFrame,pd.DataFrame]) -> None:
+    def process_load_factor_response_event(self, event: Event) -> None:
+        """
+        Processes the event to query factor data from the database and initialize it into memory.
+        """
+        factors_data = event.data
+        if not factors_data:
+            self.write_log("No factor data received for factor initialization.", level=WARNING)
+            return
+
+        self.process_database_factor_data(factors_data)
+
+    def process_database_bar_data(self, bars: Union[list[BarData], pl.DataFrame, pd.DataFrame]) -> None:
         """
         Initializes the bar memory with historical data queried from the database.
         """
@@ -1227,7 +1237,7 @@ class FactorEngine(BaseEngine):
 
         # data conversion
         # Convert list of BarData objects to a dictionary of lists for polars DataFrame
-        if isinstance(bars, list) and isinstance(bars[0],BarData):
+        if isinstance(bars, list) and isinstance(bars[0], BarData):
             data_dict = {
                 "datetime": [bar.datetime for bar in bars],
                 "open": [bar.open_price for bar in bars],
@@ -1269,6 +1279,47 @@ class FactorEngine(BaseEngine):
             self.memory_bar[col] = pivoted
 
         self.write_log(f"Initialized bar memory with {len(df)} bars from database.", level=INFO)
+
+    def process_database_factor_data(self, factors: Union[pl.DataFrame, pd.DataFrame]) -> None:
+        """
+        Initializes the factor memory with historical data queried from the database.
+        """
+        if not factors:
+            self.write_log("No factors to process for database initialization.", level=INFO)
+            return
+
+        # Convert DataFrame to a dictionary of lists for polars DataFrame
+        if isinstance(factors, pd.DataFrame):
+            df = pl.from_pandas(factors)
+        elif isinstance(factors, pl.DataFrame):
+            df = factors
+        else:
+            self.write_log(
+                "Invalid factor data format. Expected pandas DataFrame or polars DataFrame.",
+                level=ERROR
+            )
+            return
+
+        # Process each factor and initialize FactorMemory instances
+        for factor_key, group in df.groupby("factor_key"):
+            if factor_key not in self.flattened_factors:
+                self.write_log(
+                    f"Factor {factor_key} not found in flattened factors.",
+                    level=ERROR
+                )
+                continue
+
+            factor_instance = self.flattened_factors[factor_key]
+            memory_instance = self.factor_memory_instances.get(factor_key)
+
+            if not memory_instance:
+                memory_instance = FactorMemory(factor_key=factor_key)
+                self.factor_memory_instances[factor_key] = memory_instance
+
+            # Update the FactorMemory instance with the new data
+            memory_instance.update_data(group)
+
+        self.write_log(f"Initialized factor memory with {len(df)} records from database.", level=INFO)
 
     def stop_all_factors(self) -> None:
         self.write_log("Stopping all factors...", level=INFO)

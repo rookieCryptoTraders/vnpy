@@ -4,6 +4,7 @@ General utility functions.
 
 import json
 import logging
+import os
 import sys
 from datetime import datetime, time
 from pathlib import Path
@@ -111,7 +112,8 @@ def get_folder_path(folder_name: str) -> Path:
     """
     folder_path: Path = TEMP_DIR.joinpath(folder_name)
     if not folder_path.exists():
-        folder_path.mkdir()
+        # folder_path.mkdir()
+        os.makedirs(folder_path,exist_ok=True)
     return folder_path
 
 

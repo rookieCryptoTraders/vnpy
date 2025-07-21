@@ -3,6 +3,7 @@ from unittest import TestCase
 from unittest.mock import patch, MagicMock
 
 import pandas as pd
+import pylab as pl
 
 from vnpy.app.vnpy_datamanager import DataManagerEngine
 from vnpy.event import EventEngine
@@ -51,7 +52,9 @@ class TestDataManagerEngine(TestCase):
         self.data_recorder_engine.start()
         self.main_engine.write_log(f"Started [{self.data_recorder_engine.__class__.__name__}]")
 
-        self.data_manager = DataManagerEngine(self.main_engine, self.main_engine.event_engine)
+        self.data_manager:DataManagerEngine = self.main_engine.add_engine(engine_class=DataManagerEngine,database=self.data_recorder_engine.database_manager)
+        self.data_manager.init_engine()
+
 
     def test_get_bar_overview(self):
         self.setUp()
@@ -71,14 +74,21 @@ class TestDataManagerEngine(TestCase):
     def test_on_load_bar_data(self):
         self.setUp()
 
+        df1=self.factor_maker_engine.memory_bar['close']
+        print(df1)
+
         data = {"symbol": 'btcusdt', "exchange": Exchange('BINANCE'), "interval": Interval.MINUTE,
-                "start": pd.to_datetime('2025-07-05 16:36:00.000'),
-                "end": pd.to_datetime('2025-07-05 16:40:00.000'),
+                "start": pd.to_datetime('2025-07-20 08:36:00.000'),
+                "end": pd.to_datetime('2025-07-20 08:40:00.000'),
                 "ret": 'polars'}
         self.main_engine.event_engine.put(event=Event(type=EVENT_DATAMANAGER_LOAD_BAR, data=data))
         # Simulate a delay to allow the event to be processed
-        sleep(5)
-        print(1)
+        sleep(1)
+        df2=self.factor_maker_engine.memory_bar['close']
+
+        print(df2)
+
+        exit(1)
 
     def test_on_load_factor_data(self):
         self.setUp()
