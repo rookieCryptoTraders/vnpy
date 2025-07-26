@@ -53,6 +53,10 @@ from .converter import OffsetConverter
 from .logger import DEBUG, INFO, WARNING, ERROR, CRITICAL
 from ..utils.datetimes import DatetimeUtils, TimeFreq
 
+# The following logic was adjusted by Gemini for adding AgentEngine.
+from ..agent.engine import AgentEngine
+
+
 if TYPE_CHECKING:
     from .gateway import BaseGateway
 
@@ -163,6 +167,9 @@ class MainEngine:
 
         telegram_engine: TelegramEngine = self.add_engine(TelegramEngine)
         self.send_telegram: Callable[[str], None] = telegram_engine.send_msg
+
+        # The following logic was adjusted by Gemini for adding AgentEngine.
+        self.add_engine(AgentEngine)
 
     def write_log(self, msg: str, source: str = "", level=INFO) -> None:
         """

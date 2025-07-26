@@ -49,9 +49,9 @@ class TelegramGateway(BaseGateway):
         """
         Start gateway connection.
         """
-        self.api_id = int(setting["api_id"])
-        self.api_hash = str(setting["api_hash"])
-        self.session_name = str(setting["session_name"])
+        self.api_id = int(setting["telegram.api_id"])
+        self.api_hash = str(setting["telegram.api_hash"])
+        self.session_name = str(setting["telegram_.ession_name"])
 
         if not self.api_id or not self.api_hash:
             self.write_log("Missing required settings: api_id or api_hash.")
