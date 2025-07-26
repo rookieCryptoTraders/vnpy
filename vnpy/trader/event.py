@@ -12,6 +12,8 @@ EVENT_ACCOUNT = "eAccount."
 EVENT_QUOTE = "eQuote."
 EVENT_CONTRACT = "eContract."
 EVENT_LOG = "eLog"
+EVENT_TELEGRAM = "eTelegram."
+
 
 # ================================= apps =================================
 # name rule: EVENT_<APP_NAME>_<ACTION/EVENT_NAME>
