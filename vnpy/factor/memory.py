@@ -124,8 +124,6 @@ class FactorMemory:
         if df.schema == self.schema:
             return df
 
-        print("df.schema\n",df.schema)
-        print("self.schema\n",self.schema)
         conformed_cols = {}
         errors = []
         current_df_schema = df.schema

@@ -1,4 +1,6 @@
 import importlib
+import sys
+import traceback
 from collections import defaultdict
 from copy import deepcopy
 from logging import ERROR, INFO, NOTSET
@@ -112,6 +114,7 @@ class RecorderEngine(BaseEngine):
 
     def run(self):
         """Main loop for the worker thread."""
+        task = None
         while self.active:
             try:
                 # Get a task from the queue, with a timeout to allow periodic buffer checks
@@ -120,9 +123,13 @@ class RecorderEngine(BaseEngine):
                 self.save_data(task_type, data)
             except Empty:
                 # If the queue is empty, flush any partially filled buffers
+                self.write_log(f"the queue is empty, flush any partially filled buffers", level=NOTSET)
                 self.save_data(force_save=True)
             except Exception as e:
                 self.write_log(f"Error in recorder worker thread: {e}", level=ERROR)
+                self.write_log(f"Error event data: {task}", level=ERROR)
+                exc_type, exc_value, exc_traceback = sys.exc_info()
+                traceback.print_exception(exc_type, exc_value, exc_traceback)
 
     def close(self):
         """Stops the engine and saves all remaining data."""
@@ -300,11 +307,11 @@ class RecorderEngine(BaseEngine):
     def _process_bar_data(self, data: BarData, force_save: bool):
         """Helper to process and buffer bar data."""
         with self.lock:
-            self.buffer_bar[data.vt_symbol].vstack_truncated(data)
+            self.buffer_bar[data.vt_symbol].append(data)
             to_remove = []
             for k, v in self.buffer_bar.items():
                 if len(v) >= self.buffer_size or (force_save and v):
-                    self._save_bar_buffer(v,stream=False)
+                    self._save_bar_buffer(v, stream=False)
                     to_remove.append(k)
             for k in to_remove:
                 self.buffer_bar.pop(k, None)
@@ -313,7 +320,7 @@ class RecorderEngine(BaseEngine):
         """Helper to process and buffer/save factor data."""
         with self.lock:
             if isinstance(data, FactorData):
-                self.buffer_factor[data.vt_symbol].vstack_truncated(data)
+                self.buffer_factor[data.vt_symbol].append(data)
                 to_remove = []
                 for k, v in self.buffer_factor.items():
                     if len(v) >= self.buffer_size or (force_save and v):
@@ -338,7 +345,7 @@ class RecorderEngine(BaseEngine):
             self.write_log("Flushing all data buffers...")
             for v in self.buffer_bar.values():
                 if v:
-                    self._save_bar_buffer(v,stream=False)
+                    self._save_bar_buffer(v, stream=False)
             self.buffer_bar.clear()
             for v in self.buffer_factor.values():
                 if v:
@@ -346,7 +353,7 @@ class RecorderEngine(BaseEngine):
             self.buffer_factor.clear()
             self.write_log("Buffers flushed.")
 
-    def _save_bar_buffer(self, bar_list: list[BarData],stream=True):
+    def _save_bar_buffer(self, bar_list: list[BarData], stream=True):
         """Saves a list of bars from the buffer to the database."""
         sample_data = bar_list[0]
         self.database_manager.save_bar_data(
