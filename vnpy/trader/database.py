@@ -25,6 +25,11 @@ from vnpy.trader.utility import get_file_path
 from vnpy.trader.utility import load_json, save_json
 from vnpy.utils.datetimes import DatetimeUtils
 from .utility import ZoneInfo
+import json
+import atexit
+import signal
+import sys
+from functools import partial
 
 # if TYPE_CHECKING:
 # from vnpy.trader.database import TimeRange,DataRange
@@ -184,13 +189,13 @@ class DataRange:
         self._start_dt = min(r.start for r in self.ranges)
         self._end_dt = max(r.end for r in self.ranges)
 
-    def add_ranges(self,ranges:list[TimeRange]):
+    def add_ranges(self, ranges: list[TimeRange]):
         """Add multiple time ranges and update bounds"""
         if not ranges:
             return
         for range in ranges:
-            assert range.interval==self.interval
-            self.add_range(start=range.start,end=range.end)
+            assert range.interval == self.interval
+            self.add_range(start=range.start, end=range.end)
 
     def add_range(self, start: Union[datetime, int, float, str], end: Union[datetime, int, float, str],
                   inplace=False) -> Optional[list[TimeRange]]:
@@ -328,7 +333,8 @@ class BaseOverview:
         # Other time range operations are handled by DataRange class
         data_range = DataRange(interval=self.interval)
         data_range.ranges = self.time_ranges
-        data_range.add_range(start=start, end=end,inplace=True)  # the default value of inplace in overview's add range should be true
+        data_range.add_range(start=start, end=end,
+                             inplace=True)  # the default value of inplace in overview's add range should be true
         self.time_ranges = data_range.ranges
 
     @property
@@ -463,42 +469,6 @@ class OverviewDecoder(json.JSONDecoder):
         return d
 
 
-"""
-{
-    "ethusdt.BINANCE": {
-        "symbol": "ethusdt",
-        "exchange": "BINANCE",
-        "interval": "1m",
-        "count": 2,
-        "time_ranges": [
-            {
-                "_start": "2025-06-25 12:49:15",
-                "_end": "2025-06-25 12:49:17",
-                "interval": "1m",
-                "_max_gap_ms": 60000.0
-            }
-        ],
-        "vt_symbol": "kline_1m_ethusdt.BINANCE"
-    },
-    "btcusdt.BINANCE": {
-        "symbol": "btcusdt",
-        "exchange": "BINANCE",
-        "interval": "1m",
-        "count": 2,
-        "time_ranges": [
-            {
-                "_start": "2025-06-25 12:49:15",
-                "_end": "2025-06-25 12:49:17",
-                "interval": "1m",
-                "_max_gap_ms": 60000.0
-            }
-        ],
-        "vt_symbol": "kline_1m_btcusdt.BINANCE"
-    }
-}
-"""
-
-
 class OverviewHandler:
     """Manages data overviews with gap detection and data retrieval"""
     bar_overview_filepath = str(get_file_path(BAR_OVERVIEW_FILENAME))
@@ -508,9 +478,11 @@ class OverviewHandler:
     def __init__(self, event_engine: Optional[EventEngine] = None):
         """Initialize the overview manager"""
         # Register the save function to execute when the program exits
-        # atexit.register(self.save_overview, type_='bar')  # why this fails?? the original overview will be re-written into json file
-        # atexit.register(self.save_overview, type_='factor')  # why this fails?? the original overview will be re-written into json file
-        # atexit.register(self.save_overview, type_='tick')  # why this fails?? the original overview will be re-written into json file
+        atexit.register(self.save_all_overviews)
+        signal.signal(signal.SIGINT, lambda sig, frame: (self.save_all_overviews(), sys.exit(0)))
+        signal.signal(signal.SIGINT, lambda sig, frame: (self.save_all_overviews(), sys.exit(1)))
+        signal.signal(signal.SIGTERM, lambda sig, frame: (self.save_all_overviews(), sys.exit(0)))
+        signal.signal(signal.SIGTERM, lambda sig, frame: (self.save_all_overviews(), sys.exit(1)))
 
         self.overview_dict: Dict[str, BarOverview] = {}  # Stores metadata in memory
         # init database overview file
@@ -616,6 +588,15 @@ class OverviewHandler:
 
         print(f"OverviewHandler: Updated {vt_symbol} with {len(bars)} new bars.")
 
+    def save_all_overviews(self) -> None:
+        """
+        Save all overview data to their respective files.
+        This is called automatically on program exit.
+        """
+        self.save_overview(type_='bar')
+        self.save_overview(type_='factor')
+        self.save_overview(type_='tick')
+
     def check_subscribe_stream(self) -> List[SubscribeRequest]:
         """
         Scan all overview records and generate subscription requests for real-time tick data updates.
@@ -673,6 +654,7 @@ class OverviewHandler:
         if end_time is None:
             end_time = datetime.now()
 
+        # fixme: what if this is the first startup of the system? overview_dict will be empty and vt_symbols are unknown. so I can't calculate gaps here because I don't know the key of return dict
         # get all existing data ranges and store them together
         exist_dict = {}
         for type_ in ['bar', 'factor', 'tick']:
@@ -680,15 +662,15 @@ class OverviewHandler:
             for vt_symbol, overview in overview_dict.items():
                 # why here we can use overview_key, that's because downloading data is only relate to interval, symbol and exchange, which is the same as overview_key
                 if exist_dict.get(overview.overview_key) is None:
-                    exist_dict[overview.overview_key]=DataRange(
+                    exist_dict[overview.overview_key] = DataRange(
                         interval=overview.interval, ranges=overview.time_ranges)
                 else:
                     exist_dict[overview.overview_key].add_ranges(overview.time_ranges)
 
         # merge gaps
-        gap_dict={}
+        gap_dict = {}
         for overview_key, data_range in exist_dict.items():
-            gaps=data_range.get_gaps(start=start_time,end=end_time)
+            gaps = data_range.get_gaps(start=start_time, end=end_time)
             gap_dict[overview_key] = gaps
             # if not gaps:
             #     continue
@@ -841,6 +823,7 @@ class BaseDatabase(ABC):
         """
         gap_dict: dict = self.overview_handler.get_gaps(end_time=end_time, start_time=start_time)
         return gap_dict
+
 
 database: Optional[BaseDatabase] = None
 TV_BaseOverview = TypeVar('TV_BaseOverview', bound=BaseOverview)  # TV means TypeVar

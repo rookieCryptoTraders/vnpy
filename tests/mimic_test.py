@@ -76,9 +76,12 @@ def run_child():
     for i in range(3):  # allow 3 attempts to download data
         # gaps to requests
         gap_dict = data_recorder_engine.database_manager.get_gaps(end_time=datetime.datetime.now(),
-                                                                  start_time=datetime.datetime(2025, 7, 1, 12, 42))
+                                                                  start_time=datetime.datetime(2025, 7, 14, 0, 0))
+        # no gap, break
         if not gap_dict:
             break
+
+        # have gaps, download data and fill gaps, break in the end
         gap_data_dict = data_manager_engine.download_bar_data_gaps(gap_dict)
 
         for overview_key, data_list in gap_data_dict.items():
@@ -105,6 +108,7 @@ def run_child():
 
         # filling missing factor
         gateway.on_factor_filling(gap_dict)
+        break
 
     # Start live data subscription
     main_engine.subscribe_all(gateway_name='MIMIC')

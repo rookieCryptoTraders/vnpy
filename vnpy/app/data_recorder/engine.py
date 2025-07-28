@@ -290,10 +290,10 @@ class RecorderEngine(BaseEngine):
             force_save: bool = False,
     ):
         """Routes data from the queue to the appropriate processing helper."""
-        self.write_log(
-            f"Processing task: {task_type}, force_save={force_save}",
-            level=INFO if task_type else NOTSET,
-        )
+        # self.write_log(
+        #     f"Processing task: {task_type}, force_save={force_save}",
+        #     level=INFO if task_type else NOTSET,
+        # )
         if task_type == "tick":
             self.database_manager.save_tick_data([data])
         elif task_type == "bar":
