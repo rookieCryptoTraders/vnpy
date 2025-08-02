@@ -197,7 +197,7 @@ class MimicGateway(BaseGateway):
         volume = random.uniform(volume_range[0], volume_range[1])
 
         # bar object is created after this print statement, so we directly use dt that is passed in.
-        print(f"Generated BarData: {dt}, {symbol}, Open: {open_price}, High: {high_price}, Low: {low_price}, Close: {close_price}, Volume: {volume}")
+        # print(f"Generated BarData: {dt}, {symbol}, Open: {open_price}, High: {high_price}, Low: {low_price}, Close: {close_price}, Volume: {volume}")
 
         bar = BarData(
             gateway_name=self.gateway_name,

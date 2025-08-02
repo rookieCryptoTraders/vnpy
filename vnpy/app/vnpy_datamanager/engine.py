@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import time
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime
@@ -15,7 +16,8 @@ from vnpy.trader.database import BaseDatabase, BarOverview, DB_TZ, TV_BaseOvervi
 from vnpy.trader.datafeed import BaseDatafeed, get_datafeed
 from vnpy.trader.engine import BaseEngine, MainEngine
 from vnpy.trader.event import EVENT_LOG, EVENT_BAR_FILLING
-from vnpy.trader.event import EVENT_DATAMANAGER_LOAD_BAR, EVENT_DATAMANAGER_LOAD_FACTOR,EVENT_DATAMANAGER_LOAD_BAR_RESPONSE,EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE
+from vnpy.trader.event import EVENT_DATAMANAGER_LOAD_BAR, EVENT_DATAMANAGER_LOAD_FACTOR, \
+    EVENT_DATAMANAGER_LOAD_BAR_RESPONSE, EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE
 from vnpy.trader.object import ContractData
 from vnpy.trader.object import HistoryRequest, BarData, TickData, FactorData
 from vnpy.trader.object import LogData
@@ -44,6 +46,10 @@ class DataManagerEngine(BaseEngine):
             BaseDatabase, ClickhouseDatabase] = database  # fixme: database should not affiliated to data_manager. database is event driven
         self.datafeed: BaseDatafeed = get_datafeed()
 
+    def init_engine(self):
+        self.register_event()
+        self.write_log(f"finish init engine")
+
     def register_event(self) -> None:
         """
         Register event handlers.
@@ -52,20 +58,26 @@ class DataManagerEngine(BaseEngine):
         self.event_engine.register(EVENT_DATAMANAGER_LOAD_FACTOR, self.on_load_factor_data)
 
     def on_load_bar_data(self, event: Event) -> None:
+        print(111)
         event_type, data = event.type, event.data
-        res=self.database.load_bar_data(
+        time.sleep(3)
+        res = self.database.load_bar_data(
             **data
         )
+        print(f"res is here")
+        print(res)
         self.put_event(Event(EVENT_DATAMANAGER_LOAD_BAR_RESPONSE, res))
-        self.write_log(f"Successfully processed {EVENT_DATAMANAGER_LOAD_BAR}, response count: {len(res)}")
+        self.write_log(f"load bar request {data}")
+
+        self.write_log(f"Successfully processed {EVENT_DATAMANAGER_LOAD_BAR}, response count: {len(res) if res else 0}")
 
     def on_load_factor_data(self, event: Event) -> None:
         event_type, data = event.type, event.data
+        self.write_log(f"load factor request {data}")
         res = self.database.load_factor_data(
             **data)
         self.put_event(Event(EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE, res))
         self.write_log(f"Successfully processed {EVENT_DATAMANAGER_LOAD_FACTOR}, response count: {len(res)}")
-
 
     def on_bar_filling(self, bar: BarData) -> None:
         """
@@ -372,7 +384,7 @@ class DataManagerEngine(BaseEngine):
         event = Event(type=EVENT_LOG, data=log)
         self.put_event(event)
 
-    def put_event(self,event):
+    def put_event(self, event):
         """
         Put event to the event engine.
         """

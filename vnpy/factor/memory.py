@@ -9,6 +9,7 @@ import polars as pl
 
 from vnpy.trader.constant import Interval
 from vnpy.trader.database import TimeRange
+from vnpy.trader.utility import get_file_path
 
 # To make the FactorMemory class aware of the context it's running in,
 # we import FactorMode. A fallback is provided for standalone use or testing.
@@ -201,15 +202,25 @@ class FactorMemory:
         if new_data is None or new_data.is_empty():
             return
 
-        with self._lock:
+        with (self._lock):
             try:
                 conformed_new_data = self._conform_df_to_schema(new_data, "new_data_input")
             except Exception as e:
                 raise ValueError(f"Fatal schema error in new_data for {self.file_path}: {e}") from e
 
             current_data = self._load_data()
-            combined_data = pl.concat([current_data, conformed_new_data],
+            try:
+                combined_data = pl.concat(items=[current_data, conformed_new_data],
                                       how="vertical_relaxed") if not current_data.is_empty() else conformed_new_data
+            except Exception as e:
+                print(e)
+                print(self.file_path)
+                print(current_data.schema)
+                print(conformed_new_data.schema)
+                has_struct = any(isinstance(dtype, pl.Struct) for dtype in current_data.schema.values())
+                print(has_struct)
+                has_struct = any(isinstance(dtype, pl.Struct) for dtype in conformed_new_data.schema.values())
+                print(has_struct)
 
             if self.datetime_col not in combined_data.columns:
                 raise ValueError(f"Internal error: Datetime column '{self.datetime_col}' not found in combined data.")

@@ -20,6 +20,7 @@ from vnpy.trader.constant import Interval
 from enum import Enum
 from functools import total_ordering
 
+
 @total_ordering
 class TimeFreq(Enum):
     """
@@ -93,16 +94,13 @@ class TimeFreq(Enum):
         return self.value > self._val(other)
 
     # helper
-    def _val(self, other):
+    def _val(self, other) -> float | int:
         if isinstance(other, TimeFreq):
             return other.value
         elif isinstance(other, (int, float)):
             return other
         else:
             raise TypeError(f"Unsupported operand type: {type(other)}")
-
-
-
 
 
 class DatetimeUtils:
@@ -226,7 +224,7 @@ class DatetimeUtils:
 
     @classmethod
     def str2freq(
-            cls, time_str: str, ret_unit: TimeFreq | str
+            cls, time_str: str, ret_unit: TimeFreq | str = TimeFreq.m
     ) -> tuple[int, TimeFreq]:
         """
         Converts a time string into an integer multiple of a specified return unit.
@@ -251,7 +249,7 @@ class DatetimeUtils:
 
         if not converted_number.is_integer():
             raise ValueError(
-                f"'{time_str}' cannot be converted cleanly to an integer of '{ret_unit.name}'."
+                f"'{time_str}' cannot be converted cleanly to an integer of '{ret_unit.name}'. Please reduce the ret_unit"
             )
 
         return int(converted_number), ret_unit
@@ -285,10 +283,44 @@ class DatetimeUtils:
         prefix = freq.value / ret_unit.value
         if not prefix.is_integer():
             raise ValueError(
-                f"Frequency '{freq.name}' cannot be converted cleanly to unit '{ret_unit.name}'."
+                f"Frequency '{freq.name}' cannot be converted cleanly to unit '{ret_unit.name}'. Please reduce the ret_unit"
             )
 
         return f"{int(prefix)}{ret_unit.name}"
+
+    @classmethod
+    def freq2unix(
+            cls, freq: TimeFreq, ret_unit: TimeFreq | str | None = TimeFreq.ms
+    ) -> int:
+        """
+        Converts a TimeFreq enum member into a Unix timestamp string relative to a return unit.
+        Example: freq2unix(TimeFreq.h, ret_unit='s') -> 3600
+
+        Parameters
+        ----------
+        freq : TimeFreq
+            The input time frequency.
+        ret_unit : TimeFreq or str
+            The desired unit for the output string. Defaults to minutes ('m').
+
+        Returns
+        -------
+        int
+            The Unix timestamp.
+        """
+        if ret_unit is None:
+            ret_unit = TimeFreq.ms
+        if isinstance(ret_unit, str):
+            ret_unit = TimeFreq[cls.normalize_time_str(ret_unit)]
+
+        # The ratio of the two frequencies' millisecond values gives the numeric prefix.
+        prefix = freq.value / ret_unit.value
+        if not prefix.is_integer():
+            raise ValueError(
+                f"Frequency '{freq.name}' cannot be converted cleanly to unit '{ret_unit.name}'. Please reduce the ret_unit"
+            )
+
+        return int(prefix)
 
     @classmethod
     def unix2datetime(

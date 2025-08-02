@@ -97,11 +97,11 @@ class MainEngine:
         os.chdir(TRADER_DIR)  # Change working directory
         self.init_engines()  # Initialize function engines
 
-    def add_engine(self, engine_class: type[EngineType]) -> EngineType:
+    def add_engine(self, engine_class: type[EngineType],*args,**kwargs) -> EngineType:
         """
         Add function engine.
         """
-        engine: EngineType = engine_class(self, self.event_engine)  # type: ignore
+        engine: EngineType = engine_class(self, self.event_engine,*args,**kwargs)  # type: ignore
         self.engines[engine.engine_name] = engine
         return engine
 

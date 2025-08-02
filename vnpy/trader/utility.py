@@ -4,11 +4,12 @@ General utility functions.
 
 import json
 import logging
+import os
 import sys
 from datetime import datetime, time
 from pathlib import Path
 from decimal import Decimal, ROUND_DOWN
-from typing import Callable, Optional, Union
+from typing import Callable, Optional, Union, Literal
 
 import pandas as pd
 import polars as pl
@@ -34,9 +35,12 @@ def extract_factor_key(factor_key: str) -> tuple[Interval, str]:
     -------
     (interval, factor_name)
     """
-    factor_key, param = factor_key.split('@')
-    _, interval_str, factor_name = factor_key.split("_")
-    return Interval(interval_str), factor_name
+    try:
+        factor_key, param = factor_key.split('@')
+        _, interval_str, factor_name = factor_key.split("_",maxsplit=2)
+        return Interval(interval_str), factor_name
+    except Exception as e:
+        raise ValueError(f"Invalid factor key format: {factor_key}. Expected format: 'factor_interval_factorname@param'") from e
 
 
 def extract_vt_symbol_factor(vt_symbol: str) -> tuple[Interval, str, str, Exchange]:
@@ -111,7 +115,8 @@ def get_folder_path(folder_name: str) -> Path:
     """
     folder_path: Path = TEMP_DIR.joinpath(folder_name)
     if not folder_path.exists():
-        folder_path.mkdir()
+        # folder_path.mkdir()
+        os.makedirs(folder_path, exist_ok=True)
     return folder_path
 
 
@@ -124,7 +129,7 @@ def get_icon_path(filepath: str, ico_name: str) -> str:
     return str(icon_path)
 
 
-def load_json(filename: str, cls=json.JSONDecoder, return_filepath:bool=False) -> Union[dict,tuple[dict, Path]]:
+def load_json(filename: str, cls=json.JSONDecoder, return_filepath: bool = False) -> Union[dict, tuple[dict, Path]]:
     """
     Load data from json file in temp path.
     """
@@ -142,7 +147,7 @@ def load_json(filename: str, cls=json.JSONDecoder, return_filepath:bool=False) -
         return {}
 
 
-def save_json(filename: str, data: dict|list, mode="w+", cls=json.JSONEncoder) -> None:
+def save_json(filename: str, data: dict | list, mode="w+", cls=json.JSONEncoder) -> None:
     """
     Save data into json file in temp path.
     """
@@ -1260,3 +1265,19 @@ def is_nothing(obj) -> bool:
     if len(obj) == 0:
         return True
     return False
+
+
+def is_dict_str_dataframe(data, package: Literal['pd', 'pl', 'pandas', 'polars']):
+    if not isinstance(data, dict):
+        return False
+    dataframe_class = None
+    if package in ['pd', 'pandas']:
+        import pandas as pd
+        dataframe_class = pd.DataFrame
+    elif package in ['pl', 'polars']:
+        import polars as pl
+        dataframe_class = pl.DataFrame
+    for key, value in data.items():
+        if not isinstance(key, str) or not isinstance(value, dataframe_class):
+            return False
+    return True
