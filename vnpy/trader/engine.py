@@ -8,12 +8,13 @@ import traceback
 from abc import ABC, abstractmethod
 from email.message import EmailMessage
 from queue import Empty, Queue
-from threading import Thread
+from threading import Thread, Event as ThreadEvent
 from itertools import product
 from typing import TypeVar, TYPE_CHECKING
 from collections.abc import Callable
 from datetime import datetime as Datetime
 from pathlib import Path
+import signal
 
 import requests
 
@@ -83,6 +84,8 @@ class MainEngine:
             self.event_engine = EventEngine()
         self.event_engine.start()
 
+        self._shutdown_event: ThreadEvent = ThreadEvent()
+
         self.gateways: dict[str, BaseGateway] = {}
         self.engines: dict[str, BaseEngine] = {}
         self.apps: dict[str, BaseApp] = {}
@@ -104,6 +107,35 @@ class MainEngine:
 
         os.chdir(TRADER_DIR)  # Change working directory
         self.init_engines()  # Initialize function engines
+        self.init_signal_handler()
+    
+    # The following logic was written by Gemini to add a safe exit mechanism.
+    def init_signal_handler(self) -> None:
+        """
+        Initialize the signal handler for safe exit.
+        """
+        signal.signal(signal.SIGINT, self.exit)
+        signal.signal(signal.SIGTERM, self.exit)
+    # The following logic was written by Gemini to add a safe exit mechanism.
+    def shutdown(self) -> None:
+        """
+        Signal the application to shut down.
+        """
+        self._shutdown_event.set()
+    # The following logic was written by Gemini to add a safe exit mechanism.
+    def is_shutdown(self) -> bool:
+        """
+        Check if the application is shutting down.
+        """
+        return self._shutdown_event.is_set()
+    # The following logic was written by Gemini to add a safe exit mechanism.
+    def exit(self, sig, frame) -> None:
+        """
+        Exit the application gracefully.
+        """
+        self.write_log("Exiting the application...")
+        self.shutdown()
+        self.close()
 
     def add_engine(self, engine_class: type[EngineType], *args, **kwargs) -> EngineType:
         """
@@ -331,7 +363,11 @@ class MainEngine:
         Make sure every gateway and app is closed properly before
         programme exit.
         """
-        # Stop event engine first to prevent new timer event.
+        # The following logic was adjusted by Gemini to clarify the shutdown sequence.
+        # The close method is idempotent and can be called multiple times.
+        if not self.is_shutdown():
+            self.shutdown()
+        
         self.event_engine.stop()
 
         for engine in self.engines.values():
@@ -341,8 +377,9 @@ class MainEngine:
             gateway.close()
 
     def start_data_stream(self):
+        # The following logic was adjusted by Gemini to fix a bug.
         for exchange in self.exchanges:
-            for ticker in self.tickers:
+            for ticker in self.symbols:
                 vt_symbol = f"{ticker}.{exchange.value}"
                 contract: ContractData | None = self.get_contract(vt_symbol)
                 if contract:
@@ -815,7 +852,7 @@ class EmailEngine(BaseEngine):
         username: str = SETTINGS["email.username"]
         password: str = SETTINGS["email.password"]
 
-        while self.active:
+        while self.active and not self.main_engine.is_shutdown():
             try:
                 msg: EmailMessage = self.queue.get(block=True, timeout=1)
 
@@ -839,5 +876,7 @@ class EmailEngine(BaseEngine):
         if not self.active:
             return
 
+        # The following logic was adjusted by Gemini to clarify the shutdown sequence.
+        # The thread will exit after the timeout of the queue.get() call.
         self.active = False
         self.thread.join()
