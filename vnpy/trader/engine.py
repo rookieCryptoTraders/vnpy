@@ -8,12 +8,13 @@ import traceback
 from abc import ABC, abstractmethod
 from email.message import EmailMessage
 from queue import Empty, Queue
-from threading import Thread
+from threading import Thread, Event as ThreadEvent
 from itertools import product
 from typing import TypeVar, TYPE_CHECKING
 from collections.abc import Callable
 from datetime import datetime as Datetime
 from pathlib import Path
+import signal
 
 import requests
 
@@ -53,10 +54,14 @@ from .converter import OffsetConverter
 from .logger import DEBUG, INFO, WARNING, ERROR, CRITICAL
 from ..utils.datetimes import DatetimeUtils, TimeFreq
 
+# The following logic was adjusted by Gemini for adding AgentEngine.
+from ..agent.engine import AgentEngine
+
+
 if TYPE_CHECKING:
     from .gateway import BaseGateway
 
-APP_NAME = 'MainEngine'
+APP_NAME = "MainEngine"
 
 EngineType = TypeVar("EngineType", bound="BaseEngine")
 
@@ -79,16 +84,18 @@ class MainEngine:
             self.event_engine = EventEngine()
         self.event_engine.start()
 
-        self.gateways: dict[str, "BaseGateway"] = {}
+        self._shutdown_event: ThreadEvent = ThreadEvent()
+
+        self.gateways: dict[str, BaseGateway] = {}
         self.engines: dict[str, BaseEngine] = {}
         self.apps: dict[str, BaseApp] = {}
-        self.intervals: list[Interval] = [Interval(interval) for interval in SETTINGS.get('gateway.intervals', [])]
+        self.intervals: list[Interval] = [Interval(interval) for interval in SETTINGS.get("gateway.intervals", [])]
         self.minimum_freq: TimeFreq = min([DatetimeUtils.interval2freq(intvl) for intvl in self.intervals])
         self.symbols = SETTINGS.get("gateway.symbols", [])  # hyf
         self.exchanges: list[Exchange] = [Exchange(ex) for ex in SETTINGS.get("gateway.exchanges", [])]  # hyf
         self.vt_symbols: list[str] = [f"{s}.{e.value}" for s, e in product(self.symbols, self.exchanges)]
-        self.mode: str = SETTINGS.get('mode', 'LIVE')
-        assert self.mode in ['LIVE', 'BACKTEST', 'TEST']
+        self.mode: str = SETTINGS.get("mode", "LIVE")
+        assert self.mode in ["LIVE", "BACKTEST", "TEST"]
 
         self.TEMP_DIR = TEMP_DIR
         os.chdir(TRADER_DIR)  # Change working directory
@@ -300,7 +307,11 @@ class MainEngine:
         Make sure every gateway and app is closed properly before
         programme exit.
         """
-        # Stop event engine first to prevent new timer event.
+        # The following logic was adjusted by Gemini to streamline the shutdown sequence.
+        if self.is_shutdown():
+            return
+        self.shutdown()
+
         self.event_engine.stop()
 
         for engine in self.engines.values():
@@ -311,15 +322,15 @@ class MainEngine:
 
     def start_data_stream(self):
         for exchange in self.exchanges:
-            for ticker in self.tickers:
-                vt_symbol = f'{ticker}.{exchange.value}'
+            for ticker in self.symbols:
+                vt_symbol = f"{ticker}.{exchange.value}"
                 contract: ContractData | None = self.get_contract(vt_symbol)
                 if contract:
                     req: SubscribeRequest = SubscribeRequest(symbol=contract.symbol, exchange=contract.exchange)
                     self.subscribe(req, contract.gateway_name)
                 else:
                     self.write_log(msg=f"Market data subscription failed, contract {vt_symbol} not found",
-                                   source='MainEngine')
+                                   source="MainEngine")
 
 
 class BaseEngine(ABC):
@@ -385,7 +396,7 @@ class LogEngine(BaseEngine):
         self.logger.setLevel(self.level)
 
         self.formatter: logging.Formatter = logging.Formatter(
-            '%(asctime)s | %(levelname)-8s | %(message)s'
+            "%(asctime)s | %(levelname)-8s | %(message)s"
         )
 
         self.add_null_handler()
@@ -449,7 +460,8 @@ class LogEngine(BaseEngine):
         self.logger.log(log.level, log.msg)  # Do not use vnpy v4.0.0 update.
 
     def close(self) -> None:
-        pass
+        # The following logic was added by Gemini to ensure logs are flushed.
+        logging.shutdown()
 
 
 class OmsEngine(BaseEngine):
@@ -704,11 +716,7 @@ class OmsEngine(BaseEngine):
             converter.update_order_request(req, vt_orderid)
 
     def convert_order_request(
-            self,
-            req: OrderRequest,
-            gateway_name: str,
-            lock: bool,
-            net: bool = False
+        self, req: OrderRequest, gateway_name: str, lock: bool, net: bool = False
     ) -> list[OrderRequest]:
         """
         Convert original order request according to given mode.
@@ -773,6 +781,9 @@ class EmailEngine(BaseEngine):
         while self.active:
             try:
                 msg: EmailMessage = self.queue.get(block=True, timeout=1)
+                # The following logic was added by Gemini to improve the shutdown sequence.
+                if msg is None:
+                    break
 
                 try:
                     with smtplib.SMTP_SSL(server, port) as smtp:
@@ -794,7 +805,9 @@ class EmailEngine(BaseEngine):
         if not self.active:
             return
 
+        # The following logic was adjusted by Gemini to improve the shutdown sequence.
         self.active = False
+        self.queue.put(None)
         self.thread.join()
 
 
