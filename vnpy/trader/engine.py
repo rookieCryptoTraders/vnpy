@@ -8,14 +8,14 @@ import traceback
 from abc import ABC, abstractmethod
 from email.message import EmailMessage
 from queue import Empty, Queue
-from threading import Thread, Event as ThreadEvent
+from threading import Thread
 from itertools import product
 from typing import TypeVar, TYPE_CHECKING
 from collections.abc import Callable
 from datetime import datetime as Datetime
 from pathlib import Path
-import signal
 
+import requests
 
 from vnpy.event import Event, EventEngine
 from .app import BaseApp
@@ -27,7 +27,7 @@ from .event import (
     EVENT_ACCOUNT,
     EVENT_CONTRACT,
     EVENT_LOG,
-    EVENT_QUOTE,
+    EVENT_QUOTE
 )
 from .object import (
     CancelRequest,
@@ -45,22 +45,18 @@ from .object import (
     AccountData,
     ContractData,
     Exchange,
-    Interval,
+    Interval
 )
 from .setting import SETTINGS
-from .utility import get_folder_path, TRADER_DIR, virtual
+from .utility import get_folder_path, TRADER_DIR, virtual, TEMP_DIR
 from .converter import OffsetConverter
 from .logger import DEBUG, INFO, WARNING, ERROR, CRITICAL
 from ..utils.datetimes import DatetimeUtils, TimeFreq
 
-# The following logic was adjusted by Gemini for adding AgentEngine.
-from ..agent.engine import AgentEngine
-
-
 if TYPE_CHECKING:
     from .gateway import BaseGateway
 
-APP_NAME = "MainEngine"
+APP_NAME = 'MainEngine'
 
 EngineType = TypeVar("EngineType", bound="BaseEngine")
 
@@ -83,60 +79,20 @@ class MainEngine:
             self.event_engine = EventEngine()
         self.event_engine.start()
 
-        self._shutdown_event: ThreadEvent = ThreadEvent()
-
-        self.gateways: dict[str, BaseGateway] = {}
+        self.gateways: dict[str, "BaseGateway"] = {}
         self.engines: dict[str, BaseEngine] = {}
         self.apps: dict[str, BaseApp] = {}
-        self.intervals: list[Interval] = [
-            Interval(interval) for interval in SETTINGS.get("gateway.intervals", [])
-        ]
-        self.minimum_freq: TimeFreq = min(
-            [DatetimeUtils.interval2freq(intvl) for intvl in self.intervals]
-        )
+        self.intervals: list[Interval] = [Interval(interval) for interval in SETTINGS.get('gateway.intervals', [])]
+        self.minimum_freq: TimeFreq = min([DatetimeUtils.interval2freq(intvl) for intvl in self.intervals])
         self.symbols = SETTINGS.get("gateway.symbols", [])  # hyf
-        self.exchanges: list[Exchange] = [
-            Exchange(ex) for ex in SETTINGS.get("gateway.exchanges", [])
-        ]  # hyf
-        self.vt_symbols: list[str] = [
-            f"{s}.{e.value}" for s, e in product(self.symbols, self.exchanges)
-        ]
-        self.mode: str = SETTINGS.get("mode", "LIVE")
-        assert self.mode in ["LIVE", "BACKTEST", "TEST"]
+        self.exchanges: list[Exchange] = [Exchange(ex) for ex in SETTINGS.get("gateway.exchanges", [])]  # hyf
+        self.vt_symbols: list[str] = [f"{s}.{e.value}" for s, e in product(self.symbols, self.exchanges)]
+        self.mode: str = SETTINGS.get('mode', 'LIVE')
+        assert self.mode in ['LIVE', 'BACKTEST', 'TEST']
 
+        self.TEMP_DIR = TEMP_DIR
         os.chdir(TRADER_DIR)  # Change working directory
         self.init_engines()  # Initialize function engines
-        self.init_signal_handler()
-
-    # The following logic was written by Gemini to add a safe exit mechanism.
-    def init_signal_handler(self) -> None:
-        """
-        Initialize the signal handler for safe exit.
-        """
-        signal.signal(signal.SIGINT, self.exit)
-        signal.signal(signal.SIGTERM, self.exit)
-
-    # The following logic was written by Gemini to add a safe exit mechanism.
-    def shutdown(self) -> None:
-        """
-        Signal the application to shut down.
-        """
-        self._shutdown_event.set()
-
-    # The following logic was written by Gemini to add a safe exit mechanism.
-    def is_shutdown(self) -> bool:
-        """
-        Check if the application is shutting down.
-        """
-        return self._shutdown_event.is_set()
-
-    # The following logic was written by Gemini to add a safe exit mechanism.
-    def exit(self, sig, frame) -> None:
-        """
-        Exit the application gracefully.
-        """
-        self.write_log("Exiting the application...")
-        self.close()
 
     def add_engine(self, engine_class: type[EngineType], *args, **kwargs) -> EngineType:
         """
@@ -146,9 +102,7 @@ class MainEngine:
         self.engines[engine.engine_name] = engine
         return engine
 
-    def add_gateway(
-        self, gateway_class: type[BaseGateway], gateway_name: str = ""
-    ) -> BaseGateway:
+    def add_gateway(self, gateway_class: type["BaseGateway"], gateway_name: str = "") -> "BaseGateway":
         """
         Add gateway.
         """
@@ -156,7 +110,7 @@ class MainEngine:
         if not gateway_name:
             gateway_name: str = gateway_class.default_name
 
-        gateway: BaseGateway = gateway_class(self.event_engine, gateway_name)
+        gateway: "BaseGateway" = gateway_class(self.event_engine, gateway_name)
         self.gateways[gateway_name] = gateway
 
         # Add gateway supported exchanges into engine
@@ -166,16 +120,20 @@ class MainEngine:
 
         return gateway
 
-    def add_app(
-        self, app_class: type[BaseApp]
-    ) -> BaseEngine | type[BaseEngine] | EngineType:
+    def add_app(self, app_class: type[BaseApp], *args, **kwargs) -> BaseEngine | type[BaseEngine] | EngineType:
         """
         Add app.
+        Parameters
+        ----------
+        args: list
+            args for engine
+        kwargs: dict
+            kwargs for engine
         """
         app: BaseApp = app_class()
         self.apps[app.app_name] = app
 
-        engine: BaseEngine = self.add_engine(app.engine_class)
+        engine: BaseEngine = self.add_engine(app.engine_class, *args, **kwargs)
         return engine
 
     def init_engines(self) -> None:
@@ -196,51 +154,36 @@ class MainEngine:
         self.get_all_ticks: Callable[[], list[TickData]] = oms_engine.get_all_ticks
         self.get_all_orders: Callable[[], list[OrderData]] = oms_engine.get_all_orders
         self.get_all_trades: Callable[[], list[TradeData]] = oms_engine.get_all_trades
-        self.get_all_positions: Callable[[], list[PositionData]] = (
-            oms_engine.get_all_positions
-        )
-        self.get_all_accounts: Callable[[], list[AccountData]] = (
-            oms_engine.get_all_accounts
-        )
-        self.get_all_contracts: Callable[[], list[ContractData]] = (
-            oms_engine.get_all_contracts
-        )
+        self.get_all_positions: Callable[[], list[PositionData]] = oms_engine.get_all_positions
+        self.get_all_accounts: Callable[[], list[AccountData]] = oms_engine.get_all_accounts
+        self.get_all_contracts: Callable[[], list[ContractData]] = oms_engine.get_all_contracts
         self.get_all_quotes: Callable[[], list[QuoteData]] = oms_engine.get_all_quotes
-        self.get_all_active_orders: Callable[[], list[OrderData]] = (
-            oms_engine.get_all_active_orders
-        )
-        self.get_all_active_quotes: Callable[[], list[QuoteData]] = (
-            oms_engine.get_all_active_quotes
-        )
-        self.update_order_request: Callable[[OrderRequest, str, str], None] = (
-            oms_engine.update_order_request
-        )
+        self.get_all_active_orders: Callable[[], list[OrderData]] = oms_engine.get_all_active_orders
+        self.get_all_active_quotes: Callable[[], list[QuoteData]] = oms_engine.get_all_active_quotes
+        self.update_order_request: Callable[[OrderRequest, str, str], None] = oms_engine.update_order_request
         self.convert_order_request: Callable[
-            [OrderRequest, str, bool, bool], list[OrderRequest]
-        ] = oms_engine.convert_order_request
+            [OrderRequest, str, bool, bool], list[OrderRequest]] = oms_engine.convert_order_request
         self.get_converter: Callable[[str], OffsetConverter] = oms_engine.get_converter
 
         email_engine: EmailEngine = self.add_engine(EmailEngine)
         self.send_email: Callable[[str, str, str], None] = email_engine.send_email
 
-        # The following logic was adjusted by Gemini for adding AgentEngine.
-        self.add_engine(AgentEngine)
+        telegram_engine: TelegramEngine = self.add_engine(TelegramEngine)
+        self.send_telegram: Callable[[str], None] = telegram_engine.send_msg
 
     def write_log(self, msg: str, source: str = "", level=INFO) -> None:
         """
         Put log event with specific message.
         """
-        log: LogData = LogData(
-            msg=msg, gateway_name=APP_NAME if not source else source, level=level
-        )
+        log: LogData = LogData(msg=msg, gateway_name=APP_NAME if not source else source, level=level)
         event: Event = Event(EVENT_LOG, log)
         self.event_engine.put(event)
 
-    def get_gateway(self, gateway_name: str) -> BaseGateway:
+    def get_gateway(self, gateway_name: str) -> "BaseGateway":
         """
         Return gateway object by name.
         """
-        gateway: BaseGateway = self.gateways.get(gateway_name, None)
+        gateway: "BaseGateway" = self.gateways.get(gateway_name, None)
         if not gateway:
             self.write_log(f"Cannot find gateway: {gateway_name}")
         return gateway
@@ -254,13 +197,11 @@ class MainEngine:
             self.write_log(f"Cannot find engine: {engine_name}")
         return engine
 
-    def get_default_setting(
-        self, gateway_name: str
-    ) -> dict[str, str | bool | int | float] | None:
+    def get_default_setting(self, gateway_name: str) -> dict[str, str | bool | int | float] | None:
         """
         Get default setting dict of a specific gateway.
         """
-        gateway: BaseGateway = self.get_gateway(gateway_name)
+        gateway: "BaseGateway" = self.get_gateway(gateway_name)
         if gateway:
             return gateway.get_default_setting()
         return None
@@ -287,7 +228,7 @@ class MainEngine:
         """
         Start connection of a specific gateway.
         """
-        gateway: BaseGateway = self.get_gateway(gateway_name)
+        gateway: "BaseGateway" = self.get_gateway(gateway_name)
         if gateway:
             gateway.connect(setting)
 
@@ -295,7 +236,7 @@ class MainEngine:
         """
         Subscribe tick data update of a specific gateway.
         """
-        gateway: BaseGateway = self.get_gateway(gateway_name)
+        gateway: "BaseGateway" = self.get_gateway(gateway_name)
         if gateway:
             gateway.subscribe(req)
 
@@ -303,19 +244,16 @@ class MainEngine:
         """
         Subscribe tick data update of all contracts in a gateway.
         """
-        for symbol, exchange, interval in product(
-            self.symbols, self.exchanges, self.intervals
-        ):
-            req: SubscribeRequest = SubscribeRequest(
-                symbol=symbol, exchange=Exchange(exchange), interval=Interval(interval)
-            )
+        for symbol, exchange, interval in product(self.symbols, self.exchanges, self.intervals):
+            req: SubscribeRequest = SubscribeRequest(symbol=symbol, exchange=Exchange(exchange),
+                                                     interval=Interval(interval))
             self.subscribe(req, gateway_name)
 
     def send_order(self, req: OrderRequest, gateway_name: str) -> str:
         """
         Send new order request to a specific gateway.
         """
-        gateway: BaseGateway = self.get_gateway(gateway_name)
+        gateway: "BaseGateway" = self.get_gateway(gateway_name)
         if gateway:
             return gateway.send_order(req)
         else:
@@ -325,7 +263,7 @@ class MainEngine:
         """
         Send cancel order request to a specific gateway.
         """
-        gateway: BaseGateway = self.get_gateway(gateway_name)
+        gateway: "BaseGateway" = self.get_gateway(gateway_name)
         if gateway:
             gateway.cancel_order(req)
 
@@ -333,7 +271,7 @@ class MainEngine:
         """
         Send new quote request to a specific gateway.
         """
-        gateway: BaseGateway = self.get_gateway(gateway_name)
+        gateway: "BaseGateway" = self.get_gateway(gateway_name)
         if gateway:
             return gateway.send_quote(req)
         else:
@@ -343,17 +281,15 @@ class MainEngine:
         """
         Send cancel quote request to a specific gateway.
         """
-        gateway: BaseGateway = self.get_gateway(gateway_name)
+        gateway: "BaseGateway" = self.get_gateway(gateway_name)
         if gateway:
             gateway.cancel_quote(req)
 
-    def query_history(
-        self, req: HistoryRequest, gateway_name: str
-    ) -> list[BarData] | None:
+    def query_history(self, req: HistoryRequest, gateway_name: str) -> list[BarData] | None:
         """
         Query bar history data from a specific gateway.
         """
-        gateway: BaseGateway = self.get_gateway(gateway_name)
+        gateway: "BaseGateway" = self.get_gateway(gateway_name)
         if gateway:
             return gateway.query_history(req)
         else:
@@ -364,11 +300,7 @@ class MainEngine:
         Make sure every gateway and app is closed properly before
         programme exit.
         """
-        # The following logic was adjusted by Gemini to streamline the shutdown sequence.
-        if self.is_shutdown():
-            return
-        self.shutdown()
-
+        # Stop event engine first to prevent new timer event.
         self.event_engine.stop()
 
         for engine in self.engines.values():
@@ -378,21 +310,16 @@ class MainEngine:
             gateway.close()
 
     def start_data_stream(self):
-        # The following logic was adjusted by Gemini to fix a bug.
         for exchange in self.exchanges:
-            for ticker in self.symbols:
-                vt_symbol = f"{ticker}.{exchange.value}"
+            for ticker in self.tickers:
+                vt_symbol = f'{ticker}.{exchange.value}'
                 contract: ContractData | None = self.get_contract(vt_symbol)
                 if contract:
-                    req: SubscribeRequest = SubscribeRequest(
-                        symbol=contract.symbol, exchange=contract.exchange
-                    )
+                    req: SubscribeRequest = SubscribeRequest(symbol=contract.symbol, exchange=contract.exchange)
                     self.subscribe(req, contract.gateway_name)
                 else:
-                    self.write_log(
-                        msg=f"Market data subscription failed, contract {vt_symbol} not found",
-                        source="MainEngine",
-                    )
+                    self.write_log(msg=f"Market data subscription failed, contract {vt_symbol} not found",
+                                   source='MainEngine')
 
 
 class BaseEngine(ABC):
@@ -401,10 +328,10 @@ class BaseEngine(ABC):
     """
 
     def __init__(
-        self,
-        main_engine: MainEngine,
-        event_engine: EventEngine,
-        engine_name: str,
+            self,
+            main_engine: MainEngine,
+            event_engine: EventEngine,
+            engine_name: str,
     ) -> None:
         """"""
         self.main_engine: MainEngine = main_engine
@@ -458,7 +385,7 @@ class LogEngine(BaseEngine):
         self.logger.setLevel(self.level)
 
         self.formatter: logging.Formatter = logging.Formatter(
-            "%(asctime)s | %(levelname)-8s | %(message)s"
+            '%(asctime)s | %(levelname)-8s | %(message)s'
         )
 
         self.add_null_handler()
@@ -522,8 +449,7 @@ class LogEngine(BaseEngine):
         self.logger.log(log.level, log.msg)  # Do not use vnpy v4.0.0 update.
 
     def close(self) -> None:
-        # The following logic was added by Gemini to ensure logs are flushed.
-        logging.shutdown()
+        pass
 
 
 class OmsEngine(BaseEngine):
@@ -604,9 +530,7 @@ class OmsEngine(BaseEngine):
             self.active_orders.pop(order.vt_orderid)
 
         # Update to offset converter
-        converter: OffsetConverter = self.offset_converters.get(
-            order.gateway_name, None
-        )
+        converter: OffsetConverter = self.offset_converters.get(order.gateway_name, None)
         if converter:
             converter.update_order(order)
 
@@ -616,9 +540,7 @@ class OmsEngine(BaseEngine):
         self.trades[trade.vt_tradeid] = trade
 
         # Update to offset converter
-        converter: OffsetConverter = self.offset_converters.get(
-            trade.gateway_name, None
-        )
+        converter: OffsetConverter = self.offset_converters.get(trade.gateway_name, None)
         if converter:
             converter.update_trade(trade)
 
@@ -628,9 +550,7 @@ class OmsEngine(BaseEngine):
         self.positions[position.vt_positionid] = position
 
         # Update to offset converter
-        converter: OffsetConverter = self.offset_converters.get(
-            position.gateway_name, None
-        )
+        converter: OffsetConverter = self.offset_converters.get(position.gateway_name, None)
         if converter:
             converter.update_position(position)
 
@@ -775,27 +695,25 @@ class OmsEngine(BaseEngine):
             ]
             return active_quotes
 
-    def update_order_request(
-        self, req: OrderRequest, vt_orderid: str, gateway_name: str
-    ) -> None:
+    def update_order_request(self, req: OrderRequest, vt_orderid: str, gateway_name: str) -> None:
         """
         Update order request to offset converter.
         """
-        converter: OffsetConverter | None = self.offset_converters.get(
-            gateway_name, None
-        )
+        converter: OffsetConverter | None = self.offset_converters.get(gateway_name, None)
         if converter:
             converter.update_order_request(req, vt_orderid)
 
     def convert_order_request(
-        self, req: OrderRequest, gateway_name: str, lock: bool, net: bool = False
+            self,
+            req: OrderRequest,
+            gateway_name: str,
+            lock: bool,
+            net: bool = False
     ) -> list[OrderRequest]:
         """
         Convert original order request according to given mode.
         """
-        converter: OffsetConverter | None = self.offset_converters.get(
-            gateway_name, None
-        )
+        converter: OffsetConverter | None = self.offset_converters.get(gateway_name, None)
         if not converter:
             return [req]
 
@@ -827,9 +745,7 @@ class EmailEngine(BaseEngine):
 
         # self.main_engine.send_email = self.send_email  # vnpy v4.0.0 update. it is moved to initialization of main_engine
 
-    def send_email(
-        self, subject: str, content: str, receiver: str | None = None
-    ) -> None:
+    def send_email(self, subject: str, content: str, receiver: str | None = None) -> None:
         """"""
         # Start email engine when sending first email.
         if not self.active:
@@ -857,9 +773,6 @@ class EmailEngine(BaseEngine):
         while self.active:
             try:
                 msg: EmailMessage = self.queue.get(block=True, timeout=1)
-                # The following logic was added by Gemini to improve the shutdown sequence.
-                if msg is None:
-                    break
 
                 try:
                     with smtplib.SMTP_SSL(server, port) as smtp:
@@ -881,7 +794,72 @@ class EmailEngine(BaseEngine):
         if not self.active:
             return
 
-        # The following logic was adjusted by Gemini to improve the shutdown sequence.
         self.active = False
-        self.queue.put(None)
         self.thread.join()
+
+
+class TelegramEngine(BaseEngine):
+    """Telegram message sending engine"""
+
+    def __init__(self, main_engine: MainEngine, event_engine: EventEngine) -> None:
+        super().__init__(main_engine, event_engine, "telegram")
+
+        self.active: bool = SETTINGS.get("telegram.active", False)
+        self.token: str = SETTINGS.get("telegram.token", "")
+        self.chat: str = SETTINGS.get("telegram.chat", "")
+        self.url: str = f"https://api.telegram.org/bot{self.token}/sendMessage"
+        # refer to telegram_tutorial.md
+        self.proxies: dict[str, str] = {}
+        proxy: str = SETTINGS.get("telegram.proxy", "")
+        if proxy:
+            self.proxies["http"] = proxy
+            self.proxies["https"] = proxy
+
+        self.thread: Thread = Thread(target=self.run, daemon=True)
+        self.queue: Queue = Queue()
+
+        if self.active:
+            self.register_event()
+            self.thread.start()
+
+    def register_event(self) -> None:
+        """Register event handler"""
+        self.event_engine.register(EVENT_LOG, self.process_log_event)
+
+    def process_log_event(self, event: Event) -> None:
+        """Process log event"""
+        log: LogData = event.data
+
+        msg = f"{log.time}\t[{log.gateway_name}] {log.msg}"
+        self.queue.put(msg)
+
+    def close(self) -> None:
+        """Stop task thread"""
+        if not self.active:
+            return
+
+        self.active = False
+        self.thread.join()
+
+    def run(self) -> None:
+        """Task thread loop"""
+        while self.active:
+            try:
+                msg: str = self.queue.get(block=True, timeout=1)
+                self.send_msg(msg)
+            except Empty:
+                pass
+
+    def send_msg(self, msg: str) -> dict:
+        """Sending message"""
+        data: dict = {
+            "chat_id": self.chat,
+            "text": msg
+        }
+
+        # Send request
+        try:
+            r: requests.Response = requests.post(self.url, data=data)
+            return r.json()
+        except Exception:
+            return None

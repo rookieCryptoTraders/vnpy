@@ -657,7 +657,7 @@ class OverviewHandler:
         # fixme: what if this is the first startup of the system? overview_dict will be empty and vt_symbols are unknown. so I can't calculate gaps here because I don't know the key of return dict
         # get all existing data ranges and store them together
         exist_dict = {}
-        for type_ in ['bar', 'factor', 'tick']:
+        for type_ in ['bar', 'factor']:
             overview_dict = self.get_overview_dict(type_=type_)
             for vt_symbol, overview in overview_dict.items():
                 # why here we can use overview_key, that's because downloading data is only relate to interval, symbol and exchange, which is the same as overview_key

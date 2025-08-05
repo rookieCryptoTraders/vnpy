@@ -264,19 +264,6 @@ class LogData(BaseData):
 
 
 @dataclass
-class TelegramData(BaseData):
-    """
-    Telegram data is used for receiving message from telegram.
-    """
-    msg: str = field(default=None, init=True)
-    peer_id: int = field(default=None, init=True)
-
-    def __post_init__(self) -> None:
-        """"""
-        self.time: Datetime = Datetime.now()
-
-
-@dataclass
 class ContractData(BaseData):
     """
     Contract data contains basic information about each contract traded.

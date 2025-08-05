@@ -5,8 +5,10 @@ import time
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime
-from logging import INFO
+from logging import INFO,ERROR
 from typing import List, Optional, Union, TYPE_CHECKING, Literal
+
+import polars as pl
 
 from vnpy.config import match_format_string
 from vnpy.event import Event, EventEngine
@@ -16,7 +18,7 @@ from vnpy.trader.database import BaseDatabase, BarOverview, DB_TZ, TV_BaseOvervi
 from vnpy.trader.datafeed import BaseDatafeed, get_datafeed
 from vnpy.trader.engine import BaseEngine, MainEngine
 from vnpy.trader.event import EVENT_LOG, EVENT_BAR_FILLING
-from vnpy.trader.event import EVENT_DATAMANAGER_LOAD_BAR, EVENT_DATAMANAGER_LOAD_FACTOR, \
+from vnpy.trader.event import EVENT_DATAMANAGER_LOAD_BAR_REQUEST, EVENT_DATAMANAGER_LOAD_FACTOR_REQUEST, \
     EVENT_DATAMANAGER_LOAD_BAR_RESPONSE, EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE
 from vnpy.trader.object import ContractData
 from vnpy.trader.object import HistoryRequest, BarData, TickData, FactorData
@@ -54,22 +56,26 @@ class DataManagerEngine(BaseEngine):
         """
         Register event handlers.
         """
-        self.event_engine.register(EVENT_DATAMANAGER_LOAD_BAR, self.on_load_bar_data)
-        self.event_engine.register(EVENT_DATAMANAGER_LOAD_FACTOR, self.on_load_factor_data)
+        self.event_engine.register(EVENT_DATAMANAGER_LOAD_BAR_REQUEST, self.on_load_bar_data)
+        self.event_engine.register(EVENT_DATAMANAGER_LOAD_FACTOR_REQUEST, self.on_load_factor_data)
 
     def on_load_bar_data(self, event: Event) -> None:
-        print(111)
         event_type, data = event.type, event.data
-        time.sleep(3)
-        res = self.database.load_bar_data(
-            **data
-        )
-        print(f"res is here")
-        print(res)
-        self.put_event(Event(EVENT_DATAMANAGER_LOAD_BAR_RESPONSE, res))
-        self.write_log(f"load bar request {data}")
-
-        self.write_log(f"Successfully processed {EVENT_DATAMANAGER_LOAD_BAR}, response count: {len(res) if res else 0}")
+        if isinstance(data, list) and isinstance(data[0], dict):
+            res = []
+            for d in data:
+                res.append(self.database.load_bar_data(**d))
+            res = pl.concat(res, how="vertical",rechunk=True)
+        elif isinstance(data,dict):
+            res = self.database.load_bar_data(
+                **data
+            )
+        else:
+            self.write_log(f"Invalid data format for {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}: {data}",level=ERROR)
+            raise TypeError(f"Invalid data format for {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}: {data}")
+        self.write_log(
+            f"Successfully processed {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}, response count: {len(res)}")
+        self.put_event(Event(EVENT_DATAMANAGER_LOAD_BAR_RESPONSE, data=res))
 
     def on_load_factor_data(self, event: Event) -> None:
         event_type, data = event.type, event.data
@@ -77,7 +83,7 @@ class DataManagerEngine(BaseEngine):
         res = self.database.load_factor_data(
             **data)
         self.put_event(Event(EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE, res))
-        self.write_log(f"Successfully processed {EVENT_DATAMANAGER_LOAD_FACTOR}, response count: {len(res)}")
+        self.write_log(f"Successfully processed {EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE}, response count: {len(res)}")
 
     def on_bar_filling(self, bar: BarData) -> None:
         """
@@ -86,6 +92,25 @@ class DataManagerEngine(BaseEngine):
         """
         self.put_event(Event(EVENT_BAR_FILLING, bar))
         self.put_event(Event(EVENT_BAR_FILLING + bar.vt_symbol, bar))
+
+    def union_gaps(self,
+                   gaps: dict[str, list[TimeRange]],
+                   start: datetime = None,
+                   end: datetime = None
+                   ) -> dict[str, list[TimeRange]]:
+        """
+        Union gaps in the overview.
+        """
+        res = defaultdict(list)
+        for overview_key, time_ranges in gaps.items():
+            info = match_format_string(VTSYMBOL_OVERVIEW, overview_key)
+            for time_range in time_ranges:
+                if time_range.start < start:
+                    time_range.start = start
+                if time_range.end > end:
+                    time_range.end = end
+                res[overview_key].append(time_range)
+        return res
 
     def import_data_from_csv(
             self,

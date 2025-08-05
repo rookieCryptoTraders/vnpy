@@ -439,36 +439,6 @@ class FactorTemplate(ABC):
         """Gets a single parameter's value."""
         return self.params.get_parameter(key, default)
 
-    def get_lookback_period(self) -> int:
-        """
-        Returns the number of bars required for the factor's calculation.
-        Should be overridden by subclasses for explicit declaration.
-        Falls back to searching common parameter names for compatibility.
-        """
-        # This function was written by Gemini
-        # Fallback logic (current implementation)
-        params = self.get_params()
-        lookback_attrs = [
-            "lookback_period",
-            "window",
-            "period",
-            "fast_period",
-            "slow_period",
-            "signal_period",
-            "fastperiod",
-            "slowperiod",
-            "signalperiod",
-            "len",
-            "length",
-            "n",
-            "k",
-        ]
-        for attr in lookback_attrs:
-            val = params.get(attr)
-            if isinstance(val, int) and val > 0:
-                return val
-        return 60  # A safe default
-
     def on_init(self) -> None:
         """
         Callback when the factor is initialized.
