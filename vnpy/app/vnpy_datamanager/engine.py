@@ -79,11 +79,21 @@ class DataManagerEngine(BaseEngine):
 
     def on_load_factor_data(self, event: Event) -> None:
         event_type, data = event.type, event.data
-        self.write_log(f"load factor request {data}")
-        res = self.database.load_factor_data(
-            **data)
-        self.put_event(Event(EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE, res))
-        self.write_log(f"Successfully processed {EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE}, response count: {len(res)}")
+        if isinstance(data, list) and isinstance(data[0], dict):
+            res = []
+            for d in data:
+                res.append(self.database.load_factor_data(**d))
+            res = pl.concat(res, how="vertical", rechunk=True)
+        elif isinstance(data, dict):
+            res = self.database.load_factor_data(
+                **data
+            )
+        else:
+            self.write_log(f"Invalid data format for {EVENT_DATAMANAGER_LOAD_FACTOR_REQUEST}: {data}", level=ERROR)
+            raise TypeError(f"Invalid data format for {EVENT_DATAMANAGER_LOAD_FACTOR_REQUEST}: {data}")
+        self.write_log(
+            f"Successfully processed {EVENT_DATAMANAGER_LOAD_FACTOR_REQUEST}, response count: {len(res)}")
+        self.put_event(Event(EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE, data=res))
 
     def on_bar_filling(self, bar: BarData) -> None:
         """
