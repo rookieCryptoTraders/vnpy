@@ -25,7 +25,7 @@ from dask.delayed import Delayed
 
 from vnpy.event import Event, EventEngine
 from vnpy.trader.event import EVENT_DATAMANAGER_LOAD_BAR_REQUEST, EVENT_DATAMANAGER_LOAD_FACTOR_REQUEST, \
-    EVENT_FACTORMAKER_CALCULATE, EVENT_FACTORMAKER_BAR_READY
+    EVENT_FACTORMAKER_CALCULATE, EVENT_FACTORMAKER_BAR_READY, EVENT_FACTORMAKER_FACTOR_READY
 from vnpy.factor.base import APP_NAME, FactorMode
 from vnpy.factor.memory import FactorMemory, MemoryData
 from vnpy.factor.template import FactorTemplate
@@ -188,9 +188,10 @@ class FactorEngine(BaseEngine):
     def register_event(self) -> None:
         self.event_engine.register(EVENT_TICK, self.process_tick_event)
         self.event_engine.register(EVENT_BAR, self.process_bar_event)
-        # self.event_engine.register(EVENT_FACTOR_FILLING, self.process_factor_filling_event)
         self.event_engine.register(EVENT_DATAMANAGER_LOAD_BAR_RESPONSE, self.process_load_bar_response_event)
         self.event_engine.register(EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE, self.process_load_factor_response_event)
+        self.event_engine.register(EVENT_FACTORMAKER_BAR_READY, self.process_factor_filling_event)
+        # self.event_engine.register(EVENT_FACTORMAKER_FACTOR_READY, self.process_factor_filling_event)
         # self.event_engine.register(EVENT_ALL_READY,self.)
 
     @staticmethod
@@ -744,37 +745,44 @@ class FactorEngine(BaseEngine):
 
         # self.write_log(f"Finished processing bars for {dt}.", level=DEBUG) # Removed, can be too noisy
 
-    def execute_calculation(self, dt: datetime) -> None:
+    def execute_calculation(self, dt: datetime, high_performance=False) -> None:
         """Executes the Dask computational graph and updates FactorMemory instances."""
         if not self.tasks:
             self.write_log("No tasks to execute.", level=DEBUG)
             return
 
-        self.write_log(f"Executing Dask computation for datetime {dt}...", level=INFO)
+        self.write_log(f"Executing Dask computation for datetime {dt}...", level=INFO, show=~high_performance)
 
         # Ensure thread-safety for the entire calculation execution block if needed,
         # though Dask's local scheduler might handle this internally.
         # The self.calculation_lock here prevents multiple calls to execute_calculation from overlapping.
         with self.calculation_lock:
             start_time = time.time()
-            initial_resources = self._monitor_resources()
+            if not high_performance:
+                initial_resources = self._monitor_resources()
 
             # Configure Dask for local single threaded execution (default if no cluster)
             # dask.config.set(scheduler='single-threaded') # this would fix the interpreter shut down issue
             # dask.config.set(num_workers=psutil.cpu_count(logical=False)) # Optional: set num_workers
 
             try:
-                with dask.diagnostics.ProgressBar(minimum=0.1):
+                if high_performance:
                     # Compute all tasks. Results will be a list of DataFrames.
                     with dask.config.set(scheduler="single-threaded"):
                         computed_results = dask.compute(
                             *self.tasks.values(), optimize_graph=True
                         )
-
+                else:
+                    with dask.diagnostics.ProgressBar(minimum=0.1):
+                        # Compute all tasks. Results will be a list of DataFrames.
+                        with dask.config.set(scheduler="single-threaded"):
+                            computed_results = dask.compute(
+                                *self.tasks.values(), optimize_graph=True
+                            )
                 end_time = time.time()
                 self.write_log(
                     f"Dask computation finished in {end_time - start_time:.3f}s.",
-                    level=INFO,
+                    level=INFO, show=~high_performance,
                 )
 
                 # Clear cache before populating with new results
@@ -847,20 +855,21 @@ class FactorEngine(BaseEngine):
                         level=ERROR,
                     )
 
-                final_resources = self._monitor_resources()
-                # Update metrics (overall for the batch)
-                # Per-factor metrics would require more granular timing within Dask tasks.
-                self.metrics["overall_batch"] = CalculationMetrics(
-                    calculation_time=end_time - start_time,
-                    # initial_resources is expected to always contain "memory_percent".
-                    # The .get() with fallback is defensive; memory_usage would be 0 if key were missing.
-                    memory_usage=final_resources["memory_percent"]
-                                 - initial_resources.get(
-                        "memory_percent", final_resources["memory_percent"]
-                    ),
-                    cache_hits=0,  # Dask handles its own caching/optimization
-                    error_count=calculation_errors_count,
-                )
+                if not high_performance:
+                    final_resources = self._monitor_resources()
+                    # Update metrics (overall for the batch)
+                    # Per-factor metrics would require more granular timing within Dask tasks.
+                    self.metrics["overall_batch"] = CalculationMetrics(
+                        calculation_time=end_time - start_time,
+                        # initial_resources is expected to always contain "memory_percent".
+                        # The .get() with fallback is defensive; memory_usage would be 0 if key were missing.
+                        memory_usage=final_resources["memory_percent"]
+                                     - initial_resources.get(
+                            "memory_percent", final_resources["memory_percent"]
+                        ),
+                        cache_hits=0,  # Dask handles its own caching/optimization
+                        error_count=calculation_errors_count,
+                    )
 
                 if calculation_errors_count > 0:
                     self.consecutive_errors += 1
@@ -869,7 +878,7 @@ class FactorEngine(BaseEngine):
 
                 self.write_log(
                     f"Factor calculations processed. Batch errors: {calculation_errors_count}",
-                    level=INFO,
+                    level=INFO, show=~high_performance,
                 )
                 self.write_log(
                     f"Resource usage - Memory: {final_resources['memory_percent']:.1f}%, CPU: {final_resources['cpu_percent']:.1f}%",
@@ -985,7 +994,7 @@ class FactorEngine(BaseEngine):
             lookback_start = begin - timedelta(minutes=max_lookback)
 
             # Request historical data with lookback period
-            hist_event = Event(
+            hist_req = Event(
                 type=EVENT_DATAMANAGER_LOAD_BAR_REQUEST,
                 data=[{
                     "symbol": vt_symbol.split('.')[0],  # Extract symbol from vt_symbol
@@ -997,7 +1006,7 @@ class FactorEngine(BaseEngine):
                 } for vt_symbol in vt_symbol_list],
             )
             self.write_log(f"Requesting historical data for symbols: {vt_symbol_list}", level=INFO)
-            self.event_engine.put(hist_event)
+            self.event_engine.put(hist_req)
         else:
             raise NotImplementedError()
 
@@ -1149,113 +1158,14 @@ class FactorEngine(BaseEngine):
 
         # Reset error state at start
         self.consecutive_errors = 0
-        print("in process_factor_filling_event", flush=True)
 
-        try:
+        start_dt: datetime | None = event.data.get("start_dt")
+        end_dt: datetime | None = event.data.get("end_dt")
+        interval: Interval | None = event.data.get("interval", Interval.MINUTE)
 
-            assert isinstance(start_dt, datetime) and isinstance(end_dt, datetime)
-            time_delta = end_dt - start_dt
-            total_intervals = max(1, time_delta.seconds // interval.seconds)
-            current_dt = start_dt
-            processed_count = 0
-
-            # Process each interval
-            while current_dt <= end_dt:
-                try:
-                    assert isinstance(current_dt, datetime)
-                    self.execute_calculation(current_dt)
-
-                    if self.latest_calculated_factors_cache:
-                        factor_event = Event(
-                            type=EVENT_FACTOR,
-                            data={
-                                "datetime": current_dt,
-                                "factors": self.latest_calculated_factors_cache.copy()
-                            }
-                        )
-                        self.event_engine.put(factor_event)
-
-                    processed_count += 1
-                    if processed_count % 100 == 0:
-                        self.write_log(
-                            f"Processed {processed_count}/{total_intervals} intervals",
-                            level=INFO
-                        )
-
-                    current_dt = current_dt + interval
-
-                except Exception as calc_error:
-                    self.write_log(
-                        f"Calculation error at {current_dt}: {str(calc_error)}",
-                        level=ERROR
-                    )
-                    self.consecutive_errors += 1
-                    if self.consecutive_errors >= self.error_threshold:
-                        raise RuntimeError(
-                            f"Error threshold reached: {self.consecutive_errors} "
-                            f"consecutive errors at {current_dt}"
-                        )
-                    continue
-
-            self.write_log(
-                f"Gap filling completed successfully. "
-                f"Processed {processed_count}/{total_intervals} intervals",
-                level=INFO
-            )
-
-        except AssertionError:
-            raise ValueError("Invalid datetime values encountered during processing")
-
-        except Exception as process_error:
-            error_msg = f"Factor filling failed: {str(process_error)}"
-            self.write_log(error_msg, level=ERROR)
-            self.write_log(traceback.format_exc(), level=ERROR)
-            raise RuntimeError(error_msg) from process_error
-
-        finally:
-            # Always clean up
-            self.consecutive_errors = 0
-            self._cleanup_memory_resources()
-
-        if not all([start_dt, end_dt, vt_symbol]):
-            self.write_log("Missing required filling parameters", level=ERROR)
-            return
-
-        # 1. Calculate required lookback periods
-        max_bar_lookback = int(self.max_memory_length_bar)
-        max_factor_lookback = int(max(
-            max_bar_lookback,
-            self.max_memory_length_factor
-        ))
-
-        # Adjust start time to include lookback period
-        lookback_start = start_dt - timedelta(minutes=max_factor_lookback)
-
-        # Request bar data from database through event engine
-        req_event = Event(
-            type=EVENT_HISTORY_DATA_REQUEST,
-            data={
-                "start_dt": lookback_start,
-                "end_dt": end_dt,
-                "vt_symbols": vt_symbol,
-            }
-        )
-        self.event_engine.put(req_event)
-
-        # 2. Prepare memory structures
-        # First clear existing memory to ensure clean state
-        self.memory_bar.clear()
-        self.latest_calculated_factors_cache.clear()
-
-        # Initialize memory structures
-        self.init_memory(fake=True)  # This sets up the schema
-
-        # Process received bar data and update memory
-        # Note: This assumes process_database_bar_data has been called via EVENT_FACTOR_BAR_UPDATE
-
-        # 3. Process gaps
         current_dt = start_dt
-        total_intervals = int((end_dt - start_dt).total_seconds() / 60)  # Assuming 1-minute intervals
+        total_intervals = int(
+            (end_dt - start_dt).total_seconds() / DatetimeUtils.interval2unix(interval, ret_unit='s'))
         processed_count = 0
 
         self.write_log(
@@ -1264,19 +1174,21 @@ class FactorEngine(BaseEngine):
 
         while current_dt <= end_dt:
             try:
-                # 3.1 Calculate factors for current interval
-                self.execute_calculation(current_dt)
-
-                # 3.2 Broadcast factor results via event
-                for calc_factor in self.latest_calculated_factors_cache:
-                    factor_event = Event(
-                        type=EVENT_FACTOR,
-                        data={
-                            "datetime": current_dt,
-                            "factors": calc_factor
-                        }
+                # 2. Execute factor calculations using Dask
+                if self.tasks:
+                    self.execute_calculation(
+                        dt=current_dt
+                    )  # Results written to FactorMemory, cache updated
+                else:
+                    self.write_log(
+                        "No Dask tasks defined, skipping factor calculation.", level=DEBUG
                     )
-                    self.event_engine.put(factor_event)
+
+                # 3. Broadcast the FactorMemory instances directly
+                if self.factor_memory_instances:
+                    # Broadcast FactorMemory instances directly
+                    event_data = {k: v.get_latest_rows(1) for k, v in self.factor_memory_instances.items()}
+                    self.event_engine.put(Event(EVENT_FACTOR, event_data))
 
                 processed_count += 1
                 if processed_count % 100 == 0:  # Log progress every 100 intervals
@@ -1345,6 +1257,7 @@ class FactorEngine(BaseEngine):
         self.event_engine.put(Event(EVENT_FACTORMAKER_BAR_READY, data={
             "start_dt": start_dt,
             "end_dt": end_dt,
+            "interval": Interval(DatetimeUtils.freq2str(self.minimum_freq))
         }))
 
     def process_load_factor_response_event(self, event: Event) -> None:
@@ -1373,6 +1286,7 @@ class FactorEngine(BaseEngine):
         df_pivoted = df_unpivoted.pivot(index=['datetime', 'factor_key'], columns=['ticker'], values='vt_symbol')
 
         # Process each factor and initialize FactorMemory instances
+        temp_df = None
         for group in df_pivoted.group_by("factor_key"):
             factor_key: str = group[0][0]
             if factor_key not in self.flattened_factors:
@@ -1403,11 +1317,24 @@ class FactorEngine(BaseEngine):
 
             # Update the FactorMemory instance with the new data
             temp_df = group[1]
-            temp_df = temp_df.select(sorted(temp_df.columns))
+            temp_df = temp_df.select([self.factor_datetime_col] + list(
+                sorted(set(temp_df.columns) - {self.factor_datetime_col, "factor_key"})))  # Remove factor_key column
             memory_instance.update_data(temp_df)
             self.factor_memory_instances[factor_key] = memory_instance
 
         self.write_log(f"Initialized factor memory with {len(df)} records from database.", level=INFO)
+
+        # start calculation after factor memory is initialized
+        if len(temp_df) <= self.max_factor_lookback + 1:
+            self.write_log("Not enough data to start factor calculations. Minimum lookback not met.", level=WARNING)
+            return
+        start_dt = temp_df[int(self.max_factor_lookback), "datetime"]
+        end_dt = temp_df[-1, "datetime"]
+        self.event_engine.put(Event(EVENT_FACTORMAKER_FACTOR_READY, data={
+            "start_dt": start_dt,
+            "end_dt": end_dt,
+            "interval": Interval(DatetimeUtils.freq2str(self.minimum_freq))
+        }))
 
     def stop_all_factors(self) -> None:
         self.write_log("Stopping all factors...", level=INFO)
@@ -1454,8 +1381,10 @@ class FactorEngine(BaseEngine):
             self.write_log(msg, factor=factor, level=ERROR)  # Pass factor object
 
     def write_log(
-            self, msg: str, factor: FactorTemplate | None = None, level: int = INFO
+            self, msg: str, factor: FactorTemplate | None = None, level: int = INFO, show=True
     ) -> None:
+        if not show and level <= INFO:
+            return
         log_msg = f"{factor.factor_key}: {msg}" if factor else f"{msg}"
         log: LogData = LogData(msg=log_msg, gateway_name=APP_NAME, level=level)
         event = Event(type=EVENT_LOG, data=log)

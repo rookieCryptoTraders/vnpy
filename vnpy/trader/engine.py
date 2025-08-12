@@ -94,7 +94,7 @@ class MainEngine:
         self.symbols = SETTINGS.get("gateway.symbols", [])  # hyf
         self.exchanges: list[Exchange] = [Exchange(ex) for ex in SETTINGS.get("gateway.exchanges", [])]  # hyf
         self.vt_symbols: list[str] = [f"{s}.{e.value}" for s, e in product(self.symbols, self.exchanges)]
-        self.mode: str = SETTINGS.get("mode", "LIVE")
+        self.mode: str = SETTINGS.get("system.mode", "LIVE")
         assert self.mode in ["LIVE", "BACKTEST", "TEST"]
 
         self.TEMP_DIR = TEMP_DIR

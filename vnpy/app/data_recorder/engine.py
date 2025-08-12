@@ -20,7 +20,7 @@ from vnpy.trader.event import (
     EVENT_CONTRACT,
     EVENT_FACTOR,
     EVENT_LOG,
-    EVENT_RECORDER_UPDATE, EVENT_BAR_FILLING
+    EVENT_RECORDER_UPDATE, EVENT_BAR_FILLING, EVENT_FACTOR_FILLING
 )
 from vnpy.trader.object import (
     BarData,
@@ -108,9 +108,11 @@ class RecorderEngine(BaseEngine):
     def register_event(self) -> None:
         """Registers the engine for relevant events."""
         self.event_engine.register(EVENT_BAR, self.process_bar_event)
-        self.event_engine.register(EVENT_BAR_FILLING, self.process_bar_event)
         self.event_engine.register(EVENT_FACTOR, self.process_factor_event)
         self.event_engine.register(EVENT_CONTRACT, self.process_contract_event)
+        self.event_engine.register(EVENT_BAR_FILLING, self.process_bar_filling_event)
+        self.event_engine.register(EVENT_FACTOR_FILLING, self.process_factor_filling_event)
+
 
     def run(self):
         """Main loop for the worker thread."""
@@ -120,7 +122,7 @@ class RecorderEngine(BaseEngine):
                 # Get a task from the queue, with a timeout to allow periodic buffer checks
                 task = self.queue.get(timeout=1)
                 task_type, data = task
-                self.save_data(task_type, data)
+                self.save_data(task_type=task_type.replace("_flush", ""), data=data, force_save="_flush" in task_type)
             except Empty:
                 # If the queue is empty, flush any partially filled buffers
                 self.write_log(f"the queue is empty, flush any partially filled buffers", level=NOTSET)
@@ -257,26 +259,50 @@ class RecorderEngine(BaseEngine):
             if vt_symbol in self.tick_recordings or vt_symbol in self.bar_recordings:
                 self.subscribe(contract)
 
+    def process_bar_filling_event(self, event: Event):
+        """Processes incoming bar data."""
+        self.record_bar(event.data,flush=True)
+
+    def process_factor_filling_event(self, event: Event):
+        """Processes incoming factor data."""
+        self.record_factor(event.data, flush=True)
+
+    def process_tick_filling_event(self, event: Event):
+        """Processes incoming tick data."""
+        tick: TickData = event.data
+        vt_symbol = tick.vt_symbol
+
+        with self.lock:
+            if vt_symbol in self.tick_recordings:
+                self.record_tick(tick, flush=True)
+
+            if vt_symbol in self.bar_recordings:
+                bg = self.get_bar_generator(vt_symbol)
+                bg.update_tick(tick, flush=True)
+
     # ----------------------------------------------------------------------
     # Data recording methods (putting data into the queue)
     # ----------------------------------------------------------------------
 
-    def record_tick(self, tick: TickData):
+    def record_tick(self, tick: TickData, flush=False):
         """Puts tick data into the processing queue."""
-        task = ("tick", deepcopy(tick))
+        type_ = "tick_flush" if flush else "tick"
+        task = (type_, deepcopy(tick))
         self.queue.put(task)
 
-    def record_bar(self, bar: BarData):
+    def record_bar(self, bar: BarData, flush=False):
         """Puts bar data into the processing queue."""
-        task = ("bar", deepcopy(bar))
+        type_ = "bar_flush" if flush else "bar"
+        task = (type_, deepcopy(bar))
         self.queue.put(task)
 
-    def record_factor(self, factor: FactorData | dict):
+    def record_factor(self, factor: FactorData | dict, flush=False):
         """
         Puts factor data into the queue.
         DataFrame-based factors MUST be in a dict: {factor_key: pl.DataFrame}.
         """
-        task = ("factor", deepcopy(factor))
+        type_ = "factor_flush" if flush else "factor"
+        task = (type_, deepcopy(factor))
         self.queue.put(task)
 
     # ----------------------------------------------------------------------
@@ -290,16 +316,16 @@ class RecorderEngine(BaseEngine):
             force_save: bool = False,
     ):
         """Routes data from the queue to the appropriate processing helper."""
-        # self.write_log(
-        #     f"Processing task: {task_type}, force_save={force_save}",
-        #     level=INFO if task_type else NOTSET,
-        # )
+        self.write_log(
+            f"saving data: {task_type}, force_save={force_save}",
+            level=INFO if task_type else NOTSET,
+        )
         if task_type == "tick":
             self.database_manager.save_tick_data([data])
         elif task_type == "bar":
-            self._process_bar_data(data, force_save)
+            self._process_bar_data(data=data, force_save=force_save)
         elif task_type == "factor":
-            self._process_factor_data(data, force_save)
+            self._process_factor_data(data=data, force_save=force_save)
         elif force_save:
             # This case is for flushing buffers when the queue is empty
             self._flush_all_buffers()

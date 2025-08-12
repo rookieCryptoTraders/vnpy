@@ -3,6 +3,7 @@ import random
 import threading
 from datetime import datetime, timedelta
 from typing import Dict, Set
+from vnpy.trader.setting import SETTINGS
 
 from vnpy.event.engine import EventEngine
 from vnpy.trader.gateway import BaseGateway
@@ -29,6 +30,7 @@ class MimicGateway(BaseGateway):
         "volume_range_min": 100,
         "volume_range_max": 1000
     }
+    mode = SETTINGS.get("system.mode", "LIVE")  # Default mode is LIVE, can be overridden by settings
 
     exchanges = [Exchange.BINANCE] # Add more as needed
     # exchanges = [Exchange('BINANCE')] # Add more as needed

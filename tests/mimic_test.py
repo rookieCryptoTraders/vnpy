@@ -97,7 +97,7 @@ def run_child():
     for i in range(3):  # allow 3 attempts to download data
         # gaps to requests
         gap_dict = data_recorder_engine.database_manager.get_gaps(end_time=datetime.datetime.now(),
-                                                                  start_time=datetime.datetime(2025, 8, 9, 0, 0))
+                                                                  start_time=datetime.datetime(2025, 8, 12, 14, 0))
         # no gap, break
         if not gap_dict:
             break
@@ -129,7 +129,7 @@ def run_child():
 
         # request bar data for factor engine and load bar data into memory
         factor_maker_engine.send_load_bar_request(type_='gap', param=gap_dict)
-        factor_maker_engine.send_load_factor_request(type_='gap', param=gap_dict)
+        # factor_maker_engine.send_load_factor_request(type_='gap', param=gap_dict)
 
         # filling missing factor
         gateway.on_factor_filling(gap_dict)

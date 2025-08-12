@@ -672,6 +672,8 @@ class OverviewHandler:
         for overview_key, data_range in exist_dict.items():
             gaps = data_range.get_gaps(start=start_time, end=end_time)
             gap_dict[overview_key] = gaps
+
+            # fixme: merging gaps is needed
             # if not gaps:
             #     continue
             # # merge all gaps into one DataRange
@@ -819,8 +821,16 @@ class BaseDatabase(ABC):
     def get_gaps(self, end_time: Optional[datetime] = None, start_time: Optional[datetime] = None) -> dict[
         str, list[TimeRange]]:
         """
-        Get gaps in data for a specific type, vt_symbol, exchange and interval.
+        Get gaps in data. As long as there is a missing value in the bar or factor, the time period of the missing value will be returned so that the data can be downloaded later to fill in the missing value.
+
+        Parameters
+        ----------
+        end_time : Optional[datetime]
+            The end time of the gap search. If None, current time is used.
+        start_time : Optional[datetime]
+            The start time of the gap search. If None, the earliest time in the overview is used.
         """
+
         gap_dict: dict = self.overview_handler.get_gaps(end_time=end_time, start_time=start_time)
         return gap_dict
 

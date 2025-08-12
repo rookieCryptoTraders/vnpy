@@ -5,7 +5,7 @@ import time
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime
-from logging import INFO,ERROR
+from logging import INFO, ERROR
 from typing import List, Optional, Union, TYPE_CHECKING, Literal
 
 import polars as pl
@@ -65,13 +65,13 @@ class DataManagerEngine(BaseEngine):
             res = []
             for d in data:
                 res.append(self.database.load_bar_data(**d))
-            res = pl.concat(res, how="vertical",rechunk=True)
-        elif isinstance(data,dict):
+            res = pl.concat(res, how="vertical", rechunk=True)
+        elif isinstance(data, dict):
             res = self.database.load_bar_data(
                 **data
             )
         else:
-            self.write_log(f"Invalid data format for {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}: {data}",level=ERROR)
+            self.write_log(f"Invalid data format for {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}: {data}", level=ERROR)
             raise TypeError(f"Invalid data format for {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}: {data}")
         self.write_log(
             f"Successfully processed {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}, response count: {len(res)}")
@@ -400,7 +400,9 @@ class DataManagerEngine(BaseEngine):
         """
         res = defaultdict(list)
         for overview_key, time_ranges in gap_dict.items():
-            print(f"download_bar_data_gaps Processing overview key: {overview_key},{time_ranges}")
+            start_dt = min([time_range.start for time_range in time_ranges])
+            end_dt = max([time_range.end for time_range in time_ranges])
+            self.write_log(f"download_bar_data_gaps: {overview_key}, {start_dt} - {end_dt}")
             info = match_format_string(VTSYMBOL_OVERVIEW, overview_key)
             for time_range in time_ranges:
                 res[overview_key].extend(self.download_bar_data(symbol=info['symbol'],

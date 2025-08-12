@@ -154,6 +154,8 @@ class DatetimeUtils:
         """
         if time_str == "min":
             return "m"
+        if time_str.endswith("min"):
+            return time_str[:-3] + "m"
         return time_str
 
     @classmethod
