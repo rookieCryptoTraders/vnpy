@@ -18,7 +18,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict
-from vnpy.trader.event import EVENT_DATAMANAGER_LOAD_BAR, EVENT_DATAMANAGER_LOAD_FACTOR
+from vnpy.trader.event import EVENT_DATAMANAGER_LOAD_BAR_REQUEST, EVENT_DATAMANAGER_LOAD_FACTOR
 
 from vnpy.trader.constant import Exchange, Interval
 from vnpy.factor.engine import FactorEngine
@@ -81,7 +81,7 @@ class TestDataManagerEngine(TestCase):
                 "start": pd.to_datetime('2025-07-20 08:36:00.000'),
                 "end": pd.to_datetime('2025-07-20 08:40:00.000'),
                 "ret": 'polars'}
-        self.main_engine.event_engine.put(event=Event(type=EVENT_DATAMANAGER_LOAD_BAR, data=data))
+        self.main_engine.event_engine.put(event=Event(type=EVENT_DATAMANAGER_LOAD_BAR_REQUEST, data=data))
         # Simulate a delay to allow the event to be processed
         sleep(1)
         df2=self.factor_maker_engine.memory_bar['close']

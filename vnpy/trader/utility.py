@@ -10,6 +10,7 @@ from datetime import datetime, time
 from pathlib import Path
 from decimal import Decimal, ROUND_DOWN
 from typing import Callable, Optional, Union, Literal
+import traceback
 
 import pandas as pd
 import polars as pl
@@ -37,10 +38,11 @@ def extract_factor_key(factor_key: str) -> tuple[Interval, str]:
     """
     try:
         factor_key, param = factor_key.split('@')
-        _, interval_str, factor_name = factor_key.split("_",maxsplit=2)
+        _, interval_str, factor_name = factor_key.split("_", maxsplit=2)
         return Interval(interval_str), factor_name
     except Exception as e:
-        raise ValueError(f"Invalid factor key format: {factor_key}. Expected format: 'factor_interval_factorname@param'") from e
+        raise ValueError(
+            f"Invalid factor key format: {factor_key}. Expected format: 'factor_interval_factorname@param'") from e
 
 
 def extract_vt_symbol_factor(vt_symbol: str) -> tuple[Interval, str, str, Exchange]:
@@ -152,9 +154,10 @@ def save_json(filename: str, data: dict | list, mode="w+", cls=json.JSONEncoder)
     Save data into json file in temp path.
     """
     filepath: Path = get_file_path(filename)
+    tmp_filepath: Path = get_file_path(filename + ".tmp")  # if use .tmp can get more data safety, but it will cause error
     if not data:
         return None
-    with open(filepath, mode=mode, encoding="UTF-8") as f:
+    with open(tmp_filepath, mode=mode, encoding="UTF-8") as f:
         json.dump(
             data,
             f,
@@ -162,6 +165,14 @@ def save_json(filename: str, data: dict | list, mode="w+", cls=json.JSONEncoder)
             ensure_ascii=False,
             cls=cls
         )
+        f.flush()
+        os.fsync(f.fileno()) # Calling os.fsync(f.fileno()) forces a physical disk write, which is slow (especially on HDDs and for lots of small files). If you can tolerate some risk (i.e., rare data loss on power failure), you can skip os.fsync. Just use f.flush() or even nothing, letting the OS cache writes for a while.
+    #     print("Saved data to", tmp_filepath,flush=True)
+    try:
+        if tmp_filepath.exists():
+            os.replace(tmp_filepath, filepath)
+    except FileNotFoundError as e:
+        traceback.print_tb(e.__traceback__)
 
 
 def round_to(value: float, target: float) -> float:

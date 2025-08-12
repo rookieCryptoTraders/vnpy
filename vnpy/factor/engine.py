@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from logging import DEBUG, ERROR, INFO, WARNING
 from threading import Lock
 from typing import Any, cast
-from collections.abc import Mapping
+from typing import Mapping, Optional, TypeVar, Union
 import asyncio
 
 import dask
@@ -23,7 +23,7 @@ import psutil
 from dask.delayed import Delayed
 
 from vnpy.event import Event, EventEngine
-from vnpy.trader.event import EVENT_DATAMANAGER_LOAD_BAR
+from vnpy.trader.event import EVENT_DATAMANAGER_LOAD_BAR_REQUEST, EVENT_DATAMANAGER_LOAD_FACTOR_REQUEST
 from vnpy.factor.base import APP_NAME  # Import FactorMode
 from vnpy.factor.memory import FactorMemory, MemoryData
 from vnpy.factor.template import FactorTemplate
@@ -44,11 +44,12 @@ from vnpy.trader.event import (
     EVENT_LOG,
     EVENT_TICK,
     EVENT_FACTOR_FILLING,
+    EVENT_FACTOR_BAR_UPDATE,
     EVENT_HISTORY_DATA_REQUEST,
-    EVENT_DATAMANAGER_LOAD_BAR_RESPONSE,
-    EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE,
+    EVENT_DATAMANAGER_LOAD_BAR_RESPONSE, EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE
 )
 from vnpy.trader.object import BarData, LogData
+from vnpy.trader.constant import Interval
 
 from .setting import (
     FACTOR_MODULE_SETTINGS,
@@ -90,12 +91,12 @@ class FactorEngine(BaseEngine):
             "datetime_col", "datetime"
         )
         self.loosen_ratio = FACTOR_MODULE_SETTINGS.get("loosen_ratio", 1.2)
-        self.max_memory_length_bar = int(
-            FACTOR_MODULE_SETTINGS.get("max_memory_length_bar", 60)
-        )
-        self.max_memory_length_factor = int(
-            FACTOR_MODULE_SETTINGS.get("max_memory_length_factor", 60)
-        )
+        self.max_memory_length_bar = int(FACTOR_MODULE_SETTINGS.get(
+            "max_memory_length_bar", 60
+        ))
+        self.max_memory_length_factor = int(FACTOR_MODULE_SETTINGS.get(
+            "max_memory_length_factor", 60
+        ))
         self.error_threshold = FACTOR_MODULE_SETTINGS.get("error_threshold", 3)
 
         try:
@@ -130,8 +131,7 @@ class FactorEngine(BaseEngine):
         self.flattened_factors: dict[str, FactorTemplate] = {}
 
         self.memory_bar: dict[
-            str, pl.DataFrame | MemoryData
-        ] = {}  # For OHLCV data. TODO: use MemoryData for a better management
+            str, pl.DataFrame | MemoryData] = {}  # For OHLCV data. TODO: use MemoryData for a better management
 
         # NEW: Manages FactorMemory instances
         # self.factor_data_dir is already a Path object from get_factor_data_cache_path()
@@ -159,9 +159,7 @@ class FactorEngine(BaseEngine):
 
         # 1. Load factor configurations and initialize FactorTemplate instances
         # 2. Flatten the dependency tree in init_all_factors
-        self.init_all_factors(
-            flat_factors=True
-        )  # Populates self.stacked_factors, determines max_lookbacks
+        self.init_all_factors(flat_factors=True)  # Populates self.stacked_factors, determines max_lookbacks
 
         # 3. Initialize memory structures (memory_bar and FactorMemory instances)
         self.init_memory(fake=fake)
@@ -181,7 +179,7 @@ class FactorEngine(BaseEngine):
         # 5. Call on_start for all factors
         for factor in self.flattened_factors.values():
             if (
-                factor.inited and not factor.trading
+                    factor.inited and not factor.trading
             ):  # Start if inited but not yet trading
                 self.call_factor_func(factor, factor.on_start)
 
@@ -190,17 +188,9 @@ class FactorEngine(BaseEngine):
     def register_event(self) -> None:
         self.event_engine.register(EVENT_TICK, self.process_tick_event)
         self.event_engine.register(EVENT_BAR, self.process_bar_event)
-        self.event_engine.register(
-            EVENT_FACTOR_FILLING, self.process_factor_filling_event
-        )
-        # self.event_engine.register(EVENT_FACTOR_FILLING, lambda event: asyncio.create_task(self.process_factor_filling_event(event)))
-        self.event_engine.register(
-            EVENT_DATAMANAGER_LOAD_BAR_RESPONSE, self.process_load_bar_response_event
-        )
-        self.event_engine.register(
-            EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE,
-            self.process_load_factor_response_event,
-        )
+        # self.event_engine.register(EVENT_FACTOR_FILLING, self.process_factor_filling_event)
+        self.event_engine.register(EVENT_DATAMANAGER_LOAD_BAR_RESPONSE, self.process_load_bar_response_event)
+        self.event_engine.register(EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE, self.process_load_factor_response_event)
 
     @staticmethod
     def _adjust_period_(factor_name: str, attr: str, value: int | float):
@@ -212,7 +202,7 @@ class FactorEngine(BaseEngine):
             name of the factor
         attr : str
             the name of period like attribute in factor parameters
-        value : Union[int,float]
+        value : int | float
             period value
 
         Returns
@@ -266,9 +256,7 @@ class FactorEngine(BaseEngine):
 
         if flat_factors:
             self.flattened_factors = self.complete_factor_tree(self.stacked_factors)
-            self.write_log(
-                f"Flattened {len(self.flattened_factors)} factors", level=INFO
-            )
+            self.write_log(f"Flattened {len(self.flattened_factors)} factors", level=INFO)
 
         # Determine max lookback for bar data from factor parameters
         # And potentially a global default for FactorMemory max_rows if not specified per factor
@@ -287,7 +275,7 @@ class FactorEngine(BaseEngine):
             "n",
             "k",
             "factor_memory_max_rows",
-            "timeperiod",
+            "timeperiod"
         ]  # Added more common param names
 
         all_bar_lookbacks = [self.max_memory_length_bar]  # Start with default
@@ -295,25 +283,19 @@ class FactorEngine(BaseEngine):
 
         for factor in self.flattened_factors.values():
             factor_params = factor.get_params()
-            freq_multiplier = DatetimeUtils.interval2unix(
-                factor.freq, ret_unit=self.minimum_freq
-            )
+            freq_multiplier = DatetimeUtils.interval2unix(factor.freq, ret_unit=self.minimum_freq)
             for attr in lookback_attrs:
                 period_len = factor_params.get(attr)
                 if isinstance(period_len, (int, float)) and period_len > 0:
-                    period_len = self._adjust_period_(
-                        factor.factor_name, attr=attr, value=period_len
-                    )
+                    period_len = self._adjust_period_(factor.factor_name, attr=attr, value=period_len)
                     all_bar_lookbacks.append(period_len * freq_multiplier)
                     all_factor_mem_max_rows.append(period_len * freq_multiplier)
 
         self.max_memory_length_bar = int(max(all_bar_lookbacks) * self.loosen_ratio)
-        self.max_memory_length_factor = int(
-            max(all_factor_mem_max_rows) * self.loosen_ratio
-        )
+        self.max_memory_length_factor = int(max(all_factor_mem_max_rows) * self.loosen_ratio)
         self.write_log(
             f"Max memory length for bar data: {self.max_memory_length_bar}, for factor data: {self.max_memory_length_factor}",
-            level=INFO,
+            level=INFO
         )
 
     def init_memory(self, fake: bool = False, end: datetime = None) -> None:
@@ -346,22 +328,16 @@ class FactorEngine(BaseEngine):
 
             if all_factor_symbols:
                 self.vt_symbols = sorted(list(all_factor_symbols))
-                self.write_log(
-                    f"Collected {len(self.vt_symbols)} symbols from factors. Requesting history data.",
-                    level=INFO,
-                )
+                self.write_log(f"Collected {len(self.vt_symbols)} symbols from factors. Requesting history data.",
+                               level=INFO)
 
                 # Dispatch event to request historical bar data
                 # The data provider should listen to this and send back EVENT_FACTOR_BAR_UPDATE
-                request_event = Event(
-                    EVENT_HISTORY_DATA_REQUEST, {"symbols": self.vt_symbols}
-                )
+                request_event = Event(EVENT_HISTORY_DATA_REQUEST, {"symbols": self.vt_symbols})
                 self.event_engine.put(request_event)
             else:
-                self.write_log(
-                    "No vt_symbols defined in factors and no symbols loaded from main_engine.",
-                    level=WARNING,
-                )
+                self.write_log("No vt_symbols defined in factors and no symbols loaded from main_engine.",
+                               level=WARNING)
 
         # 1. Initialize memory_bar (OHLCV)
         # Use a consistent schema for bar data DataFrames
@@ -385,8 +361,8 @@ class FactorEngine(BaseEngine):
                 # as the schema generation might depend on the symbols.
                 # This is a safeguard in case the factor's __init__ didn't set it from params.
                 if (
-                    not hasattr(factor_instance, "vt_symbols")
-                    or not factor_instance.vt_symbols
+                        not hasattr(factor_instance, "vt_symbols")
+                        or not factor_instance.vt_symbols
                 ):
                     factor_instance.vt_symbols = self.vt_symbols
 
@@ -406,7 +382,7 @@ class FactorEngine(BaseEngine):
                     max_rows=self.max_memory_length_factor,
                     schema=output_schema,
                     datetime_col=self.factor_datetime_col,
-                    mode=factor_instance.factor_mode,  # Pass the factor's mode to its memory manager
+                    mode=factor_instance.factor_mode  # Pass the factor's mode to its memory manager
                 )
             except Exception as e:
                 self.write_log(
@@ -419,11 +395,8 @@ class FactorEngine(BaseEngine):
             self.write_log("Populating with fake data...", level=DEBUG)
             fake_dates = pl.datetime_range(
                 start=datetime.now()
-                - timedelta(
-                    days=max(self.max_memory_length_bar, self.max_memory_length_factor)
-                    // (24 * 60)
-                    + 1
-                ),  # Enough days for minute data
+                      - timedelta(days=max(self.max_memory_length_bar, self.max_memory_length_factor) // (24 * 60) + 1
+                                  ),  # Enough days for minute data
                 end=datetime.now(),
                 interval="1m",
                 time_unit="us",
@@ -471,7 +444,7 @@ class FactorEngine(BaseEngine):
                         continue
                     if col_type.base_type() in [pl.Float32, pl.Float64]:
                         factor_fake_df_data[col_name] = (
-                            np.random.rand(num_fake_rows) * 10
+                                np.random.rand(num_fake_rows) * 10
                         )
                     elif col_type.base_type() in [
                         pl.Int8,
@@ -511,13 +484,13 @@ class FactorEngine(BaseEngine):
             pass
 
     def complete_factor_tree(
-        self, factors: dict[str, FactorTemplate]
+            self, factors: dict[str, FactorTemplate]
     ) -> dict[str, FactorTemplate]:
         """Recursively flattens the dependency tree for all factors."""
         resolved_factors: dict[str, FactorTemplate] = {}
 
         def traverse_dependencies(
-            factor: FactorTemplate, resolved: dict[str, FactorTemplate]
+                factor: FactorTemplate, resolved: dict[str, FactorTemplate]
         ) -> None:
             if factor.factor_key in resolved:
                 return
@@ -525,7 +498,7 @@ class FactorEngine(BaseEngine):
             # Resolve dependencies first
             for dependency_instance in factor.dependencies_factor:
                 if isinstance(
-                    dependency_instance, FactorTemplate
+                        dependency_instance, FactorTemplate
                 ):  # Ensure it's an instance
                     traverse_dependencies(dependency_instance, resolved)
                 else:
@@ -599,7 +572,7 @@ class FactorEngine(BaseEngine):
 
             # Visit dependencies of the current node
             if (
-                node in graph
+                    node in graph
             ):  # Check if node is in graph (might be a leaf with no recorded deps)
                 for dep_node in graph[node]:
                     visit(dep_node)
@@ -616,7 +589,7 @@ class FactorEngine(BaseEngine):
         all_nodes = nodes_as_keys | nodes_as_dependencies
 
         for (
-            node_key
+                node_key
         ) in all_nodes:  # Iterate over all known nodes to ensure all are visited
             if node_key not in visited_permanently:
                 visit(node_key)
@@ -643,10 +616,10 @@ class FactorEngine(BaseEngine):
         return self.factor_memory_instances[factor_key]
 
     def create_task(
-        self,
-        factor_key: str,
-        factors_dict: dict[str, FactorTemplate],  # All flattened factors
-        tasks_dict: dict[str, Delayed],  # Accumulator for created tasks
+            self,
+            factor_key: str,
+            factors_dict: dict[str, FactorTemplate],  # All flattened factors
+            tasks_dict: dict[str, Delayed],  # Accumulator for created tasks
     ) -> Delayed:
         """Recursively creates a Dask task for a given factor and its dependencies."""
         if factor_key in tasks_dict:  # Task already created
@@ -706,7 +679,7 @@ class FactorEngine(BaseEngine):
 
         for vt_symbol, bar_data_obj in bars.items():
             if (
-                vt_symbol not in self.vt_symbols
+                    vt_symbol not in self.vt_symbols
             ):  # Dynamically add new symbols if encountered
                 self.vt_symbols.append(vt_symbol)
                 # Update schemas for memory_bar if a new symbol appears
@@ -759,9 +732,7 @@ class FactorEngine(BaseEngine):
         # 3. Broadcast the FactorMemory instances directly
         if self.factor_memory_instances:
             # Broadcast FactorMemory instances directly
-            event_data = {
-                k: v.get_latest_rows(1) for k, v in self.factor_memory_instances.items()
-            }
+            event_data = {k: v.get_latest_rows(1) for k, v in self.factor_memory_instances.items()}
             self.event_engine.put(Event(EVENT_FACTOR, event_data))
 
         # 4. Maintain memory length for bar data (OHLCV)
@@ -815,7 +786,7 @@ class FactorEngine(BaseEngine):
                 error_factors = []
                 # Process results: update FactorMemory instances and the latest_factors_cache
                 for factor_key, result_df in zip(
-                    self.tasks.keys(), computed_results, strict=False
+                        self.tasks.keys(), computed_results, strict=False
                 ):
                     if result_df[:, "btcusdt.BINANCE"].is_nan().all():
                         error_factors.append(factor_key)
@@ -850,10 +821,8 @@ class FactorEngine(BaseEngine):
                         calculation_errors_count += 1
 
                 if error_factors:
-                    self.write_log(
-                        f"factor calculation error occurs in these factors: {str(error_factors)}",
-                        level=ERROR,
-                    )
+                    self.write_log(f"factor calculation error occurs in these factors: {str(error_factors)}",
+                                   level=ERROR)
 
                 if computation_issues:
                     self.write_log(
@@ -883,7 +852,7 @@ class FactorEngine(BaseEngine):
                     # initial_resources is expected to always contain "memory_percent".
                     # The .get() with fallback is defensive; memory_usage would be 0 if key were missing.
                     memory_usage=final_resources["memory_percent"]
-                    - initial_resources.get(
+                                 - initial_resources.get(
                         "memory_percent", final_resources["memory_percent"]
                     ),
                     cache_hits=0,  # Dask handles its own caching/optimization
@@ -950,6 +919,75 @@ class FactorEngine(BaseEngine):
             "Garbage collection performed.", level=DEBUG
         )  # Re-enabled this DEBUG log
 
+    def send_load_bar_request(self, type_, param) -> None:
+        if type_ == 'gap':
+            """
+            {'overview_1m_btcusdt.BINANCE': [TimeRange(1m: 2025-07-02 16:10:33 - 2025-07-06 04:44:25.679782)], 
+            'overview_1m_ethusdt.BINANCE': [TimeRange(1m: 2025-07-02 16:10:33 - 2025-07-06 04:44:25.679782)]}
+            """
+            # Extract and validate datetime parameters
+            gap_dict = cast(Mapping[str, Any], param)
+            # calc union of all gaps
+            if not gap_dict:
+                self.write_log("No gaps provided for loading historical data.", level=WARNING)
+                return
+            if not isinstance(gap_dict, dict):
+                self.write_log(
+                    f"Invalid gap_dict type: {type(gap_dict)}. Expected dict.",
+                    level=ERROR,
+                )
+                return
+            begin = None
+            end = None
+            min_interval: TimeFreq = TimeFreq.m
+            vt_symbol_list = []
+            symbol_list = []
+            exchange_list = []
+            for overview_key, gaps in gap_dict.items():
+                vt_symbol = overview_key.split('_')[-1]
+                vt_symbol_list.append(vt_symbol)
+                symbol_list.append(vt_symbol.split('.')[0])
+                exchange_list.append(vt_symbol.split('.')[1])
+
+                # gaps should be a list of TimeRange objects
+                min_interval: TimeFreq = min(
+                    [DatetimeUtils.interval2freq(gap.interval) for gap in gaps]) if not min_interval else min(
+                    min_interval,
+                    *[DatetimeUtils.interval2freq(gap.interval) for
+                      gap in gaps])
+                begin = min([gap.start for gap in gaps]) if not begin else min(begin, *[gap.start for gap in gaps])
+                end = max([gap.end for gap in gaps]) if not end else max(end, *[gap.end for gap in gaps])
+
+            # Calculate required lookback and prepare ranges
+            freq_multiplier = DatetimeUtils.freq2unix(min_interval, ret_unit=self.minimum_freq)
+            denominator = self.minimum_freq / TimeFreq.m
+            max_lookback = int(self.max_memory_length_factor * freq_multiplier / denominator)
+            lookback_start = begin - timedelta(minutes=max_lookback)
+
+            if not begin or not end:
+                self.write_log(
+                    "No valid gaps found in gap_dict. Cannot determine start and end for loading data.",
+                    level=ERROR,
+                )
+                return
+
+            # Request historical data with lookback period
+            hist_event = Event(
+                type=EVENT_DATAMANAGER_LOAD_BAR_REQUEST,
+                data=[{
+                    "symbol": symbol,
+                    "exchange": Exchange(exchange),
+                    "interval": Interval(DatetimeUtils.freq2str(min_interval)),
+                    "start": lookback_start,
+                    "end": end,
+                    "ret": "polars"
+                } for symbol, exchange in zip(symbol_list, exchange_list)],
+            )
+            self.write_log(f"Requesting historical data for symbols: {vt_symbol_list}", level=INFO)
+            self.event_engine.put(hist_event)
+        else:
+            raise NotImplementedError()
+
     def process_tick_event(self, event: Event) -> None:
         # FactorMaker typically works on bars, not ticks.
         # Implement if specific tick-based logic is needed.
@@ -988,7 +1026,7 @@ class FactorEngine(BaseEngine):
         # If bar is from a new datetime, process the previous batch
         if bar.datetime > self.dt:
             if any(
-                self.receiving_status.values()
+                    self.receiving_status.values()
             ):  # If any bars were received for self.dt
                 self.write_log(
                     f"Bar time roll: new {bar.datetime}, processing previous {self.dt}.",
@@ -1016,9 +1054,9 @@ class FactorEngine(BaseEngine):
         # Check if all *expected* symbols for the current self.dt have arrived
         # This assumes self.vt_symbols is the list of all symbols we expect bars from.
         if all(
-            self.receiving_status[sym]
-            for sym in self.vt_symbols
-            if sym in self.receiving_status
+                self.receiving_status[sym]
+                for sym in self.vt_symbols
+                if sym in self.receiving_status
         ):
             # self.write_log(f"All expected bars received for {self.dt}. Processing batch.", level=DEBUG) # Removed, can be noisy
             self.on_bars(self.dt, self.bars.copy())
@@ -1028,7 +1066,7 @@ class FactorEngine(BaseEngine):
             self.bars.clear()
             self.receiving_status = {sym: False for sym in self.vt_symbols}
 
-    async def process_factor_filling_event(self, event: Event) -> None:
+    def process_factor_filling_event(self, event: Event) -> None:
         """
         Processes a factor filling event for batch updates with historical data.
 
@@ -1055,6 +1093,7 @@ class FactorEngine(BaseEngine):
 
         # Reset error state at start
         self.consecutive_errors = 0
+        print("in process_factor_filling_event", flush=True)
 
         try:
             """
@@ -1063,6 +1102,7 @@ class FactorEngine(BaseEngine):
             """
             # Extract and validate datetime parameters
             data = cast(Mapping[str, Any], event.data)
+            data_req_dict = {}
             for overview_key, gaps in data.items():
                 vt_symbol = overview_key.split("_")[-1]
                 symbol = vt_symbol.split(".")[0]
@@ -1073,19 +1113,15 @@ class FactorEngine(BaseEngine):
                     interval: Interval = gap.interval
 
                     # Calculate required lookback and prepare ranges
-                    freq_multiplier = DatetimeUtils.interval2unix(
-                        interval, ret_unit=self.minimum_freq
-                    )
+                    freq_multiplier = DatetimeUtils.interval2unix(interval, ret_unit=self.minimum_freq)
                     denominator = self.minimum_freq / TimeFreq.m
-                    max_lookback = int(
-                        self.max_memory_length_factor * freq_multiplier / denominator
-                    )
+                    max_lookback = int(self.max_memory_length_factor * freq_multiplier / denominator)
 
                     lookback_start = start_dt - timedelta(minutes=max_lookback)
                     self.write_log(
                         f"Preparing data from {lookback_start} to {end_dt} "
                         f"(lookback: {max_lookback} mins)",
-                        level=INFO,
+                        level=INFO
                     )
 
                     # Clear existing data
@@ -1094,34 +1130,37 @@ class FactorEngine(BaseEngine):
 
                     # Request historical data with lookback period
                     hist_event = Event(
-                        type=EVENT_DATAMANAGER_LOAD_BAR,
+                        type=EVENT_DATAMANAGER_LOAD_BAR_REQUEST,
                         data={
                             "symbol": symbol,
                             "exchange": Exchange(exchange),
                             "interval": Interval(interval),
                             "start": lookback_start,
-                            "end": end_dt,
-                        },
+                            "end": end_dt
+                        }
                     )
                     self.event_engine.put(hist_event)
                     self.write_log(
                         f"Requested historical data for {vt_symbol} from {lookback_start} to {end_dt}",
-                        level=INFO,
+                        level=INFO
                     )
 
                     # Wait for data processing
                     counter = 0
-                    while not self.memory_bar:
+                    self.write_log("Waiting for historical data to be loaded into memory_bar...", level=DEBUG)
+                    while not self.memory_bar:  # Wait until memory_bar is populated fixme
+
                         self.write_log(
                             "Waiting for historical data to be loaded into memory_bar...",
-                            level=INFO,
+                            level=INFO
                         )
-                        await asyncio.sleep(1)
+                        # await asyncio.sleep(1)
+                        # time.sleep(0.1)
                         counter += 1
                         if counter > 60:  # Timeout after 60 seconds
                             self.write_log(
                                 "Timeout waiting for historical data. Exiting gap filling.",
-                                level=ERROR,
+                                level=ERROR
                             )
                             raise RuntimeError(
                                 "Timeout waiting for historical data. Exiting gap filling."
@@ -1129,9 +1168,7 @@ class FactorEngine(BaseEngine):
 
                     # Setup interval processing
                     try:
-                        assert isinstance(start_dt, datetime) and isinstance(
-                            end_dt, datetime
-                        )
+                        assert isinstance(start_dt, datetime) and isinstance(end_dt, datetime)
                         time_delta = end_dt - start_dt
                         total_intervals = max(1, time_delta.seconds // interval.seconds)
                         current_dt = start_dt
@@ -1148,8 +1185,8 @@ class FactorEngine(BaseEngine):
                                         type=EVENT_FACTOR,
                                         data={
                                             "datetime": current_dt,
-                                            "factors": self.latest_calculated_factors_cache.copy(),
-                                        },
+                                            "factors": self.latest_calculated_factors_cache.copy()
+                                        }
                                     )
                                     self.event_engine.put(factor_event)
 
@@ -1157,7 +1194,7 @@ class FactorEngine(BaseEngine):
                                 if processed_count % 100 == 0:
                                     self.write_log(
                                         f"Processed {processed_count}/{total_intervals} intervals",
-                                        level=INFO,
+                                        level=INFO
                                     )
 
                                 current_dt = current_dt + interval
@@ -1165,7 +1202,7 @@ class FactorEngine(BaseEngine):
                             except Exception as calc_error:
                                 self.write_log(
                                     f"Calculation error at {current_dt}: {str(calc_error)}",
-                                    level=ERROR,
+                                    level=ERROR
                                 )
                                 self.consecutive_errors += 1
                                 if self.consecutive_errors >= self.error_threshold:
@@ -1178,13 +1215,11 @@ class FactorEngine(BaseEngine):
                         self.write_log(
                             f"Gap filling completed successfully. "
                             f"Processed {processed_count}/{total_intervals} intervals",
-                            level=INFO,
+                            level=INFO
                         )
 
                     except AssertionError:
-                        raise ValueError(
-                            "Invalid datetime values encountered during processing"
-                        )
+                        raise ValueError("Invalid datetime values encountered during processing")
 
                     except Exception as process_error:
                         error_msg = f"Factor filling failed: {str(process_error)}"
@@ -1198,15 +1233,14 @@ class FactorEngine(BaseEngine):
                         self._cleanup_memory_resources()
 
                     if not all([start_dt, end_dt, vt_symbol]):
-                        self.write_log(
-                            "Missing required filling parameters", level=ERROR
-                        )
+                        self.write_log("Missing required filling parameters", level=ERROR)
                         return
 
                     # 1. Calculate required lookback periods
                     max_bar_lookback = self.max_memory_length_bar
                     max_factor_lookback = max(
-                        max_bar_lookback, self.max_memory_length_factor
+                        max_bar_lookback,
+                        self.max_memory_length_factor
                     )
 
                     # Adjust start time to include lookback period
@@ -1219,7 +1253,7 @@ class FactorEngine(BaseEngine):
                             "start_dt": lookback_start,
                             "end_dt": end_dt,
                             "vt_symbols": vt_symbol,
-                        },
+                        }
                     )
                     self.event_engine.put(req_event)
 
@@ -1236,15 +1270,12 @@ class FactorEngine(BaseEngine):
 
                     # 3. Process gaps
                     current_dt = start_dt
-                    total_intervals = int(
-                        (end_dt - start_dt).total_seconds() / 60
-                    )  # Assuming 1-minute intervals
+                    total_intervals = int((end_dt - start_dt).total_seconds() / 60)  # Assuming 1-minute intervals
                     processed_count = 0
 
                     self.write_log(
                         f"Starting gap filling from {start_dt} to {end_dt} ({total_intervals} intervals)",
-                        level=INFO,
-                    )
+                        level=INFO)
 
                     while current_dt <= end_dt:
                         try:
@@ -1257,54 +1288,82 @@ class FactorEngine(BaseEngine):
                                     type=EVENT_FACTOR,
                                     data={
                                         "datetime": current_dt,
-                                        "factors": calc_factor,
-                                    },
+                                        "factors": calc_factor
+                                    }
                                 )
                                 self.event_engine.put(factor_event)
 
                             processed_count += 1
-                            if (
-                                processed_count % 100 == 0
-                            ):  # Log progress every 100 intervals
-                                self.write_log(
-                                    f"Processed {processed_count}/{total_intervals} intervals",
-                                    level=INFO,
-                                )
+                            if processed_count % 100 == 0:  # Log progress every 100 intervals
+                                self.write_log(f"Processed {processed_count}/{total_intervals} intervals",
+                                               level=INFO)
 
                         except Exception as e:
-                            self.write_log(
-                                f"Error processing interval {current_dt}: {str(e)}",
-                                level=ERROR,
-                            )
+                            self.write_log(f"Error processing interval {current_dt}: {str(e)}", level=ERROR)
                             if self.consecutive_errors >= self.error_threshold:
                                 raise RuntimeError(
-                                    f"Consecutive error threshold reached during gap filling at {current_dt}"
-                                )
+                                    f"Consecutive error threshold reached during gap filling at {current_dt}")
 
                         current_dt += timedelta(minutes=1)  # Move to next interval
 
                     self.write_log(
                         f"Gap filling completed. Processed {processed_count} intervals with "
                         f"{self.consecutive_errors} errors",
-                        level=INFO,
+                        level=INFO
                     )
 
         except Exception as e:
-            self.write_log(
-                f"Critical error during factor filling: {str(e)}\n{traceback.format_exc()}",
-                level=ERROR,
-            )
+            self.write_log(f"Critical error during factor filling: {str(e)}\n{traceback.format_exc()}", level=ERROR)
             # You might want to raise this exception depending on your error handling strategy
         finally:
             # Clean up and reset state
             self.consecutive_errors = 0
+
+    def process_load_bar_request_event(self, event: Event) -> None:
+        """
+        Processes the event to load bar data from the database.
+
+        The event.data should contain:
+        - start_dt (datetime): Start time for loading bars
+        - end_dt (datetime): End time for loading bars
+        - vt_symbols (list[str]): List of vt_symbols to load
+
+        This method will trigger a database query and expect a response event with the bar data.
+        """
+        if not hasattr(event, 'data') or not isinstance(event.data, dict):
+            self.write_log("Invalid load bar request event data format", level=ERROR)
+            return
+
+        # Extract parameters from the event data
+        data = cast(Mapping[str, Any], event.data)
+        start_dt = data.get("start_dt")
+        end_dt = data.get("end_dt")
+        vt_symbols = data.get("vt_symbols", [])
+
+        if not start_dt or not end_dt or not vt_symbols:
+            self.write_log(
+                "Missing required parameters in load bar request event",
+                level=ERROR
+            )
+            return
+
+        # Create a request event to load bars from the database
+        req_event = Event(
+            type=EVENT_HISTORY_DATA_REQUEST,
+            data={
+                "start_dt": start_dt,
+                "end_dt": end_dt,
+                "vt_symbols": vt_symbols
+            }
+        )
+        self.event_engine.put(req_event)
 
     def process_load_bar_response_event(self, event: Event) -> None:
         """
         Processes the event to query bar data from the database and initialize it into memory.
         """
         bars_data = event.data
-        if not bars_data:
+        if not len(bars_data):
             self.write_log("No bar data received for factor bar update.", level=WARNING)
             return
 
@@ -1316,24 +1375,16 @@ class FactorEngine(BaseEngine):
         """
         factors_data = event.data
         if not factors_data:
-            self.write_log(
-                "No factor data received for factor initialization.", level=WARNING
-            )
+            self.write_log("No factor data received for factor initialization.", level=WARNING)
             return
 
         self.process_database_factor_data(factors_data)
 
-    def process_database_bar_data(
-        self, bars: list[BarData] | pl.DataFrame | pd.DataFrame
-    ) -> None:
+    def process_database_bar_data(self, bars: list[BarData]| pl.DataFrame| pd.DataFrame) -> None:
         """
         Initializes the bar memory with historical data queried from the database.
         """
-        if not bars:
-            self.write_log(
-                "No bars to process for database initialization.", level=INFO
-            )
-            return
+        self.write_log("process_database_bar_data", level=DEBUG)
 
         # data conversion
         # Convert list of BarData objects to a dictionary of lists for polars DataFrame
@@ -1345,7 +1396,7 @@ class FactorEngine(BaseEngine):
                 "low": [bar.low_price for bar in bars],
                 "close": [bar.close_price for bar in bars],
                 "volume": [bar.volume for bar in bars],
-                "vt_symbol": [bar.vt_symbol for bar in bars],
+                "vt_symbol": [bar.vt_symbol for bar in bars]
             }
             df = pl.DataFrame(data_dict)
         elif isinstance(bars, pd.DataFrame):
@@ -1355,39 +1406,36 @@ class FactorEngine(BaseEngine):
         else:
             self.write_log(
                 "Invalid bar data format. Expected list of BarData, pandas DataFrame, or polars DataFrame.",
-                level=ERROR,
+                level=ERROR
             )
             return
 
         # Transform DataFrame to wide format with symbols as columns
         for col in ["open", "high", "low", "close", "volume"]:
             # Group by datetime and create columns for each symbol
-            temp_df = df.select(["datetime", "vt_symbol", col])
-            unique_symbols = temp_df.select("vt_symbol").unique()
+            temp_df = df.select(["datetime", "ticker", col])
+            # unique_symbols = temp_df.select("ticker").unique()
+            #
+            # # Create a column for each symbol using groupby and aggregation
+            # agg_dict = {}
+            # for sym in unique_symbols.select("ticker").to_series():
+            #     agg_dict[sym] = pl.col(col).filter(pl.col("ticker") == sym).first()
+            #
+            # pivoted = (
+            #     temp_df
+            #     .group_by("datetime")
+            #     .agg(agg_dict)
+            #     .sort("datetime")
+            # )
+            self.memory_bar[col] = temp_df
 
-            # Create a column for each symbol using groupby and aggregation
-            agg_dict = {}
-            for sym in unique_symbols.select("vt_symbol").to_series():
-                agg_dict[sym] = pl.col(col).filter(pl.col("vt_symbol") == sym).first()
+        self.write_log(f"Initialized bar memory with {len(df)} bars from database.", level=INFO)
 
-            pivoted = temp_df.group_by("datetime").agg(agg_dict).sort("datetime")
-            self.memory_bar[col] = pivoted
-
-        self.write_log(
-            f"Initialized bar memory with {len(df)} bars from database.", level=INFO
-        )
-
-    def process_database_factor_data(
-        self, factors: pl.DataFrame | pd.DataFrame
-    ) -> None:
+    def process_database_factor_data(self, factors: pl.DataFrame | pd.DataFrame) -> None:
         """
         Initializes the factor memory with historical data queried from the database.
         """
-        if not factors:
-            self.write_log(
-                "No factors to process for database initialization.", level=INFO
-            )
-            return
+        self.write_log("process_database_factor_data", level=DEBUG)
 
         # Convert DataFrame to a dictionary of lists for polars DataFrame
         if isinstance(factors, pd.DataFrame):
@@ -1397,7 +1445,7 @@ class FactorEngine(BaseEngine):
         else:
             self.write_log(
                 "Invalid factor data format. Expected pandas DataFrame or polars DataFrame.",
-                level=ERROR,
+                level=ERROR
             )
             return
 
@@ -1405,7 +1453,8 @@ class FactorEngine(BaseEngine):
         for factor_key, group in df.groupby("factor_key"):
             if factor_key not in self.flattened_factors:
                 self.write_log(
-                    f"Factor {factor_key} not found in flattened factors.", level=ERROR
+                    f"Factor {factor_key} not found in flattened factors.",
+                    level=ERROR
                 )
                 continue
 
@@ -1419,15 +1468,12 @@ class FactorEngine(BaseEngine):
             # Update the FactorMemory instance with the new data
             memory_instance.update_data(group)
 
-        self.write_log(
-            f"Initialized factor memory with {len(df)} records from database.",
-            level=INFO,
-        )
+        self.write_log(f"Initialized factor memory with {len(df)} records from database.", level=INFO)
 
     def stop_all_factors(self) -> None:
         self.write_log("Stopping all factors...", level=INFO)
         for (
-            factor
+                factor
         ) in self.flattened_factors.values():  # Stop all, including dependencies
             if factor.trading:
                 self.call_factor_func(factor, factor.on_stop)
@@ -1455,7 +1501,7 @@ class FactorEngine(BaseEngine):
         self.write_log("FactorEngine closed.", level=INFO)
 
     def call_factor_func(
-        self, factor: FactorTemplate, func: Callable, params: object = None
+            self, factor: FactorTemplate, func: Callable, params: object = None
     ) -> None:
         try:
             if params:
@@ -1469,7 +1515,7 @@ class FactorEngine(BaseEngine):
             self.write_log(msg, factor=factor, level=ERROR)  # Pass factor object
 
     def write_log(
-        self, msg: str, factor: FactorTemplate | None = None, level: int = INFO
+            self, msg: str, factor: FactorTemplate | None = None, level: int = INFO
     ) -> None:
         log_msg = f"{factor.factor_key}: {msg}" if factor else f"{msg}"
         log: LogData = LogData(msg=log_msg, gateway_name=APP_NAME, level=level)
@@ -1493,3 +1539,12 @@ class FactorEngine(BaseEngine):
 
     def get_factor_memory_instance(self, factor_key: str) -> FactorMemory | None:
         return self.factor_memory_instances.get(factor_key)
+
+    async def get_memory_bar(self):
+        """
+        Asynchronously retrieves the in-memory bar data.
+
+        Returns:
+            dict: A dictionary containing the in-memory bar data.
+        """
+        return self.memory_bar

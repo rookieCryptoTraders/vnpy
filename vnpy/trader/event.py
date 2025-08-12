@@ -12,8 +12,6 @@ EVENT_ACCOUNT = "eAccount."
 EVENT_QUOTE = "eQuote."
 EVENT_CONTRACT = "eContract."
 EVENT_LOG = "eLog"
-EVENT_TELEGRAM = "eTelegram."
-
 
 # ================================= apps =================================
 # name rule: EVENT_<APP_NAME>_<ACTION/EVENT_NAME>
@@ -27,9 +25,9 @@ EVENT_RECORDER_UPDATE = "eRecorderUpdate"  # signal to indicate the recorder has
 EVENT_RECORDER_RECORD = "eRecorderRecord"  # signal to trigger the recorder to record data
 EVENT_RECORDER_EXCEPTION = "eRecorderException"  # signal to indicate the recorder has an exception
 
-EVENT_DATAMANAGER_LOAD_BAR = "eDataManagerLoadBar"  # DataManager simply load bar data from the database
-EVENT_DATAMANAGER_LOAD_FACTOR = "eDataManagerLoadFactor"  # DataManager simply load factor data from the database
+EVENT_DATAMANAGER_LOAD_BAR_REQUEST = "eDataManagerLoadBarRequest"  # DataManager simply load bar data from the database
 EVENT_DATAMANAGER_LOAD_BAR_RESPONSE = "eDataManagerLoadBarResponse"  # data receiver app receives responded bar data
+EVENT_DATAMANAGER_LOAD_FACTOR_REQUEST = "eDataManagerLoadFactorRequest"  # DataManager simply load factor data from the database
 EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE = "eDataManagerLoadFactorResponse"  # data receiver app receives responded factor data
 
 # factor maker. fixme: comments are not specified
