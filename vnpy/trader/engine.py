@@ -53,9 +53,6 @@ from .converter import OffsetConverter
 from .logger import DEBUG, INFO, WARNING, ERROR, CRITICAL
 from ..utils.datetimes import DatetimeUtils, TimeFreq
 
-# The following logic was adjusted by Gemini for adding AgentEngine.
-from ..agent.engine import AgentEngine
-
 
 if TYPE_CHECKING:
     from .gateway import BaseGateway
@@ -222,9 +219,6 @@ class MainEngine:
 
         email_engine: EmailEngine = self.add_engine(EmailEngine)
         self.send_email: Callable[[str, str, str], None] = email_engine.send_email
-
-        # The following logic was adjusted by Gemini for adding AgentEngine.
-        self.add_engine(AgentEngine)
 
     def write_log(self, msg: str, source: str = "", level=INFO) -> None:
         """
