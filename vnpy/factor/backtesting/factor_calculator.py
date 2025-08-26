@@ -73,10 +73,6 @@ class FactorCalculator:
         self.calculation_lock = Lock()
         self.factor_datetime_col: str = DEFAULT_DATETIME_COL
 
-        self._write_log(
-            f"FactorCalculator initialized. Factor cache dir: {self.output_data_dir}",
-            level=INFO,
-        )
         self._prepare_output_directory()
 
     def _prepare_output_directory(self) -> None:
@@ -155,10 +151,6 @@ class FactorCalculator:
         # This ensures consistency for the current computation run.
         for factor_key, factor_instance in self.flattened_factors.items():
             if factor_instance.vt_symbols != self.vt_symbols:
-                self._write_log(
-                    f"Aligning vt_symbols in factor '{factor_key}' to {self.vt_symbols}",
-                    level=DEBUG,
-                )
                 factor_instance.vt_symbols = self.vt_symbols
                 # If FactorTemplate._init_dependency_instances needs to be called on symbol change,
                 # the BacktestEngine should ensure this happens before passing the flattened graph.

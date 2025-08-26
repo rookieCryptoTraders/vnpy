@@ -1,10 +1,12 @@
 [project]
 name = "vnpy"
-dynamic = ["version"]
-description = "A framework for developing quant trading systems."
+version = "0.1.0"
+description = "A comprehensive, modular, event-driven quantitative trading framework for strategy development, backtesting, and live trading across stocks, futures, and cryptocurrencies. Features a decoupled architecture, high extensibility, and easy integration of custom modules. Includes event-driven engines, gateways for multiple exchanges, advanced portfolio and risk management, high-performance factor engineering, and a robust strategy engine with automated model retraining. Designed for real-time, low-latency trading and research workflows."
 readme = "README.md"
 license = {text = "MIT"}
-authors = [{name = "HYF&Chen", email = ""}]
+authors = [{name = "EvanHONG", email = "h939778128@gmail.com"},
+{ name = "Ch1nZ", email = "chzao0928@gmail.com" }
+]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "License :: OSI Approved :: MIT License",
@@ -21,7 +23,7 @@ classifiers = [
     "Natural Language :: Chinese (Simplified)",
     "Typing :: Typed",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = [
     "aenum==3.1.15",
     "appnope==0.1.4",
@@ -134,9 +136,42 @@ dependencies = [
     "yfinance==0.2.61",
     "zict==3.0.0",
     "zipp==3.21.0",
-    "zstandard==0.23.0"
+    "zstandard==0.23.0",
+    # Core Data Science Libraries
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "scipy>=1.10.0",
+    "scikit-learn>=1.2.0",
+    "polars>=0.19.0",
+    "pyarrow>=13.0.0",
+    "joblib>=1.2.0",
+    "dask>=2023.0.0",
+
+    # Visualization & GUI
+    "PySide6>=6.5.0",
+    "pyqtgraph>=0.13.0",
+    "plotly>=5.15.0",
+    "qdarkstyle>=3.1.0",
+
+    # Utilities & System
+    "loguru>=0.7.0",
+    "psutil>=5.9.0",
+    "tqdm>=4.65.0",
+    "requests>=2.31.0",
+    "pyzmq>=25.0.0",
+    "tzlocal>=5.0.0",
+    "nbformat>=5.9.0",
+
+    # Evolutionary Algorithms
+    "deap>=1.4.0",
+
+    # Testing, Linting, and Type Checking
+    "pytest>=7.4.0",
+
+    # Add any project-specific dependencies below
+    # ...
+
 ]
-keywords = ["quant", "quantitative", "investment", "trading", "algotrading"]
 
 [project.optional-dependencies]
 algo-ta = [
@@ -163,7 +198,7 @@ dev = [
 "Source" = "https://github.com/rookieCryptoTraders/vnpy"
 
 [build-system]
-requires = ["uv>=0.1.36"]
+requires = ["uv_build>=0.7.2,<0.8"]
 build-backend = "uv.build"
 
 [tool.uv]
@@ -196,3 +231,7 @@ select = [
     "W",  # pycodestyle warning
 ]
 ignore = ["E501"]
+
+[project.scripts]
+vnpy = "vnpy:main"
+
