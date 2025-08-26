@@ -9,7 +9,7 @@ import sys
 from datetime import datetime, time
 from pathlib import Path
 from decimal import Decimal, ROUND_DOWN
-from typing import Callable, Optional, Union, Literal
+from typing import Callable, Optional, Union, Literal,Any
 import traceback
 
 import pandas as pd
@@ -154,7 +154,8 @@ def save_json(filename: str, data: dict | list, mode="w+", cls=json.JSONEncoder)
     Save data into json file in temp path.
     """
     filepath: Path = get_file_path(filename)
-    tmp_filepath: Path = get_file_path(filename + ".tmp")  # if use .tmp can get more data safety, but it will cause error
+    tmp_filepath: Path = get_file_path(
+        filename + ".tmp")  # if use .tmp can get more data safety, but it will cause error
     if not data:
         return None
     with open(tmp_filepath, mode=mode, encoding="UTF-8") as f:
@@ -166,7 +167,8 @@ def save_json(filename: str, data: dict | list, mode="w+", cls=json.JSONEncoder)
             cls=cls
         )
         f.flush()
-        os.fsync(f.fileno()) # Calling os.fsync(f.fileno()) forces a physical disk write, which is slow (especially on HDDs and for lots of small files). If you can tolerate some risk (i.e., rare data loss on power failure), you can skip os.fsync. Just use f.flush() or even nothing, letting the OS cache writes for a while.
+        os.fsync(
+            f.fileno())  # Calling os.fsync(f.fileno()) forces a physical disk write, which is slow (especially on HDDs and for lots of small files). If you can tolerate some risk (i.e., rare data loss on power failure), you can skip os.fsync. Just use f.flush() or even nothing, letting the OS cache writes for a while.
     #     print("Saved data to", tmp_filepath,flush=True)
     try:
         if tmp_filepath.exists():
@@ -1277,18 +1279,53 @@ def is_nothing(obj) -> bool:
         return True
     return False
 
+class InstanceChecker(object):
+    """
+    A class to check the type of an object.
+    """
+    @staticmethod
+    def is_type(obj: Any, type_name: str) -> bool:
+        """
+        Check if the object is of a specific type.
+        """
+        return isinstance(obj, eval(type_name))
+    @staticmethod
+    def is_dict_of(obj, type_value:Union[Any,list[Any]], type_key=str):
+        """determine if an object is a dictionary of DataFrames
 
-def is_dict_str_dataframe(data, package: Literal['pd', 'pl', 'pandas', 'polars']):
-    if not isinstance(data, dict):
-        return False
-    dataframe_class = None
-    if package in ['pd', 'pandas']:
-        import pandas as pd
-        dataframe_class = pd.DataFrame
-    elif package in ['pl', 'polars']:
-        import polars as pl
-        dataframe_class = pl.DataFrame
-    for key, value in data.items():
-        if not isinstance(key, str) or not isinstance(value, dataframe_class):
+        Parameters
+        ----------
+        obj :
+        type_value : Union[Any,list[Any]]
+            type of the values in the dictionary
+
+        Returns
+        -------
+
+        """
+        if not isinstance(obj, dict):
             return False
-    return True
+        if not all(isinstance(v, type_key) for v in obj.keys()):
+            return False
+        if not all(isinstance(v, type_value) for v in obj.values()):
+            return False
+        return True
+
+    @staticmethod
+    def is_list_of(obj, type_value):
+        """determine if an object is a list of expected type objects
+
+        Parameters
+        ----------
+        obj :
+        type_value : type of the values in the list
+
+        Returns
+        -------
+
+        """
+        if not isinstance(obj, list):
+            return False
+        if not all(isinstance(v, type_value) for v in obj):
+            return False
+        return True

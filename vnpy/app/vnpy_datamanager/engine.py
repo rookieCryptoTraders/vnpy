@@ -64,7 +64,11 @@ class DataManagerEngine(BaseEngine):
         if isinstance(data, list) and isinstance(data[0], dict):
             res = []
             for d in data:
-                res.append(self.database.load_bar_data(**d))
+                tmp=self.database.load_bar_data(**d)
+                if tmp is not None:
+                    res.append(tmp)
+                else:
+                    self.write_log(f"on_load_bar_data: no data found for {d}", level=INFO)
             res = pl.concat(res, how="vertical", rechunk=True)
         elif isinstance(data, dict):
             res = self.database.load_bar_data(
@@ -76,6 +80,7 @@ class DataManagerEngine(BaseEngine):
         self.write_log(
             f"Successfully processed {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}, response count: {len(res)}")
         self.put_event(Event(EVENT_DATAMANAGER_LOAD_BAR_RESPONSE, data=res))
+        print(f"put_event {EVENT_DATAMANAGER_LOAD_BAR_RESPONSE}: {event_type}, {data}, response count: {len(res)}",flush=True)
 
     def on_load_factor_data(self, event: Event) -> None:
         event_type, data = event.type, event.data

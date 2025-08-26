@@ -8,6 +8,7 @@
 # @Description:
 import datetime
 import multiprocessing
+import time
 import traceback
 from time import sleep
 
@@ -72,7 +73,7 @@ def run_child():
 
     # start factor engine
     factor_maker_engine: FactorEngine = main_engine.add_app(FactorMakerApp)
-    factor_maker_engine.init_engine(fake=True)
+    factor_maker_engine.init_engine(fake=False)
     main_engine.write_log(f"Started [{factor_maker_engine.__class__.__name__}]")
 
     # start data recorder
@@ -86,10 +87,11 @@ def run_child():
 
     # init gateway
     gateway = main_engine.add_gateway(MimicGateway, "MIMIC")
-    main_engine.connect(gateway_settings, "MIMIC")
+    # main_engine.connect(gateway_settings, "MIMIC")
 
     # download data using vnpy_datamanager if data missed
-    data_manager_engine: DataManagerEngine = main_engine.add_app(DataManagerApp,database=data_recorder_engine.database_manager)
+    data_manager_engine: DataManagerEngine = main_engine.add_app(DataManagerApp,
+                                                                 database=data_recorder_engine.database_manager)
     data_manager_engine.init_engine()
     main_engine.write_log(f"Started [{data_manager_engine.__class__.__name__}]")
 
@@ -97,9 +99,9 @@ def run_child():
     for i in range(3):  # allow 3 attempts to download data
         # gaps to requests
         gap_dict = data_recorder_engine.database_manager.get_gaps(end_time=datetime.datetime.now(),
-                                                                  start_time=datetime.datetime(2025, 8, 12, 14, 0))
+                                                                  start_time=datetime.datetime(2025, 8, 25, 12, 30))
         # no gap, break
-        if not gap_dict:
+        if all(len(gap) == 0 for gap in gap_dict.values()):
             break
 
         # have gaps, download data and fill bar gaps, insert bars into database
@@ -125,18 +127,58 @@ def run_child():
                     taker_buy_base_asset_volume=d['taker_buy_base_asset_volume'],
                     taker_buy_quote_asset_volume=d['taker_buy_quote_asset_volume'],
                 )
+                # todo: improve data insertion
                 gateway.on_bar_filling(bar)  # todo: change belonging to data_manager_engine
+        time.sleep(3)
+        # todo:
+        #  1. load <window>-1 bars
+        #  2. request <window> bars to calculate <window> factors
+        #  3. request <missing> bars to calculate <missing> factors
+        # 1. load bar data from database, currently factor memory is empty, so we need to do additional calculations
+        start_dt = datetime.datetime.now()
+        for overview_key, time_ranges in gap_dict.items():
+            tmp = min([time_range.start for time_range in time_ranges])
+            if tmp < start_dt:
+                start_dt = tmp
+        params = {
+            "begin": start_dt - datetime.timedelta(minutes=1),  # start_dt is the start of filling gap factors
+            "end": start_dt - datetime.timedelta(minutes=1),  # start_dt is the start of filling gap factors
+            "interval": Interval.MINUTE,
+            "vt_symbol_list": main_engine.vt_symbols,
+        }
+        factor_maker_engine.send_load_bar_request(type_='period', param=params)
+        time.sleep(3)
+        for overview_key, data_list in gap_data_dict.items():
+            # print(f"main Processing overview key: {overview_key}, data count: {len(data_list)}")
+            info = match_format_string(VTSYMBOL_OVERVIEW, overview_key)
+            for d in data_list:
+                bar = BarData(
+                    gateway_name=gateway.gateway_name,
+                    symbol=info['symbol'],
+                    exchange=Exchange(info['exchange']),
+                    interval=Interval(info['interval']),
+                    datetime=d['datetime'],
+                    volume=d['volume'],
+                    open_price=d['open'],
+                    high_price=d['high'],
+                    low_price=d['low'],
+                    close_price=d['close'],
+                    quote_asset_volume=d['quote_asset_volume'],
+                    number_of_trades=d['number_of_trades'],
+                    taker_buy_base_asset_volume=d['taker_buy_base_asset_volume'],
+                    taker_buy_quote_asset_volume=d['taker_buy_quote_asset_volume'],
+                )
+                gateway.on_bar(bar)  # todo: change belonging to data_manager_engine
 
-        # request bar data for factor engine and load bar data into memory
-        factor_maker_engine.send_load_bar_request(type_='gap', param=gap_dict)
         # factor_maker_engine.send_load_factor_request(type_='gap', param=gap_dict)
 
         # filling missing factor
-        gateway.on_factor_filling(gap_dict)
+        # gateway.on_factor_filling(gap_dict)
         break
 
     # Start live data subscription
-    main_engine.subscribe_all(gateway_name='MIMIC')
+    # main_engine.connect(gateway_settings, "MIMIC")
+    # main_engine.subscribe_all(gateway_name='MIMIC')
 
 
 def run_parent():
