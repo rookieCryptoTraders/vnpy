@@ -1,26 +1,28 @@
+import importlib
 from datetime import datetime, timedelta
-from logging import DEBUG, ERROR, INFO, WARNING
+from logging import INFO, DEBUG, WARNING, ERROR
+from typing import Any
 from pathlib import Path
-
-import numpy as np  # For placeholder data loading
 
 # Third-party imports
 import pandas as pd
 import polars as pl
+import numpy as np  # For placeholder data loading
 
 # VnTrader imports
-from vnpy.factor.backtesting.factor_analyzer import (
-    FactorAnalyser,
-    get_annualization_factor,
-)
+from vnpy.factor.backtesting.factor_analyzer import FactorAnalyser
 from vnpy.factor.backtesting.factor_calculator import FactorCalculator
-from vnpy.factor.backtesting.factor_initializer import FactorInitializer
-from vnpy.factor.base import (
-    APP_NAME,
-)  # FactorMode might be needed for init_factors
 from vnpy.factor.template import FactorTemplate
 from vnpy.trader.constant import Interval
 from vnpy.trader.setting import SETTINGS
+from vnpy.factor.base import (
+    APP_NAME,
+    FactorMode,
+)  # FactorMode might be needed for init_factors
+from vnpy.factor.utils.factor_utils import (
+    init_factors,
+    load_factor_setting,
+)  # For initializing factors
 
 # Assuming FactorCalculator and FactorAnalyser are in sibling files
 # (e.g., factor_calculator.py, factor_analyser.py) in the same directory.
@@ -59,12 +61,20 @@ class BacktestEngine:
         self.output_data_dir_for_calculator_cache = output_data_dir_for_calculator_cache
         self.output_data_dir_for_analyser_reports = output_data_dir_for_analyser_reports
 
+        self.module_factors: Any | None = None
+        try:
+            self.module_factors = importlib.import_module(self.factor_module_name)
+        except ImportError as e:
+            self._write_log(
+                f"Could not import factor module '{self.factor_module_name}': {e}. Factor initialization will fail.",
+                level=ERROR,
+            )
+            raise
+
         # Data loaded by the engine
         self.memory_bar: dict[str, pl.DataFrame] = {}
         self.num_data_rows: int = 0
         self.factor_datetime_col: str = DEFAULT_DATETIME_COL
-
-        self._write_log(f"{self.engine_name} initialized.", level=INFO)
 
     def _load_bar_data_engine(
         self, start: datetime, end: datetime, interval: Interval, vt_symbols: list[str]
@@ -74,10 +84,6 @@ class BacktestEngine:
         Populates self.memory_bar and self.num_data_rows.
         THIS IS A PLACEHOLDER. Replace with actual data loading logic.
         """
-        self._write_log(
-            f"Loading bar data for {len(vt_symbols)} symbols from {start} to {end} ({interval.value}).",
-            level=INFO,
-        )
         self.memory_bar.clear()
 
         if not vt_symbols:
@@ -125,7 +131,7 @@ class BacktestEngine:
         if not datetime_values:
             self.num_data_rows = 0
             self._write_log(
-                "No datetime values generated. Check start/end dates and interval.",
+                "Placeholder: No datetime values generated. Check start/end dates and interval.",
                 level=WARNING,
             )
             return True
@@ -177,14 +183,14 @@ class BacktestEngine:
                 self.memory_bar[bar_field] = pl.DataFrame(data_for_field)
             except Exception as e:
                 self._write_log(
-                    f"Error creating DataFrame for field '{bar_field}': {e}",
+                    f"Placeholder: Error creating DataFrame for field '{bar_field}': {e}",
                     level=ERROR,
                 )
                 return False
 
         if "close" not in self.memory_bar or self.memory_bar["close"].is_empty():
             self._write_log(
-                "'close' data is missing or empty after simulated loading.",
+                "Placeholder: 'close' data is missing or empty after simulated loading.",
                 level=ERROR,
             )
             self.num_data_rows = 0
@@ -193,15 +199,11 @@ class BacktestEngine:
         self.num_data_rows = self.memory_bar["close"].height
         if self.num_data_rows == 0:
             self._write_log(
-                "Loaded 'close' data is empty. No data rows available.",
+                "Placeholder: Loaded 'close' data is empty. No data rows available.",
                 level=WARNING,
             )
             return True
 
-        self._write_log(
-            f"Successfully simulated loading of {self.num_data_rows} rows for {len(vt_symbols)} symbols.",
-            level=DEBUG,
-        )
         return True
 
     def _init_and_flatten_factor(
@@ -211,16 +213,169 @@ class BacktestEngine:
         factor_json_conf_path: str | None = None,
     ) -> tuple[FactorTemplate | None, dict[str, FactorTemplate] | None]:
         """
-        Initializes the target factor and flattens its dependency tree using FactorInitializer.
+        Initializes the target factor and flattens its dependency tree.
+        Returns the target factor instance and the dictionary of all flattened factors.
         """
-        initializer = FactorInitializer(
-            factor_module_name=self.factor_module_name,
-            factor_json_conf_path=factor_json_conf_path,
+        self._write_log(
+            f"Initializing and flattening factor based on definition. Symbols: {vt_symbols_for_factor}",
+            level=INFO,
         )
-        return initializer.init_and_flatten(
-            factor_definition=factor_definition,
-            vt_symbols_for_factor=vt_symbols_for_factor,
+        if not self.module_factors:
+            self._write_log(
+                "Factor module not loaded. Cannot initialize factor.", level=ERROR
+            )
+            return None, None
+
+        target_factor_instance: FactorTemplate | None = None
+
+        # Logic to get a single FactorTemplate instance based on factor_definition
+        if isinstance(factor_definition, FactorTemplate):
+            target_factor_instance = factor_definition
+            target_factor_instance.factor_mode = FactorMode.BACKTEST
+            # Ensure vt_symbols are aligned if provided
+            if target_factor_instance.vt_symbols != vt_symbols_for_factor:
+                target_factor_instance.vt_symbols = vt_symbols_for_factor
+                target_factor_instance._init_dependency_instances()  # Re-initialize dependencies with new symbols
+        elif isinstance(factor_definition, dict):
+            setting_copy = factor_definition.copy()
+            setting_copy["factor_mode"] = FactorMode.BACKTEST.name
+            if "params" not in setting_copy:
+                setting_copy["params"] = {}
+            # setting_copy["params"]["vt_symbols"] = vt_symbols_for_factor
+            try:
+                inited_list = init_factors(
+                    self.module_factors,
+                    [setting_copy],
+                    self.module_factors,
+                    vt_symbols_for_factor,
+                )
+                if inited_list:
+                    target_factor_instance = inited_list[0]
+            except Exception as e:
+                self._write_log(
+                    f"Error initializing factor from dict: {e}", level=ERROR
+                )
+                return None, None
+        elif isinstance(factor_definition, str):  # factor_key
+            if not factor_json_conf_path:
+                self._write_log(
+                    "factor_json_conf_path needed for factor_key definition.",
+                    level=ERROR,
+                )
+                return None, None
+            try:
+                all_settings = load_factor_setting(str(factor_json_conf_path))
+                found_setting = None
+                for setting_item_outer in all_settings:
+                    setting_item = setting_item_outer
+                    if (
+                        len(setting_item_outer) == 1
+                        and isinstance(list(setting_item_outer.values())[0], dict)
+                        and "class_name" in list(setting_item_outer.values())[0]
+                    ):
+                        setting_item = list(setting_item_outer.values())[0]
+
+                    temp_setting = setting_item.copy()
+                    temp_setting["factor_mode"] = FactorMode.BACKTEST.name
+                    if "params" not in temp_setting:
+                        temp_setting["params"] = {}
+
+                    TempFactorClass: FactorTemplate = getattr(
+                        self.module_factors, temp_setting["class_name"]
+                    )
+                    temp_instance = TempFactorClass(
+                        setting=temp_setting,
+                        dependencies_module_lookup=self.module_factors,
+                    )
+                    temp_instance.vt_symbols = (
+                        vt_symbols_for_factor  # Ensure symbols are set
+                    )
+                    if temp_instance.factor_key == factor_definition:
+                        found_setting = setting_item.copy()
+                        break
+                if found_setting:
+                    final_setting = found_setting
+                    final_setting["factor_mode"] = FactorMode.BACKTEST.name
+                    if "params" not in final_setting:
+                        final_setting["params"] = {}
+                    inited_list = init_factors(
+                        self.module_factors,
+                        [final_setting],
+                        self.module_factors,
+                        vt_symbols_for_factor,
+                    )
+                    if inited_list:
+                        target_factor_instance = inited_list[0]
+                else:
+                    self._write_log(
+                        f"Factor key '{factor_definition}' not found in '{factor_json_conf_path}'.",
+                        level=ERROR,
+                    )
+                    return None, None
+            except Exception as e:
+                self._write_log(
+                    f"Error initializing factor from key '{factor_definition}': {e}",
+                    level=ERROR,
+                )
+                return None, None
+        else:
+            self._write_log(
+                f"Invalid factor_definition type: {type(factor_definition)}",
+                level=ERROR,
+            )
+            return None, None
+
+        if not target_factor_instance:
+            self._write_log("Failed to create target_factor_instance.", level=ERROR)
+            return None, None
+
+        self._write_log(
+            f"Target factor instance created: {target_factor_instance.factor_key}",
+            level=DEBUG,
         )
+
+        # Flatten the dependency tree
+        stacked_factors = {target_factor_instance.factor_key: target_factor_instance}
+        flattened_factors = self._complete_factor_tree(stacked_factors)
+
+        if not flattened_factors:
+            self._write_log("Failed to flatten factor tree.", level=ERROR)
+            return None, None
+
+        self._write_log(
+            f"Factor tree flattened. Total factors in graph: {len(flattened_factors)}",
+            level=DEBUG,
+        )
+        return target_factor_instance, flattened_factors
+
+    def _complete_factor_tree(
+        self, root_factors: dict[str, FactorTemplate]
+    ) -> dict[str, FactorTemplate]:
+        """
+        Helper method to recursively traverse dependencies and build a flat dictionary
+        of all unique FactorTemplate instances.
+        """
+        resolved_factors: dict[str, FactorTemplate] = {}
+
+        def traverse(factor: FactorTemplate):
+            if factor.factor_key in resolved_factors:
+                return
+            for dep_instance in (
+                factor.dependencies_factor
+            ):  # These are already FactorTemplate instances
+                if not isinstance(dep_instance, FactorTemplate):
+                    # This case should ideally not be hit if init_factors correctly resolves dependencies.
+                    self._write_log(
+                        f"Warning: Dependency for {factor.factor_key} is not a FactorTemplate instance: {type(dep_instance)}. This might indicate an issue in how FactorTemplate initializes its dependencies_factor list.",
+                        level=WARNING,
+                    )
+                    continue
+                traverse(dep_instance)
+            resolved_factors[factor.factor_key] = factor
+
+        for _, factor_instance in root_factors.items():
+            traverse(factor_instance)
+        return resolved_factors
 
     def _create_calculator(self) -> FactorCalculator:
         """Creates and returns a FactorCalculator instance."""
@@ -234,25 +389,19 @@ class BacktestEngine:
         calculator: FactorCalculator,
         target_factor_instance: FactorTemplate,
         flattened_factors: dict[str, FactorTemplate],
-        vt_symbols_for_run: list[str],
-        data_to_use: dict[str, pl.DataFrame],
+        vt_symbols_for_run: list[str],  # Pass the current run's symbols
     ) -> pl.DataFrame | None:
-        """Uses the calculator to compute factor values on the given data."""
-        self._write_log("Starting factor computation...", level=INFO)
-
-        if "close" not in data_to_use or data_to_use["close"].is_empty():
-            self._write_log("No data provided for computation.", level=WARNING)
-            return None
-
-        num_rows = data_to_use["close"].height
+        """Uses the calculator to compute factor values using its loaded data."""
+        self._write_log("Starting factor value computation phase...", level=DEBUG)
 
         factor_df = calculator.compute_factor_values(
             target_factor_instance_input=target_factor_instance,
             flattened_factors_input=flattened_factors,
-            memory_bar_input=data_to_use,
-            num_data_rows_input=num_rows,
+            memory_bar_input=self.memory_bar,  # Pass orchestrator's loaded data
+            num_data_rows_input=self.num_data_rows,
             vt_symbols_for_run=vt_symbols_for_run,
         )
+        # calculator.close() # Calculator can be closed after all computations if it were long-lived
         return factor_df
 
     def _run_factor_analysis(
@@ -267,18 +416,9 @@ class BacktestEngine:
         report_filename_prefix: str,
     ) -> Path | None:
         """Uses the analyser to process results and generate a report."""
-        self._write_log("Starting factor analysis...", level=INFO)
+        self._write_log("Starting factor analysis phase...", level=DEBUG)
         analyser = FactorAnalyser(
             output_data_dir_for_reports=self.output_data_dir_for_analyser_reports
-        )
-
-        analyser.annualization_factor = get_annualization_factor(
-            market_close_prices_df[DEFAULT_DATETIME_COL]
-        )
-
-        self._write_log(
-            f"annualization_factor set to {analyser.annualization_factor} based on market close prices.",
-            level=DEBUG,
         )
 
         if market_close_prices_df.is_empty():
@@ -313,36 +453,42 @@ class BacktestEngine:
         data_interval: Interval = Interval.MINUTE,
         # Analysis parameters
         num_quantiles: int = 5,
-        long_short_percentile: float = 0.5,
+        returns_look_ahead_period: int = 1,
+        long_percentile_threshold: float = 0.7,
+        short_percentile_threshold: float = 0.3,
         report_filename_prefix: str = "factor_analysis_report",
     ) -> Path | None:
         """
         Runs a complete single factor backtest by coordinating FactorCalculator and FactorAnalyser.
         """
-        # Step 1: Load Data
+        self._write_log(
+            f"Orchestrating single factor backtest for symbols: {vt_symbols_for_factor}",
+            level=INFO,
+        )
+
+        # Step 1: Load Data (Orchestrator handles this)
         if not self._load_bar_data_engine(
             start_datetime, end_datetime, data_interval, vt_symbols_for_factor
         ):
-            self._write_log("Data loading failed. Aborting backtest.", level=ERROR)
+            self._write_log("Failed to load bar data in orchestrator. Aborting.", ERROR)
             return None
-        self._write_log("Data loading complete.", level=INFO)
+        if self.num_data_rows == 0:
+            self._write_log(
+                "No bar data rows loaded by orchestrator. Aborting.", WARNING
+            )
+            return None
 
-        # Step 2: Initialize Factor
+        # Step 2: Initialize Factor and Flatten Dependency Tree
         target_factor_instance, flattened_factors = self._init_and_flatten_factor(
             factor_definition=factor_definition,
             vt_symbols_for_factor=vt_symbols_for_factor,
             factor_json_conf_path=factor_json_conf_path,
         )
-
         if not target_factor_instance or not flattened_factors:
             self._write_log(
-                "Factor initialization failed. Aborting backtest.", level=ERROR
+                "Failed to initialize or flatten factor. Aborting.", level=ERROR
             )
             return None
-        self._write_log(
-            f"Running single factor backtest for {target_factor_instance.factor_key}",
-            level=INFO,
-        )
 
         # Step 3: Calculate Factor Values
         calculator = self._create_calculator()
@@ -351,8 +497,7 @@ class BacktestEngine:
             calculator=calculator,
             target_factor_instance=target_factor_instance,
             flattened_factors=flattened_factors,
-            vt_symbols_for_run=vt_symbols_for_factor,
-            data_to_use=self.memory_bar,
+            vt_symbols_for_run=vt_symbols_for_factor,  # Use the symbols for this specific run
         )
         calculator.close()  # Close calculator after computation is done
 
@@ -361,7 +506,6 @@ class BacktestEngine:
                 "Factor calculation failed. Aborting analysis.", level=ERROR
             )
             return None
-        self._write_log("Factor calculation complete.", level=INFO)
 
         # Prepare market data (close prices) for the analyser, aligned with factor_df
         market_close_prices_df: pl.DataFrame | None = None
@@ -384,20 +528,19 @@ class BacktestEngine:
             return None
 
         # Step 4: Analyse Factor Results
-        self._write_log("Analyzing factor performance.", level=INFO)
         actual_analysis_start_dt = start_datetime
         actual_analysis_end_dt = end_datetime
         if not factor_df.is_empty():
             try:
                 min_dt_val = factor_df.select(pl.col(DEFAULT_DATETIME_COL).min()).item()
                 max_dt_val = factor_df.select(pl.col(DEFAULT_DATETIME_COL).max()).item()
-                if isinstance(min_dt_val, datetime | pd.Timestamp):
+                if isinstance(min_dt_val, datetime|pd.Timestamp):
                     actual_analysis_start_dt = (
                         pd.to_datetime(min_dt_val).to_pydatetime()
                         if isinstance(min_dt_val, pd.Timestamp)
                         else min_dt_val
                     )
-                if isinstance(max_dt_val, datetime | pd.Timestamp):
+                if isinstance(max_dt_val, datetime|pd.Timestamp):
                     actual_analysis_end_dt = (
                         pd.to_datetime(max_dt_val).to_pydatetime()
                         if isinstance(max_dt_val, pd.Timestamp)
@@ -416,7 +559,9 @@ class BacktestEngine:
             analysis_start_dt=actual_analysis_start_dt,
             analysis_end_dt=actual_analysis_end_dt,
             num_quantiles=num_quantiles,
-            long_short_percentile=long_short_percentile,
+            returns_look_ahead_period=returns_look_ahead_period,
+            long_percentile_threshold=long_percentile_threshold,
+            short_percentile_threshold=short_percentile_threshold,
             report_filename_prefix=report_filename_prefix,
         )
 
@@ -428,168 +573,6 @@ class BacktestEngine:
             self._write_log("Analysis and reporting failed.", level=WARNING)
 
         return report_path
-
-    def run_train_test_backtest(
-        self,
-        factor_definition: FactorTemplate | dict | str,
-        start_datetime: datetime,
-        end_datetime: datetime,
-        vt_symbols_for_factor: list[str],
-        factor_json_conf_path: str | None = None,
-        data_interval: Interval = Interval.MINUTE,
-        test_size_ratio: float = 0.3,
-        num_quantiles: int = 5,
-        long_short_percentile: float = 0.5,
-        report_filename_prefix: str = "factor_analysis_report",
-    ) -> tuple[Path | None, Path | None]:
-        """
-        Runs a backtest with separate training and testing sets.
-
-        It loads the full data, splits it, calculates the factor on each subset,
-        and generates separate analysis reports for both training and testing periods.
-
-        Args:
-            factor_definition: The factor to be backtested.
-            start_datetime: The start date for the entire data period.
-            end_datetime: The end date for the entire data period.
-            vt_symbols_for_factor: List of symbols for the backtest.
-            factor_json_conf_path: Path to factor configuration JSON.
-            data_interval: The interval of the historical data.
-            test_size_ratio: The proportion of data to use for the test set.
-            num_quantiles: Number of quantiles for factor analysis.
-            long_short_percentile: Percentile for long/short portfolio construction.
-            report_filename_prefix: Prefix for the report filenames.
-
-        Returns:
-            A tuple containing the paths to the training report and the testing report.
-        """
-        # 1. Load all necessary data
-        if not self._load_bar_data_engine(
-            start_datetime, end_datetime, data_interval, vt_symbols_for_factor
-        ):
-            self._write_log("Data loading failed, aborting backtest.", level=ERROR)
-            return None, None
-
-        # 2. Split data into training and testing sets
-        try:
-            train_data, test_data = self._split_data(test_size_ratio)
-            train_rows = train_data["close"].height
-            test_rows = test_data["close"].height
-            self._write_log(
-                f"Data split into {train_rows} train rows and {test_rows} test rows.",
-                level=INFO,
-            )
-        except ValueError as e:
-            self._write_log(f"Error splitting data: {e}", level=ERROR)
-            return None, None
-
-        # 3. Initialize the factor
-        target_factor, flattened_factors = self._init_and_flatten_factor(
-            factor_definition=factor_definition,
-            vt_symbols_for_factor=vt_symbols_for_factor,
-            factor_json_conf_path=factor_json_conf_path,
-        )
-        if not target_factor or not flattened_factors:
-            self._write_log("Factor initialization failed.", level=ERROR)
-            return None, None
-
-        # 4. Process Training Data
-        self._write_log("Processing training data...", level=INFO)
-        train_report = self._process_data_subset(
-            target_factor,
-            flattened_factors,
-            train_data,
-            vt_symbols_for_factor,
-            num_quantiles,
-            long_short_percentile,
-            f"{report_filename_prefix}_train",
-        )
-
-        # 5. Process Testing Data
-        self._write_log("Processing testing data...", level=INFO)
-        test_report = self._process_data_subset(
-            target_factor,
-            flattened_factors,
-            test_data,
-            vt_symbols_for_factor,
-            num_quantiles,
-            long_short_percentile,
-            f"{report_filename_prefix}_test",
-        )
-
-        return train_report, test_report
-
-    def _process_data_subset(
-        self,
-        target_factor: FactorTemplate,
-        flattened_factors: dict[str, FactorTemplate],
-        data_subset: dict[str, pl.DataFrame],
-        vt_symbols: list[str],
-        num_quantiles: int,
-        long_short_percentile: float,
-        report_prefix: str,
-    ) -> Path | None:
-        """
-        A helper function to run factor computation and analysis on a subset of data.
-        """
-        if data_subset["close"].is_empty():
-            self._write_log(f"Data subset for '{report_prefix}' is empty.", WARNING)
-            return None
-
-        calculator = self._create_calculator()
-        factor_df = self._run_factor_computation(
-            calculator, target_factor, flattened_factors, vt_symbols, data_subset
-        )
-        calculator.close()
-
-        if factor_df is None or factor_df.is_empty():
-            self._write_log(
-                f"Factor calculation failed for '{report_prefix}'.", WARNING
-            )
-            return None
-
-        start_dt = data_subset["close"][self.factor_datetime_col].min()
-        end_dt = data_subset["close"][self.factor_datetime_col].max()
-
-        report_path = self._run_factor_analysis(
-            factor_df=factor_df,
-            market_close_prices_df=data_subset["close"],
-            target_factor_instance=target_factor,
-            analysis_start_dt=start_dt,
-            analysis_end_dt=end_dt,
-            num_quantiles=num_quantiles,
-            long_short_percentile=long_short_percentile,
-            report_filename_prefix=report_prefix,
-        )
-        return report_path
-
-    def _split_data(
-        self, test_size_ratio: float
-    ) -> tuple[dict[str, pl.DataFrame], dict[str, pl.DataFrame]]:
-        """Splits the loaded data into training and testing sets."""
-        if (
-            not self.memory_bar
-            or "close" not in self.memory_bar
-            or self.memory_bar["close"].is_empty()
-        ):
-            raise ValueError("Memory bar is not loaded or 'close' data is missing.")
-
-        total_rows = self.num_data_rows
-        if total_rows == 0:
-            raise ValueError("No data available to split.")
-
-        train_size = int(total_rows * (1 - test_size_ratio))
-        train_data, test_data = {}, {}
-
-        for key, df in self.memory_bar.items():
-            if isinstance(df, pl.DataFrame) and not df.is_empty():
-                train_data[key] = df.slice(0, train_size)
-                test_data[key] = df.slice(train_size)
-            else:
-                train_data[key] = df
-                test_data[key] = df
-
-        return train_data, test_data
 
     def _write_log(self, msg: str, level: int = INFO) -> None:
         level_map = {
