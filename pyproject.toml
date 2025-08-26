@@ -4,7 +4,10 @@ dynamic = ["version"]
 description = "A framework for developing quant trading systems."
 readme = "README.md"
 license = {text = "MIT"}
-authors = [{name = "HYF&Chen", email = ""}]
+authors = [
+    {name = "EvanHONG", email = "h939778128@gmail.com"},
+    { name = "Ch1nZ", email = "chzao0928@gmail.com" }
+]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "License :: OSI Approved :: MIT License",
@@ -163,8 +166,8 @@ dev = [
 "Source" = "https://github.com/rookieCryptoTraders/vnpy"
 
 [build-system]
-requires = ["uv>=0.1.36"]
-build-backend = "uv.build"
+requires = ["uv_build>=0.7.2,<0.8"]
+build-backend = "uv_build"
 
 [tool.uv]
 # Optional: add uv-specific configuration here if needed
