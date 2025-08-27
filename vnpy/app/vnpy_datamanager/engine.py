@@ -5,7 +5,7 @@ import time
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime
-from logging import INFO,ERROR
+from logging import INFO, ERROR
 from typing import List, Optional, Union, TYPE_CHECKING, Literal
 
 import polars as pl
@@ -64,26 +64,41 @@ class DataManagerEngine(BaseEngine):
         if isinstance(data, list) and isinstance(data[0], dict):
             res = []
             for d in data:
-                res.append(self.database.load_bar_data(**d))
-            res = pl.concat(res, how="vertical",rechunk=True)
-        elif isinstance(data,dict):
+                tmp=self.database.load_bar_data(**d)
+                if tmp is not None:
+                    res.append(tmp)
+                else:
+                    self.write_log(f"on_load_bar_data: no data found for {d}", level=INFO)
+            res = pl.concat(res, how="vertical", rechunk=True)
+        elif isinstance(data, dict):
             res = self.database.load_bar_data(
                 **data
             )
         else:
-            self.write_log(f"Invalid data format for {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}: {data}",level=ERROR)
+            self.write_log(f"Invalid data format for {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}: {data}", level=ERROR)
             raise TypeError(f"Invalid data format for {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}: {data}")
         self.write_log(
             f"Successfully processed {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}, response count: {len(res)}")
         self.put_event(Event(EVENT_DATAMANAGER_LOAD_BAR_RESPONSE, data=res))
+        print(f"put_event {EVENT_DATAMANAGER_LOAD_BAR_RESPONSE}: {event_type}, {data}, response count: {len(res)}",flush=True)
 
     def on_load_factor_data(self, event: Event) -> None:
         event_type, data = event.type, event.data
-        self.write_log(f"load factor request {data}")
-        res = self.database.load_factor_data(
-            **data)
-        self.put_event(Event(EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE, res))
-        self.write_log(f"Successfully processed {EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE}, response count: {len(res)}")
+        if isinstance(data, list) and isinstance(data[0], dict):
+            res = []
+            for d in data:
+                res.append(self.database.load_factor_data(**d))
+            res = pl.concat(res, how="vertical", rechunk=True)
+        elif isinstance(data, dict):
+            res = self.database.load_factor_data(
+                **data
+            )
+        else:
+            self.write_log(f"Invalid data format for {EVENT_DATAMANAGER_LOAD_FACTOR_REQUEST}: {data}", level=ERROR)
+            raise TypeError(f"Invalid data format for {EVENT_DATAMANAGER_LOAD_FACTOR_REQUEST}: {data}")
+        self.write_log(
+            f"Successfully processed {EVENT_DATAMANAGER_LOAD_FACTOR_REQUEST}, response count: {len(res)}")
+        self.put_event(Event(EVENT_DATAMANAGER_LOAD_FACTOR_RESPONSE, data=res))
 
     def on_bar_filling(self, bar: BarData) -> None:
         """
@@ -390,7 +405,9 @@ class DataManagerEngine(BaseEngine):
         """
         res = defaultdict(list)
         for overview_key, time_ranges in gap_dict.items():
-            print(f"download_bar_data_gaps Processing overview key: {overview_key},{time_ranges}")
+            start_dt = min([time_range.start for time_range in time_ranges])
+            end_dt = max([time_range.end for time_range in time_ranges])
+            self.write_log(f"download_bar_data_gaps: {overview_key}, {start_dt} - {end_dt}")
             info = match_format_string(VTSYMBOL_OVERVIEW, overview_key)
             for time_range in time_ranges:
                 res[overview_key].extend(self.download_bar_data(symbol=info['symbol'],

@@ -53,6 +53,10 @@ from .converter import OffsetConverter
 from .logger import DEBUG, INFO, WARNING, ERROR, CRITICAL
 from ..utils.datetimes import DatetimeUtils, TimeFreq
 
+# The following logic was adjusted by Gemini for adding AgentEngine.
+# from ..agent.engine import AgentEngine
+
+
 if TYPE_CHECKING:
     from .gateway import BaseGateway
 
@@ -82,13 +86,13 @@ class MainEngine:
         self.gateways: dict[str, "BaseGateway"] = {}
         self.engines: dict[str, BaseEngine] = {}
         self.apps: dict[str, BaseApp] = {}
-        self.intervals: list[Interval] = [Interval(interval) for interval in SETTINGS.get('gateway.intervals', [])]
+        self.intervals: list[Interval] = [Interval(interval) for interval in SETTINGS.get("gateway.intervals", [])]
         self.minimum_freq: TimeFreq = min([DatetimeUtils.interval2freq(intvl) for intvl in self.intervals])
         self.symbols = SETTINGS.get("gateway.symbols", [])  # hyf
         self.exchanges: list[Exchange] = [Exchange(ex) for ex in SETTINGS.get("gateway.exchanges", [])]  # hyf
         self.vt_symbols: list[str] = [f"{s}.{e.value}" for s, e in product(self.symbols, self.exchanges)]
-        self.mode: str = SETTINGS.get('mode', 'LIVE')
-        assert self.mode in ['LIVE', 'BACKTEST', 'TEST']
+        self.mode: str = SETTINGS.get("system.mode", "LIVE")
+        assert self.mode in ["LIVE", "BACKTEST", "TEST"]
 
         self.TEMP_DIR = TEMP_DIR
         os.chdir(TRADER_DIR)  # Change working directory
@@ -319,7 +323,7 @@ class MainEngine:
                     self.subscribe(req, contract.gateway_name)
                 else:
                     self.write_log(msg=f"Market data subscription failed, contract {vt_symbol} not found",
-                                   source='MainEngine')
+                                   source="MainEngine")
 
 
 class BaseEngine(ABC):

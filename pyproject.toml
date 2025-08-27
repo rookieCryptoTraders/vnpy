@@ -1,10 +1,13 @@
 [project]
 name = "vnpy"
-dynamic = ["version"]
-description = "A framework for developing quant trading systems."
+version = "0.1.0"
+description = "A comprehensive, modular, event-driven quantitative trading framework for strategy development, backtesting, and live trading across stocks, futures, and cryptocurrencies. Features a decoupled architecture, high extensibility, and easy integration of custom modules. Includes event-driven engines, gateways for multiple exchanges, advanced portfolio and risk management, high-performance factor engineering, and a robust strategy engine with automated model retraining. Designed for real-time, low-latency trading and research workflows."
 readme = "README.md"
-license = {text = "MIT"}
-authors = [{name = "HYF&Chen", email = ""}]
+license = { text = "MIT" }
+authors = [
+    { name = "EvanHONG", email = "h939778128@gmail.com" },
+    { name = "Ch1nZ", email = "chzao0928@gmail.com" }
+]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "License :: OSI Approved :: MIT License",
@@ -163,11 +166,8 @@ dev = [
 "Source" = "https://github.com/rookieCryptoTraders/vnpy"
 
 [build-system]
-requires = ["uv>=0.1.36"]
+requires = ["uv>=0.7.2,<0.8"]
 build-backend = "uv.build"
-
-[tool.uv]
-# Optional: add uv-specific configuration here if needed
 
 [tool.mypy]
 python_version = "3.10"
@@ -189,10 +189,10 @@ output-format = "full"
 
 [tool.ruff.lint]
 select = [
-    "B",  # flake8-bugbear
-    "E",  # pycodestyle error
-    "F",  # pyflakes
-    "UP",  # pyupgrade
-    "W",  # pycodestyle warning
+    "B", # flake8-bugbear
+    "E", # pycodestyle error
+    "F", # pyflakes
+    "UP", # pyupgrade
+    "W", # pycodestyle warning
 ]
 ignore = ["E501"]

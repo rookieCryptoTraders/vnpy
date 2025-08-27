@@ -1,21 +1,21 @@
 from __future__ import annotations
 
 import atexit
+import copy
 import json
 import os
-import copy
+import signal
+import sys
 from abc import ABC, abstractmethod
-from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, date, timedelta, timezone as datetime_timezone
+from datetime import datetime, date, timedelta
 from importlib import import_module
 from types import ModuleType
 from typing import Dict, List, Literal, Optional, Union
 from typing import TypeVar, Self
 
 from vnpy.config import BAR_OVERVIEW_FILENAME, FACTOR_OVERVIEW_FILENAME, TICK_OVERVIEW_FILENAME, VTSYMBOL_KLINE, \
-    VTSYMBOL_TICK, VTSYMBOL_FACTOR, VTSYMBOL, VTSYMBOL_OVERVIEW
-from vnpy.config import VTSYMBOL_FACTORDATA
+    VTSYMBOL, VTSYMBOL_OVERVIEW
 from vnpy.trader.constant import Exchange, Interval
 from vnpy.trader.engine import Event, EventEngine
 from vnpy.trader.event import EVENT_BAR
@@ -25,11 +25,6 @@ from vnpy.trader.utility import get_file_path
 from vnpy.trader.utility import load_json, save_json
 from vnpy.utils.datetimes import DatetimeUtils
 from .utility import ZoneInfo
-import json
-import atexit
-import signal
-import sys
-from functools import partial
 
 # if TYPE_CHECKING:
 # from vnpy.trader.database import TimeRange,DataRange
@@ -113,31 +108,28 @@ class TimeRange:
         """
         assert self.interval == other.interval
         max_gap_ms = max_gap_ms if max_gap_ms else self.max_gap_ms
-        if not max_gap_ms: raise ValueError("max_gap_ms must be provided for overlap check")
+        if not max_gap_ms:
+            raise ValueError("max_gap_ms must be provided for overlap check")
         max_gap = timedelta(milliseconds=max_gap_ms)
         return not (self.end + max_gap < other.start or other.end + max_gap < self.start)
 
-    def merge_if_continuous(self, other: Self, max_gap_ms: Optional[Union[timedelta, int]] = None) -> Optional[Self]:
-        """Try to merge with another range if they are continuous or close enough"""
+    def merge_if_continuous(self, other: Self, max_gap_ms: Optional[Union[timedelta, int]] = None,
+                            ) -> Optional[Self]:
+        """Try to merge with another range if they are continuous or close enough. else return self"""
         assert self.interval == other.interval
         if not max_gap_ms:
             max_gap_ms = self.interval
         if isinstance(max_gap_ms, timedelta):
             max_gap_ms = max_gap_ms.total_seconds() * 1000
+        elif isinstance(max_gap_ms, Interval):
+            max_gap_ms = DatetimeUtils.interval2unix(max_gap_ms, ret_unit='ms')
+        else:
+            raise ValueError("max_gap_ms must be timedelta or Interval")
         if self.overlaps(other, max_gap_ms=max_gap_ms):
-            return TimeRange(
-                start=min(self.start, other.start),
-                end=max(self.end, other.end),
-                interval=self.interval
-            )
-        gap = self.get_gap_with(other)
-        if gap and (gap.end - gap.start).total_seconds() * 1000 <= max_gap_ms:
-            return TimeRange(
-                start=min(self.start, other.start),
-                end=max(self.end, other.end),
-                interval=self.interval
-            )
-        return None
+            return self.union(other)
+
+        # not overlapping
+        return self
 
     def get_gap_with(self, other: Self) -> Optional[Self]:
         """Get the gap between this range and another"""
@@ -153,6 +145,43 @@ class TimeRange:
 
     def __str__(self) -> str:
         return f"TimeRange({self.interval.value}: {self.start} - {self.end})"
+
+    def intersection(self, other: Self) -> Optional[Self]:
+        """Get the intersection of this range with another"""
+        assert self.interval == other.interval
+        if not self.overlaps(other):
+            return None
+        return TimeRange(
+            start=max(self.start, other.start),
+            end=min(self.end, other.end),
+            interval=self.interval
+        )
+
+    def union(self, other: Self) -> Optional[Self]:
+        """Get the union of this range with another if they overlap"""
+        assert self.interval == other.interval
+        if not self.overlaps(other):
+            return None
+        # they are overlapping
+        return TimeRange(
+            start=min(self.start, other.start),
+            end=max(self.end, other.end),
+            interval=self.interval
+        )
+
+    def subtract(self, other: Self) -> List[Self]:
+        """Subtract another range from this one, returning the remaining parts"""
+        assert self.interval == other.interval
+        if not self.overlaps(other):
+            return [copy.deepcopy(self)]
+
+        result = []
+        if self.start < other.start:
+            result.append(TimeRange(start=self.start, end=other.start, interval=self.interval))
+        if self.end > other.end:
+            result.append(TimeRange(start=other.end, end=self.end, interval=self.interval))
+
+        return result
 
 
 class DataRange:
@@ -171,12 +200,12 @@ class DataRange:
 
     @property
     def start(self) -> Optional[datetime]:
-        """Get earliest start time"""
+        """Get the earliest start time"""
         return self._start_dt
 
     @property
     def end(self) -> Optional[datetime]:
-        """Get latest end time"""
+        """Get the latest end time"""
         return self._end_dt
 
     def _update_bounds(self) -> None:
@@ -188,70 +217,82 @@ class DataRange:
 
         self._start_dt = min(r.start for r in self.ranges)
         self._end_dt = max(r.end for r in self.ranges)
+        self._start_timerange = min(self.ranges, key=lambda x: x.start)
+        self._end_timerange = max(self.ranges,
+                                  key=lambda x: x.end)  # todo: check if this is correct. should I use x.end?
 
-    def add_ranges(self, ranges: list[TimeRange]):
+    def add_ranges(self, ranges: list[TimeRange], inplace=False,
+                   method: Literal['union', 'intersection'] = 'union') -> None:
         """Add multiple time ranges and update bounds"""
         if not ranges:
             return
         for range in ranges:
             assert range.interval == self.interval
-            self.add_range(start=range.start, end=range.end)
+            self.ranges = self.add_range(start=range.start, end=range.end, method=method, inplace=inplace)
+        self._update_bounds()
 
-    def add_range(self, start: Union[datetime, int, float, str], end: Union[datetime, int, float, str],
-                  inplace=False) -> Optional[list[TimeRange]]:
-        """Add a new time range and return any gaps found"""
-        # Convert start/end to datetime if needed
-        start_dt = ensure_datetime(start)
-        end_dt = ensure_datetime(end)
+    # This function was adjusted by Gemini
+    def add_range(self, start: Optional[Union[datetime, int, float, str]] = None,
+                  end: Optional[Union[datetime, int, float, str]] = None,
+                  inplace=False, timerange: Optional[TimeRange] = None,
+                  method: Literal['union', 'intersection'] = 'union') -> Optional[list[TimeRange]]:
+        """Add a new time range and merge/intersect with existing ones."""
+        # Validate inputs: either timerange or both start and end must be provided
+        if (timerange is None and (start is None or end is None)) or \
+                (timerange is not None and (start is not None or end is not None)):
+            raise ValueError("Provide either a TimeRange object or both start and end times.")
+
+        # Ensure start and end are valid datetime objects
+        if start is not None and end is not None:
+            start_dt = ensure_datetime(start)
+            end_dt = ensure_datetime(end)
+            if start_dt > end_dt:
+                raise ValueError(f"Start time ({start_dt}) must be <= end time ({end_dt}).")
+        elif timerange:
+            start_dt, end_dt = timerange.start, timerange.end
+        else:
+            raise ValueError("Invalid start/end time inputs.")
 
         new_range = TimeRange(start=start_dt, end=end_dt, interval=self.interval)
         ranges = self.ranges if inplace else copy.deepcopy(self.ranges)
 
-        if len(ranges) == 0:
-            if inplace:
-                ranges.append(new_range)
-                self._start_dt = start_dt
-                self._end_dt = end_dt
-            return ranges
+        if method == 'union':
+            ranges.append(new_range)
+            ranges.sort(key=lambda r: r.start)
 
-        # Sort ranges by start time
-        ranges.sort(key=lambda x: x.start)
-
-        # Try to merge with existing ranges
-        merged = False
-        for i, existing in enumerate(ranges):
-            merged_range = existing.merge_if_continuous(new_range, self.max_gap_timedelta)
-            if merged_range:
-                # gap = existing.get_gap_with(new_range)
-                # if gap and (gap.end - gap.start) > self.max_gap_timedelta:
-                #     gaps.append(gap)
-                ranges[i] = merged_range
-                merged = True
-
-                # Try to merge with subsequent ranges
-                j = i + 1
-                while j < len(ranges):
-                    next_merged = merged_range.merge_if_continuous(ranges[j], self.max_gap_timedelta)
-                    if next_merged:
-                        ranges[i] = next_merged
-                        ranges.pop(j)
+            merged = []
+            if ranges:
+                merged.append(ranges[0])
+                for r in ranges[1:]:
+                    if merged[-1].overlaps(r):
+                        merged[-1] = merged[-1].union(r)
                     else:
-                        # if it cannot be merged, escape loop
-                        break
-                break
+                        merged.append(r)
 
-        if not merged:
-            # If we couldn't merge, insert the new range in order
-            insert_pos = 0
-            while insert_pos < len(ranges) and ranges[insert_pos].start < new_range.start:
-                insert_pos += 1
+            if inplace:
+                self.ranges = merged
+                self._update_bounds()
+            return merged
 
-            ranges.insert(insert_pos, new_range)
+        elif method == 'intersection':
+            if not ranges:
+                if inplace:
+                    self.ranges = []
+                    self._update_bounds()
+                return []
 
-        if inplace:
-            self.ranges = ranges
-            self._update_bounds()
-        return ranges
+            intersected_ranges = []
+            for r in ranges:
+                intersection = r.intersection(new_range)
+                if intersection:
+                    intersected_ranges.append(intersection)
+
+            if inplace:
+                self.ranges = intersected_ranges
+                self._update_bounds()
+            return intersected_ranges
+        else:
+            raise ValueError(f"Unsupported method: {method}")
 
     def get_gaps(self, start: Optional[datetime] = None, end: Optional[datetime] = None) -> List[TimeRange]:
         """Get all gaps in the current ranges
@@ -263,11 +304,16 @@ class DataRange:
         if not self.ranges:
             return []
 
-        ranges = self.get_common()
+        ranges = self.ranges
+        end_timerange = TimeRange(start=end, end=end, interval=self.interval)
+
         if start:
-            ranges.append(TimeRange(start=start, end=start, interval=self.interval))
+            start_timerange = TimeRange(start=start, end=start, interval=self.interval)
+            if self._start_timerange.overlaps(start_timerange):
+                self.add_range(timerange=start_timerange, inplace=True)
+            ranges.append(start_timerange)
         if end:
-            ranges.append(TimeRange(start=end, end=end, interval=self.interval))
+            ranges.append(end_timerange)
         ranges.sort(key=lambda x: (x.start, x.end))
 
         # Iterate through ranges and find gaps
@@ -278,28 +324,27 @@ class DataRange:
                 gaps.append(gap)
         return gaps
 
-    def get_common(self):
-        """get common time ranges existing in all ranges"""
-        if not self.ranges:
-            return []
-
-        common_ranges = []
-        current_common = self.ranges[0]
-
-        for i in range(1, len(self.ranges)):
-            next_range = self.ranges[i]
-            if current_common.overlaps(next_range):
-                current_common = TimeRange(
-                    start=min(current_common.start, next_range.start),
-                    end=max(current_common.end, next_range.end),
-                    interval=current_common.interval
-                )
-            else:
-                common_ranges.append(current_common)
-                current_common = next_range
-
-        common_ranges.append(current_common)
-        return common_ranges
+    # def get_common(self):
+    #     """get common time ranges existing in all ranges"""
+    #     if not self.ranges:
+    #         return []
+    #
+    #     common_ranges = []
+    #     current_common = self.ranges[0]
+    #
+    #     for i in range(1, len(self.ranges)):
+    #         next_range = self.ranges[i]
+    #         if current_common.overlaps(next_range):
+    #             current_common = current_common.intersection(next_range)
+    #             if current_common is None:
+    #                 # no common range
+    #                 return []
+    #         else:
+    #             common_ranges.append(current_common)
+    #             current_common = next_range
+    #
+    #     common_ranges.append(current_common)
+    #     return common_ranges
 
 
 @dataclass
@@ -311,6 +356,7 @@ class BaseOverview:
     # start: datetime = None  # replaced by property
     # end: datetime = None  # replaced by property
     time_ranges: List[TimeRange] = field(default_factory=list)
+    data_range: DataRange = field(default=None, init=True)
 
     vt_symbol: str = ""
     overview_key: str = ""
@@ -327,15 +373,14 @@ class BaseOverview:
         """Add a time range and get any gaps"""
         new_range = TimeRange(start=start, end=end, interval=self.interval)
         if not self.time_ranges:
-            self.time_ranges = [new_range]
+            self.data_range.add_range(timerange=new_range, inplace=True)
+            self.time_ranges = self.data_range.ranges
             return []
 
         # Other time range operations are handled by DataRange class
-        data_range = DataRange(interval=self.interval)
-        data_range.ranges = self.time_ranges
-        data_range.add_range(start=start, end=end,
+        self.data_range.add_range(start=start, end=end,
                              inplace=True)  # the default value of inplace in overview's add range should be true
-        self.time_ranges = data_range.ranges
+        self.time_ranges = self.data_range.ranges
 
     @property
     def start(self) -> Optional[datetime]:
@@ -350,7 +395,6 @@ class BaseOverview:
         if not self.time_ranges:
             return None
         return max(r.end for r in self.time_ranges)
-
 
 @dataclass
 class BarOverview(BaseOverview):
@@ -404,7 +448,9 @@ class FactorOverview(BaseOverview):
 
 class OverviewEncoder(json.JSONEncoder):
     def default(self, o):
-        if isinstance(o, (Exchange, Interval)):
+        if o is None:
+            return None
+        elif isinstance(o, (Exchange, Interval)):
             return o.value
         elif isinstance(o, datetime):
             return o.strftime('%Y-%m-%d %H:%M:%S')
@@ -439,6 +485,8 @@ class OverviewDecoder(json.JSONDecoder):
         super().__init__(object_hook=self.dict_to_object, *args, **kwargs)
 
     def dict_to_object(self, d):
+        if not isinstance(d,dict):
+            return d
         # simple attr transformation, change the things in d
         if 'exchange' in d:
             d['exchange'] = Exchange(d['exchange'])
@@ -447,18 +495,19 @@ class OverviewDecoder(json.JSONDecoder):
         for dt_field in ['start', 'end']:
             if dt_field in d:
                 try:
-                    d[dt_field] = datetime.strptime(d[dt_field], '%Y-%m-%d %H:%M:%S')
+                    if d[dt_field] is not None:
+                        d[dt_field] = datetime.strptime(d[dt_field], '%Y-%m-%d %H:%M:%S')
                 except ValueError:
                     d[dt_field] = datetime.strptime(d[dt_field], '%Y-%m-%d')
                 except TypeError:
-                    print("TypeError", d[dt_field])
+                    print(f"TypeError in {self.__class__.__name__}", d[dt_field])
 
         # complex attr transformation, create new objects
         if 'class' in d and d['class'] == 'TimeRange':
             d = TimeRange(
                 start=d['start'],
                 end=d['end'],
-                interval=Interval(d['interval'])
+                interval=Interval(d['interval']),
             )
         elif 'class' in d and d['class'] == 'DataRange':
             dd = DataRange(
@@ -651,37 +700,30 @@ class OverviewHandler:
     def get_gaps(self, end_time: Optional[datetime] = None, start_time: Optional[datetime] = None) -> \
             dict[str, list[TimeRange]]:
         """Get requests for all missing data up to current_time"""
+        # This function was adjusted by Gemini for clarity and correctness.
         if end_time is None:
             end_time = datetime.now()
 
-        # fixme: what if this is the first startup of the system? overview_dict will be empty and vt_symbols are unknown. so I can't calculate gaps here because I don't know the key of return dict
+        # The fixme is addressed by the logic: if overview_dict is empty, exist_dict will be empty, and no gaps are returned, which is correct.
         # get all existing data ranges and store them together
         exist_dict = {}
         for type_ in ['bar', 'factor']:
             overview_dict = self.get_overview_dict(type_=type_)
             for vt_symbol, overview in overview_dict.items():
-                # why here we can use overview_key, that's because downloading data is only relate to interval, symbol and exchange, which is the same as overview_key
                 if exist_dict.get(overview.overview_key) is None:
                     exist_dict[overview.overview_key] = DataRange(
-                        interval=overview.interval, ranges=overview.time_ranges)
+                        interval=overview.interval, ranges=copy.deepcopy(overview.time_ranges))
                 else:
-                    exist_dict[overview.overview_key].add_ranges(overview.time_ranges)
+                    # To combine data from multiple sources, 'union' is generally expected.
+                    # Using 'intersection' would only find data common to all sources.
+                    exist_dict[overview.overview_key].add_ranges(overview.time_ranges, method='union', inplace=True)
 
-        # merge gaps
+        # Find and store gaps for each data range
         gap_dict = {}
         for overview_key, data_range in exist_dict.items():
             gaps = data_range.get_gaps(start=start_time, end=end_time)
-            gap_dict[overview_key] = gaps
-            # if not gaps:
-            #     continue
-            # # merge all gaps into one DataRange
-            # merged_range = None
-            # for gap in gaps:
-            #     if merged_range is None:
-            #         merged_range = DataRange(interval=gaps[0].interval)
-            #     else:
-            #         merged_range.add_range(start=gap.start, end=gap.end)
-            # gap_dict[overview_key] = merged_range.ranges
+            if gaps:
+                gap_dict[overview_key] = gaps
 
         return gap_dict
 
@@ -819,8 +861,16 @@ class BaseDatabase(ABC):
     def get_gaps(self, end_time: Optional[datetime] = None, start_time: Optional[datetime] = None) -> dict[
         str, list[TimeRange]]:
         """
-        Get gaps in data for a specific type, vt_symbol, exchange and interval.
+        Get gaps in data. As long as there is a missing value in the bar or factor, the time period of the missing value will be returned so that the data can be downloaded later to fill in the missing value.
+
+        Parameters
+        ----------
+        end_time : Optional[datetime]
+            The end time of the gap search. If None, current time is used.
+        start_time : Optional[datetime]
+            The start time of the gap search. If None, the earliest time in the overview is used.
         """
+
         gap_dict: dict = self.overview_handler.get_gaps(end_time=end_time, start_time=start_time)
         return gap_dict
 
