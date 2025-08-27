@@ -66,7 +66,7 @@ class RecorderEngine(BaseEngine):
         # Buffers for batch database writes
         self.buffer_bar: defaultdict = defaultdict(list)
         self.buffer_factor: defaultdict = defaultdict(list)
-        self.buffer_size: int = 1000 if SYSTEM_MODE != 'TEXT' else 1  # Number of records to buffer before writing
+        self.buffer_size: int = 1000 if SYSTEM_MODE != 'TEST' else 1  # Number of records to buffer before writing
 
         # Database manager instance
         self.database_manager = ClickhouseDatabase(event_engine=event_engine)
@@ -84,7 +84,12 @@ class RecorderEngine(BaseEngine):
         """Dynamically updates the database schema based on external info."""
         # This function remains as is, assuming it works in your environment.
         database_name = database_name.lower()
-        module = importlib.import_module(f"vnpy_{database_name}")
+        try:
+            # Try importing the submodule first (for namespace packages)
+            module = importlib.import_module(f"vnpy_{database_name}.vnpy_{database_name}")
+        except ImportError:
+            # Fallback to top-level module
+            module = importlib.import_module(f"vnpy_{database_name}")
         convertor = module.outer_str2console_str
         dtype_mapper = module.DTYPE_MAPPER
         database_name_camelcase = database_name.capitalize()
@@ -351,11 +356,17 @@ class RecorderEngine(BaseEngine):
         """Helper to process and buffer/save factor data."""
         with self.lock:
             if isinstance(data, FactorData):
+                self.write_log(f"Processing FactorData: {data.factor_name} = {data.value} for {data.vt_symbol}", level=INFO)
                 self.buffer_factor[data.vt_symbol].append(data)
                 to_remove = []
                 for k, v in self.buffer_factor.items():
                     if len(v) >= self.buffer_size or (force_save and v):
-                        self.database_manager.save_factor_data(name=v[0].name, data=v)
+                        self.write_log(f"Saving {len(v)} factor records for {k}, factor_name: {v[0].factor_name}", level=INFO)
+                        try:
+                            self.database_manager.save_factor_data(name=v[0].factor_name, data=v)
+                            self.write_log(f"Successfully saved factor data for {k}", level=INFO)
+                        except Exception as e:
+                            self.write_log(f"Error saving factor data for {k}: {e}", level=ERROR)
                         to_remove.append(k)
                 for k in to_remove:
                     self.buffer_factor.pop(k, None)
