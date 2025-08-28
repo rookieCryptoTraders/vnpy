@@ -1,6 +1,6 @@
 [project]
 name = "vnpy"
-version = "0.1.0"
+version = "4.0.0"
 description = "A comprehensive, modular, event-driven quantitative trading framework for strategy development, backtesting, and live trading across stocks, futures, and cryptocurrencies. Features a decoupled architecture, high extensibility, and easy integration of custom modules. Includes event-driven engines, gateways for multiple exchanges, advanced portfolio and risk management, high-performance factor engineering, and a robust strategy engine with automated model retraining. Designed for real-time, low-latency trading and research workflows."
 readme = "README.md"
 license = { text = "MIT" }
@@ -166,8 +166,8 @@ dev = [
 "Source" = "https://github.com/rookieCryptoTraders/vnpy"
 
 [build-system]
-requires = ["uv>=0.7.2,<0.8"]
-build-backend = "uv.build"
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [tool.mypy]
 python_version = "3.10"
@@ -196,3 +196,18 @@ select = [
     "W", # pycodestyle warning
 ]
 ignore = ["E501"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vnpy*"]
+exclude = ["tests*", "*.tests*", "venv*", ".vnpy*", ".vntrader*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.json", "*.md", "*.xml", "*.sql", "*.sh"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
