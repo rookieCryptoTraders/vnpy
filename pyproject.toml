@@ -197,10 +197,13 @@ select = [
 ]
 ignore = ["E501"]
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["src"]
 include = ["vnpy*"]
-exclude = ["tests*", "*.tests*", "venv*", ".vnpy*", ".vntrader*"]
+exclude = ["tests*", "*.tests*"]
 
 [tool.setuptools.package-data]
 "*" = ["*.json", "*.md", "*.xml", "*.sql", "*.sh"]

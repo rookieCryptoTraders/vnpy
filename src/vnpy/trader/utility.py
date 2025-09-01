@@ -146,7 +146,10 @@ def load_json(filename: str, cls=json.JSONDecoder, return_filepath: bool = False
                 return data
     else:
         save_json(filename, {})
-        return {}
+        if return_filepath:
+            return {}, filepath
+        else:
+            return {}
 
 
 def save_json(filename: str, data: dict | list, mode="w+", cls=json.JSONEncoder) -> None:

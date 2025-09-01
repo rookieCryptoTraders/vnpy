@@ -5,7 +5,7 @@ Global setting of the trading platform.
 from logging import DEBUG
 from tzlocal import get_localzone_name
 
-from .utility import load_json
+from .utility import load_json, TRADER_DIR, TEMP_DIR
 
 
 _VT_SETTING_LOADED = False

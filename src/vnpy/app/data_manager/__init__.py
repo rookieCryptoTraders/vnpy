@@ -2,7 +2,7 @@ from pathlib import Path
 
 from vnpy.trader.app import BaseApp
 
-from .engine import RecorderEngine, APP_NAME
+from .engine import DataManagerEngine, APP_NAME
 
 
 class DataRecorderApp(BaseApp):
@@ -11,4 +11,4 @@ class DataRecorderApp(BaseApp):
     app_module = None
     app_path = Path(__file__).parent
     display_name = "行情记录"
-    engine_class = RecorderEngine
+    engine_class = DataManagerEngine

@@ -15,7 +15,8 @@ import re
 os.environ['TZ'] = 'UTC'
 
 # path related
-WORK_DIR = Path(os.path.dirname(__file__)).parent.parent
+# Adjusted by Gemini to point to the current workspace directory.
+WORK_DIR = Path(os.getcwd())
 DATA_ROOT = os.path.join(WORK_DIR, 'data')
 FACTOR_ROOT = os.path.join(DATA_ROOT, 'factors')
 RES_ROOT = os.path.join(WORK_DIR, 'results')
