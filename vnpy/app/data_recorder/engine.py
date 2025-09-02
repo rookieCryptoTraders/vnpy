@@ -266,7 +266,8 @@ class RecorderEngine(BaseEngine):
 
     def process_bar_filling_event(self, event: Event):
         """Processes incoming bar data."""
-        self.record_bar(event.data, flush=True, event_type=event.type)
+        data = event.data
+        self.record_bar(data, flush=True, event_type=event.type)
 
     def process_factor_filling_event(self, event: Event):
         """Processes incoming factor data."""
@@ -326,10 +327,10 @@ class RecorderEngine(BaseEngine):
     ):
         """Routes data from the queue to the appropriate processing helper."""
         event_type = "not specified" if not event_type else event_type
-        self.write_log(
-            f"saving data: {task_type}, force_save={force_save}, event_type={event_type}",
-            level=INFO if task_type else NOTSET,
-        )
+        # self.write_log(
+        #     f"saving data: {task_type}, force_save={force_save}, event_type={event_type}",
+        #     level=INFO if task_type else NOTSET,
+        # )
         if task_type == "tick":
             self.database_manager.save_tick_data([data])
         elif task_type == "bar":
@@ -340,10 +341,21 @@ class RecorderEngine(BaseEngine):
             # This case is for flushing buffers when the queue is empty
             self._flush_all_buffers()
 
-    def _process_bar_data(self, data: BarData, force_save: bool):
+    def _process_bar_data(self, data: BarData | list[BarData] | dict[str,list[BarData]], force_save: bool):
         """Helper to process and buffer bar data."""
         with self.lock:
-            self.buffer_bar[data.vt_symbol].append(data)
+            if isinstance(data, list):
+                for bar in data:
+                    self.buffer_bar[bar.vt_symbol].append(bar)
+            elif isinstance(data, dict) and InstanceChecker.is_dict_of(data, type_value=list, type_key=str):
+                for vt_symbol, bars in data.items():
+                    # skip type check for performance
+                    # if not all(isinstance(bar, BarData) for bar in bars):
+                    #     self.write_log(f"Invalid bar data in list for symbol {vt_symbol}. Skipping.", level=ERROR)
+                    #     continue
+                    self.buffer_bar[vt_symbol].extend(bars)
+            else:
+                self.buffer_bar[data.vt_symbol].append(data)
             to_remove = []
             for k, v in self.buffer_bar.items():
                 if len(v) >= self.buffer_size or (force_save and v):
@@ -356,12 +368,14 @@ class RecorderEngine(BaseEngine):
         """Helper to process and buffer/save factor data."""
         with self.lock:
             if isinstance(data, FactorData):
-                self.write_log(f"Processing FactorData: {data.factor_name} = {data.value} for {data.vt_symbol}", level=INFO)
+                self.write_log(f"Processing FactorData: {data.factor_name} = {data.value} for {data.vt_symbol}",
+                               level=INFO)
                 self.buffer_factor[data.vt_symbol].append(data)
                 to_remove = []
                 for k, v in self.buffer_factor.items():
                     if len(v) >= self.buffer_size or (force_save and v):
-                        self.write_log(f"Saving {len(v)} factor records for {k}, factor_name: {v[0].factor_name}", level=INFO)
+                        self.write_log(f"Saving {len(v)} factor records for {k}, factor_name: {v[0].factor_name}",
+                                       level=INFO)
                         try:
                             self.database_manager.save_factor_data(name=v[0].factor_name, data=v)
                             self.write_log(f"Successfully saved factor data for {k}", level=INFO)

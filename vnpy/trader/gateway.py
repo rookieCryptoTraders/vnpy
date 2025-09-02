@@ -112,14 +112,14 @@ class BaseGateway(ABC):
         specific_event_type = EVENT_BAR + bar.vt_symbol
         self.on_event(specific_event_type, bar)
 
-    def on_bar_filling(self, bar: BarData) -> None:
+    def on_bar_filling(self, bar: BarData | list[BarData] | dict[str,BarData]) -> None:
         """
         Bar event push.
         Bar event of a specific vt_symbol is also pushed.
         """
         self.on_event(EVENT_BAR_FILLING, bar)
-        specific_event_type = EVENT_BAR_FILLING + bar.vt_symbol
-        self.on_event(specific_event_type, bar)
+        # specific_event_type = EVENT_BAR_FILLING + bar.vt_symbol
+        # self.on_event(specific_event_type, bar)
 
     def on_factor_filling(self, gap_dict: dict) -> None:
         """

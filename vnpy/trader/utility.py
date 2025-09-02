@@ -156,8 +156,6 @@ def save_json(filename: str, data: dict | list, mode="w+", cls=json.JSONEncoder)
     filepath: Path = get_file_path(filename)
     tmp_filepath: Path = get_file_path(
         filename + ".tmp")  # if use .tmp can get more data safety, but it will cause error
-    if not data:
-        return None
     with open(tmp_filepath, mode=mode, encoding="UTF-8") as f:
         json.dump(
             data,

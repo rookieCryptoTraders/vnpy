@@ -88,6 +88,7 @@ class MainEngine:
         self.apps: dict[str, BaseApp] = {}
         self.intervals: list[Interval] = [Interval(interval) for interval in SETTINGS.get("gateway.intervals", [])]
         self.minimum_freq: TimeFreq = min([DatetimeUtils.interval2freq(intvl) for intvl in self.intervals])
+        self.minimum_interval: Interval = min(self.intervals, key=lambda x: DatetimeUtils.interval2freq(x))
         self.symbols = SETTINGS.get("gateway.symbols", [])  # hyf
         self.exchanges: list[Exchange] = [Exchange(ex) for ex in SETTINGS.get("gateway.exchanges", [])]  # hyf
         self.vt_symbols: list[str] = [f"{s}.{e.value}" for s, e in product(self.symbols, self.exchanges)]

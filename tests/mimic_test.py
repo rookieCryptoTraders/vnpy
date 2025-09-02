@@ -12,6 +12,8 @@ import time
 import traceback
 from time import sleep
 
+from tqdm import tqdm
+
 from vnpy.app.data_recorder import DataRecorderApp
 from vnpy.app.vnpy_datamanager import DataManagerApp, DataManagerEngine
 from vnpy.config import match_format_string
@@ -20,9 +22,10 @@ from vnpy.factor import FactorMakerApp
 from vnpy.factor.engine import FactorEngine
 from vnpy.gateway.mimicgateway.mimicgateway import MimicGateway
 from vnpy.trader.constant import Exchange, Interval
-from vnpy.trader.database import VTSYMBOL_OVERVIEW
+from vnpy.trader.database import VTSYMBOL_OVERVIEW, DataRange, TimeRange
 from vnpy.trader.engine import MainEngine
 from vnpy.trader.object import BarData
+from vnpy.utils.datetimes import DatetimeUtils, TimeFreq
 
 import os
 import glob
@@ -99,42 +102,55 @@ def run_child():
     for i in range(3):  # allow 3 attempts to download data
         # gaps to requests
         gap_dict = data_recorder_engine.database_manager.get_gaps(end_time=datetime.datetime.now(),
-                                                                  start_time=datetime.datetime(2025, 8, 25, 12, 30))
+                                                                  start_time=datetime.datetime(2025, 8, 30, 12, 30))
         # no gap, break
         if all(len(gap) == 0 for gap in gap_dict.values()):
             break
 
+        # align gap_dict between overview keys. which means even if one of the vt_symbol bar data if full, we have to download and re-calculate them
+        gap_keys = list(gap_dict.keys())
+        universal_gaps = DataRange(interval=DatetimeUtils.freq2interval(main_engine.minimum_freq))
+        for gaps in gap_dict.values():
+            universal_gaps.add_ranges(gaps, inplace=True, method='union')
+
+        # to simplify logic, we download all data from the very beginning of the universal gaps to the end of the universal gaps
+        gap_dict = {
+            key: [TimeRange(interval=main_engine.minimum_interval, start=universal_gaps.start, end=universal_gaps.end)]
+            for key in gap_keys}
+
         # have gaps, download data and fill bar gaps, insert bars into database
         gap_data_dict = data_manager_engine.download_bar_data_gaps(gap_dict)
 
+        # re-insert all data into database. this step won't trigger factor calculation
         for overview_key, data_list in gap_data_dict.items():
             # print(f"main Processing overview key: {overview_key}, data count: {len(data_list)}")
             info = match_format_string(VTSYMBOL_OVERVIEW, overview_key)
-            for d in data_list:
-                bar = BarData(
-                    gateway_name=gateway.gateway_name,
-                    symbol=info['symbol'],
-                    exchange=Exchange(info['exchange']),
-                    interval=Interval(info['interval']),
-                    datetime=d['datetime'],
-                    volume=d['volume'],
-                    open_price=d['open'],
-                    high_price=d['high'],
-                    low_price=d['low'],
-                    close_price=d['close'],
-                    quote_asset_volume=d['quote_asset_volume'],
-                    number_of_trades=d['number_of_trades'],
-                    taker_buy_base_asset_volume=d['taker_buy_base_asset_volume'],
-                    taker_buy_quote_asset_volume=d['taker_buy_quote_asset_volume'],
-                )
-                # todo: improve data insertion
-                gateway.on_bar_filling(bar)  # todo: change belonging to data_manager_engine
-        time.sleep(3)
+            bar_list = [BarData(
+                gateway_name=gateway.gateway_name,
+                symbol=info['symbol'],
+                exchange=Exchange(info['exchange']),
+                interval=Interval(info['interval']),
+                datetime=d['datetime'],
+                volume=d['volume'],
+                open_price=d['open'],
+                high_price=d['high'],
+                low_price=d['low'],
+                close_price=d['close'],
+                quote_asset_volume=d['quote_asset_volume'],
+                number_of_trades=d['number_of_trades'],
+                taker_buy_base_asset_volume=d['taker_buy_base_asset_volume'],
+                taker_buy_quote_asset_volume=d['taker_buy_quote_asset_volume'],
+            ) for d in data_list]
+            gateway.on_bar_filling(bar_list)  # todo: change belonging to data_manager_engine
+        time.sleep(5)
+
+        # after bar data is inserted into database, we need to re-calculate factors for all data
+        # because factor calculation may depend on previous bars, we have to re-calculate all bars
         # todo:
-        #  1. load <window>-1 bars
-        #  2. request <window> bars to calculate <window> factors
-        #  3. request <missing> bars to calculate <missing> factors
-        # 1. load bar data from database, currently factor memory is empty, so we need to do additional calculations
+        #  1. load <window>-1 bars: init bar memory
+        #  2. request <window> bars to calculate <window> factors: mock live data by calling one by one gateway.on_bar to trigger non-factor-dependent factor calculation. re-insert these factors into database and factor memory
+        #  3. request <missing> bars to calculate <missing> factors: mock live data by calling one by one gateway.on_bar to trigger non-factor-dependent and factor-dependent factor calculation
+        # 1. load <window>-1 bars: init bar memory
         start_dt = datetime.datetime.now()
         for overview_key, time_ranges in gap_dict.items():
             tmp = min([time_range.start for time_range in time_ranges])
@@ -144,14 +160,25 @@ def run_child():
             "begin": start_dt - datetime.timedelta(minutes=1),  # start_dt is the start of filling gap factors
             "end": start_dt - datetime.timedelta(minutes=1),  # start_dt is the start of filling gap factors
             "interval": Interval.MINUTE,
-            "vt_symbol_list": main_engine.vt_symbols,
+            "ticker_list": main_engine.vt_symbols,
         }
         factor_maker_engine.send_load_bar_request(type_='period', param=params)
-        time.sleep(3)
-        for overview_key, data_list in gap_data_dict.items():
-            # print(f"main Processing overview key: {overview_key}, data count: {len(data_list)}")
-            info = match_format_string(VTSYMBOL_OVERVIEW, overview_key)
-            for d in data_list:
+        for i in range(5):  # wait for bar memory to be ready
+            time.sleep(1)
+
+        #  2. request <window> bars to calculate <window> factors:
+        #       mock live data by calling one by one gateway.on_bar to trigger non-factor-dependent factor calculation.
+        #       re-insert these factors into database and factor memory
+        #       future implementation should be `factor_maker_engine.send_load_factor_request(type_='gap', param=gap_dict)`
+        data_lens_list = [len(data_list) for data_list in gap_data_dict.values()]
+        assert min(data_lens_list) == max(data_lens_list), "data count mismatch between symbols"
+        data_length = data_lens_list[0]
+        # for i in tqdm(range(data_length), desc="Recalculating factors for initial bars"):
+        for i in range(data_length):
+            for overview_key, data_list in gap_data_dict.items():
+                # print(f"main Processing overview key: {overview_key}, data count: {len(data_list)}")
+                info = match_format_string(VTSYMBOL_OVERVIEW, overview_key)
+                d = data_list[i]
                 bar = BarData(
                     gateway_name=gateway.gateway_name,
                     symbol=info['symbol'],
@@ -169,8 +196,7 @@ def run_child():
                     taker_buy_quote_asset_volume=d['taker_buy_quote_asset_volume'],
                 )
                 gateway.on_bar(bar)  # todo: change belonging to data_manager_engine
-
-        # factor_maker_engine.send_load_factor_request(type_='gap', param=gap_dict)
+            a = 1
 
         # filling missing factor
         # gateway.on_factor_filling(gap_dict)

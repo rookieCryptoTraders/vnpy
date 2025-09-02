@@ -909,12 +909,12 @@ class FactorEngine(BaseEngine):
         if self.calculation_lock.locked():
             self.calculation_lock.release()
 
-    def _truncate_memory_bar(self) -> None:
+    def _truncate_memory_bar(self, loosen_ratio: float | int = 2) -> None:
         """Truncates the in-memory OHLCV bar data."""
         if not self.memory_bar:
             return
         # Assuming truncate_bar_memory is a utility that works on Dict[str, pl.DataFrame]
-        truncate_bar_memory(self.memory_bar, self.max_memory_length_bar)
+        truncate_bar_memory(self.memory_bar, self.max_memory_length_bar * loosen_ratio)
 
     def _monitor_resources(self) -> dict[str, float]:
         process = psutil.Process()
@@ -945,8 +945,6 @@ class FactorEngine(BaseEngine):
         end = None
         min_freq: TimeFreq | None = None
         vt_symbol_list = []
-        symbol_list = []
-        exchange_list = []
 
         for key, gaps in gap_dict.items():
             if not gaps:
@@ -999,6 +997,8 @@ class FactorEngine(BaseEngine):
         """
         # The following logic was adjusted by Gemini for performance enhancement.
         if type_ == 'gap':
+            # need to parse gap keys, which are overview keys like 'overview_1m_btcusdt.BINANCE'
+            # load data within the range of [begin-2*max_lookback, end]
             gap_dict = cast(Mapping[str, Any], param)
             if not gap_dict or not isinstance(gap_dict, dict):
                 self.write_log("No gaps provided for loading historical data.", level=WARNING)
@@ -1016,40 +1016,42 @@ class FactorEngine(BaseEngine):
             # Calculate required lookback and prepare ranges. missing+window+2 of bar data needed
             freq_multiplier = DatetimeUtils.freq2unix(min_freq, ret_unit=self.minimum_freq)
             denominator = self.minimum_freq / TimeFreq.m
-            max_lookback = int(self.max_memory_length_factor * freq_multiplier / denominator) # window
+            max_lookback = int(self.max_memory_length_factor * freq_multiplier / denominator)  # window
             calculate_start = begin - timedelta(minutes=max_lookback)
             lookback_start = calculate_start - timedelta(minutes=max_lookback)
 
             # Request historical data with lookback period
             hist_req = Event(
                 type=EVENT_DATAMANAGER_LOAD_BAR_REQUEST,
-                data=[{
-                    "symbol": vt_symbol.split('.')[0],  # Extract symbol from vt_symbol
-                    "exchange": Exchange(vt_symbol.split('.')[1]) if '.' in vt_symbol else Exchange.UNKNOWN,
+                data={
                     "interval": Interval(DatetimeUtils.freq2str(min_freq)),
                     "start": lookback_start,
                     "end": end,
+                    "ret": "polars",
+                    "ticker_list": vt_symbol_list,  # Extract symbol from vt_symbol
                     "calculate_start": calculate_start,
-                    "ret": "polars"
-                } for vt_symbol in vt_symbol_list],
+                },
             )
-            self.write_log(f"Requesting historical data for symbols: {vt_symbol_list}", level=INFO)
+            self.write_log(
+                f"{self.send_load_bar_request.__name__}: Requesting historical data from {lookback_start} to {end}",
+                level=INFO)
             self.event_engine.put(hist_req)
         elif type_ == 'period':
+            # load data within the range of [begin-max_lookback, end]
             # when begin==end then we can load expected lookback period before begin
-            period = cast(Mapping[str, Any], param)
-            if not period or not isinstance(period, dict):
+            param = cast(Mapping[str, Any], param)
+            if not param or not isinstance(param, dict):
                 self.write_log("No time period provided for loading historical data.", level=WARNING)
                 return
 
-            begin = period.get("begin")
-            end = period.get("end")
-            interval = period.get("interval")
-            vt_symbol_list = period.get("vt_symbol_list", [])
+            begin = param.get("begin")
+            end = param.get("end")
+            interval = param.get("interval")
+            vt_symbol_list = param.get("ticker_list", [])
 
             if not begin or not end or not interval or not vt_symbol_list:
                 self.write_log(
-                    "Invalid time period parameters. Cannot determine start, end, interval, or symbols.",
+                    f"Invalid time period parameters. Cannot determine begin {begin}, end {end}, interval {interval}, or symbols {vt_symbol_list}.",
                     level=ERROR,
                 )
                 return
@@ -1063,16 +1065,17 @@ class FactorEngine(BaseEngine):
             # Request historical data with lookback period
             hist_req = Event(
                 type=EVENT_DATAMANAGER_LOAD_BAR_REQUEST,
-                data=[{
-                    "symbol": vt_symbol.split('.')[0],  # Extract symbol from vt_symbol
-                    "exchange": Exchange(vt_symbol.split('.')[1]) if '.' in vt_symbol else Exchange.UNKNOWN,
+                data={
                     "interval": interval,
                     "start": lookback_start,
                     "end": end,
-                    "ret": "polars"
-                } for vt_symbol in vt_symbol_list],
+                    "ret": "polars",
+                    "ticker_list": vt_symbol_list,  # Extract symbol from vt_symbol
+                },
             )
-            self.write_log(f"Requesting historical data for symbols: {vt_symbol_list}", level=INFO)
+            self.write_log(
+                f"{self.send_load_bar_request.__name__}: Requesting historical data from {lookback_start} to {end}",
+                level=INFO)
             self.event_engine.put(hist_req)
         else:
             raise NotImplementedError()
@@ -1153,19 +1156,21 @@ class FactorEngine(BaseEngine):
                     ].with_columns(pl.lit(None, dtype=pl.Float64).alias(bar.vt_symbol))
 
         # Check if the bar is continuous with the last bar in memory_bar
-        last_dt = self.memory_bar['open'][-1, 'datetime'] if self.memory_bar['open'].shape[0] > 0 else datetime(1970, 1, 1)
-        if bar.datetime-last_dt>timedelta(minutes=DatetimeUtils.freq2unix(self.minimum_freq,ret_unit='m')) or bar.datetime <= last_dt:
-            self.write_log(
-                f"Bar datetime {bar.datetime} is not continuous with last bar datetime {last_dt}. "
-                ,level=ERROR
-            )
-            raise ValueError(f"Bar datetime {bar.datetime} is not continuous with last bar datetime {last_dt}. ")
+        last_dt = self.memory_bar['open'][-1, 'datetime'] if self.memory_bar['open'].shape[0] > 0 else None
+        if last_dt:
+            if bar.datetime - last_dt > timedelta(
+                    minutes=DatetimeUtils.freq2unix(self.minimum_freq, ret_unit='m')) or bar.datetime <= last_dt:
+                self.write_log(
+                    f"Bar datetime {bar.datetime} is not continuous with last bar datetime {last_dt}. "
+                    , level=ERROR
+                )
+                raise ValueError(f"Bar datetime {bar.datetime} is not continuous with last bar datetime {last_dt}. ")
 
         # If bar is from a new datetime, process the previous batch
         if self.dt is None:  # First bar of a new batch
             self.dt = bar.datetime
 
-        if bar.datetime > self.dt:
+        elif bar.datetime > self.dt:
             # only when strictly all bar datas are received, `on_bars` will be called
             # if any(
             #         self.receiving_status.values()
@@ -1191,7 +1196,8 @@ class FactorEngine(BaseEngine):
                 f"Received bar with datetime {bar.datetime} earlier than current batch datetime {self.dt}. Skipping.",
                 level=ERROR,
             )
-            raise ValueError(f"Received bar with datetime {bar.datetime} earlier than current batch datetime {self.dt}. ")
+            raise ValueError(
+                f"Received bar with datetime {bar.datetime} earlier than current batch datetime {self.dt}. ")
 
         # bar.datetime must equals to self.dt
         self.bars[bar.vt_symbol] = bar
@@ -1256,7 +1262,7 @@ class FactorEngine(BaseEngine):
 
         # while current_dt <= end_dt:
         for i in tqdm(range(total_intervals + 1), desc="Calculating missing factors", unit="interval"):
-        # for i in range(total_intervals + 1):
+            # for i in range(total_intervals + 1):
             # if current_dt > end_dt:
             #     self.write_log(
             #         f"Current datetime {current_dt} exceeds end datetime {end_dt}. Stopping gap filling.",
@@ -1282,7 +1288,7 @@ class FactorEngine(BaseEngine):
                     # event_data = {k: v.get_latest_rows(1) for k, v in self.factor_memory_instances.items()}
                     # self.event_engine.put(Event(EVENT_FACTOR, event_data))
                     self.event_engine.put(Event(EVENT_FACTOR_FILLING, event_data))
-                    self.write_log(f"event_data's first value {next(iter(event_data.values()))}",level=INFO)
+                    self.write_log(f"event_data's first value {next(iter(event_data.values()))}", level=INFO)
                     # print(f"dt{current_dt}")
                 else:
                     self.write_log("no calc res", level=WARNING)
@@ -1373,8 +1379,8 @@ class FactorEngine(BaseEngine):
             return
 
         # Transform DataFrame to wide format with symbols as columns
-        memory_start=None
-        memory_end=None
+        memory_start = None
+        memory_end = None
         for col in ["open", "high", "low", "close", "volume"]:
             # Group by datetime and create columns for each symbol
             temp_df = df.select(["datetime", "ticker", col])
@@ -1382,10 +1388,12 @@ class FactorEngine(BaseEngine):
             temp_df = temp_df.select([self.factor_datetime_col] + list(
                 sorted(set(temp_df.columns) - {self.factor_datetime_col, "factor_key"})))
             self.memory_bar[col] = temp_df
-            memory_start=temp_df['datetime'].min() if memory_start is None else min(memory_start,temp_df['datetime'].min())
-            memory_end=temp_df['datetime'].max() if memory_end is None else max(memory_end,temp_df['datetime'].max())
+            memory_start = temp_df['datetime'].min() if memory_start is None else min(memory_start,
+                                                                                      temp_df['datetime'].min())
+            memory_end = temp_df['datetime'].max() if memory_end is None else max(memory_end, temp_df['datetime'].max())
 
-        self.write_log(f"Initialized bar memory {memory_start}~{memory_end} with {len(df)} bars from database.", level=INFO)
+        self.write_log(f"Initialized bar memory {memory_start}~{memory_end} with {len(df)} bars from database.",
+                       level=INFO)
 
         # start calculation after bar memory is initialized
         self.event_engine.put(Event(EVENT_FACTORMAKER_BAR_READY, data={

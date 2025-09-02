@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, date, timedelta
 from importlib import import_module
 from types import ModuleType
-from typing import Dict, List, Literal, Optional, Union
+from typing import Dict, List, Literal, Optional, Union, Any
 from typing import TypeVar, Self
 
 from vnpy.config import BAR_OVERVIEW_FILENAME, FACTOR_OVERVIEW_FILENAME, TICK_OVERVIEW_FILENAME, VTSYMBOL_KLINE, \
@@ -21,10 +21,9 @@ from vnpy.trader.engine import Event, EventEngine
 from vnpy.trader.event import EVENT_BAR
 from vnpy.trader.object import HistoryRequest, SubscribeRequest, BarData, TickData
 from vnpy.trader.setting import SETTINGS
-from vnpy.trader.utility import get_file_path
+from vnpy.trader.utility import get_file_path, ZoneInfo
 from vnpy.trader.utility import load_json, save_json
 from vnpy.utils.datetimes import DatetimeUtils
-from .utility import ZoneInfo
 
 # if TYPE_CHECKING:
 # from vnpy.trader.database import TimeRange,DataRange
@@ -368,6 +367,7 @@ class BaseOverview:
             symbol=self.symbol,
             exchange=self.exchange.value
         )
+        self.data_range = DataRange(interval=self.interval)
 
     def add_range(self, start: datetime, end: datetime):
         """Add a time range and get any gaps"""
@@ -379,7 +379,7 @@ class BaseOverview:
 
         # Other time range operations are handled by DataRange class
         self.data_range.add_range(start=start, end=end,
-                             inplace=True)  # the default value of inplace in overview's add range should be true
+                                  inplace=True)  # the default value of inplace in overview's add range should be true
         self.time_ranges = self.data_range.ranges
 
     @property
@@ -395,6 +395,7 @@ class BaseOverview:
         if not self.time_ranges:
             return None
         return max(r.end for r in self.time_ranges)
+
 
 @dataclass
 class BarOverview(BaseOverview):
@@ -485,7 +486,7 @@ class OverviewDecoder(json.JSONDecoder):
         super().__init__(object_hook=self.dict_to_object, *args, **kwargs)
 
     def dict_to_object(self, d):
-        if not isinstance(d,dict):
+        if not isinstance(d, dict):
             return d
         # simple attr transformation, change the things in d
         if 'exchange' in d:
@@ -770,7 +771,7 @@ class BaseDatabase(ABC):
     """
     Abstract database class for connecting to different database.
     """
-    overview_handler: OverviewHandler = field(default_factory=OverviewHandler)
+    overview_handler: Union[OverviewHandler, Any] = field(default_factory=OverviewHandler)
     database_name: str = ""
 
     @abstractmethod
