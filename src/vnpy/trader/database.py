@@ -8,28 +8,26 @@ import signal
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, date, timedelta
+from datetime import date, datetime, timedelta
 from importlib import import_module
 from types import ModuleType
-from typing import Literal
-from typing import TypeVar, Self
+from typing import Literal, Self, TypeVar
 
 from vnpy.config import (
     BAR_OVERVIEW_FILENAME,
     FACTOR_OVERVIEW_FILENAME,
     TICK_OVERVIEW_FILENAME,
-    VTSYMBOL_KLINE,
     VTSYMBOL,
     VTSYMBOL_OVERVIEW,
 )
 from vnpy.trader.constant import Exchange, Interval
 from vnpy.trader.engine import Event, EventEngine
 from vnpy.trader.event import EVENT_BAR
-from vnpy.trader.object import HistoryRequest, SubscribeRequest, BarData, TickData
+from vnpy.trader.object import BarData, HistoryRequest, SubscribeRequest, TickData
 from vnpy.trader.setting import SETTINGS
-from vnpy.trader.utility import get_file_path
-from vnpy.trader.utility import load_json, save_json
+from vnpy.trader.utility import get_file_path, load_json, save_json
 from vnpy.utils.datetimes import DatetimeUtils
+
 from .utility import ZoneInfo
 
 # if TYPE_CHECKING:
@@ -392,8 +390,6 @@ class BaseOverview:
     exchange: Exchange = None
     interval: Interval = None
     count: int = 0
-    # start: datetime = None  # replaced by property
-    # end: datetime = None  # replaced by property
     time_ranges: list[TimeRange] = field(default_factory=list)
     data_range: DataRange = field(default=None, init=True)
 
@@ -403,23 +399,16 @@ class BaseOverview:
 
     def __post_init__(self):
         self.overview_key = VTSYMBOL_OVERVIEW.format(
-            interval=self.interval.value,
+            interval=self.interval.value if self.interval else "",
             symbol=self.symbol,
             exchange=self.exchange.value,
         )
+        if self.data_range is None:
+            self.data_range = DataRange(interval=self.interval, ranges=self.time_ranges)
 
     def add_range(self, start: datetime, end: datetime):
         """Add a time range and get any gaps"""
-        new_range = TimeRange(start=start, end=end, interval=self.interval)
-        if not self.time_ranges:
-            self.data_range.add_range(timerange=new_range, inplace=True)
-            self.time_ranges = self.data_range.ranges
-            return []
-
-        # Other time range operations are handled by DataRange class
-        self.data_range.add_range(
-            start=start, end=end, inplace=True
-        )  # the default value of inplace in overview's add range should be true
+        self.data_range.add_range(start=start, end=end, inplace=True)
         self.time_ranges = self.data_range.ranges
 
     @property
@@ -439,10 +428,6 @@ class BaseOverview:
 
 @dataclass
 class BarOverview(BaseOverview):
-    """
-    BarOverview of bar data stored in database.
-    """
-
     VTSYMBOL_TEMPLATE = VTSYMBOL
 
     def __post_init__(self):
@@ -455,10 +440,6 @@ class BarOverview(BaseOverview):
 
 @dataclass
 class TickOverview(BaseOverview):
-    """
-    BarOverview of tick data stored in database.
-    """
-
     VTSYMBOL_TEMPLATE = VTSYMBOL
 
     def __post_init__(self):
@@ -471,10 +452,6 @@ class TickOverview(BaseOverview):
 
 @dataclass
 class FactorOverview(BaseOverview):
-    """
-    BarOverview of bar data stored in database.
-    """
-
     factor_name: str = ""
     factor_key: str = ""
     VTSYMBOL_TEMPLATE = VTSYMBOL
@@ -485,40 +462,32 @@ class FactorOverview(BaseOverview):
             exchange=self.exchange.value,
         )
         super().__post_init__()
+        # This logic was adjusted by Gemini for correctness.
+        self.overview_key = f"{self.overview_key}.{self.factor_name}"
 
 
 class OverviewEncoder(json.JSONEncoder):
+    # This class was refactored by Gemini for simplicity.
     def default(self, o):
-        if o is None:
-            return None
-        elif isinstance(o, (Exchange, Interval)):
+        if isinstance(o, (Exchange, Interval)):
             return o.value
-        elif isinstance(o, datetime):
-            return o.strftime("%Y-%m-%d %H:%M:%S")
-        elif isinstance(o, date):
-            return o.strftime("%Y-%m-%d")
-        elif isinstance(o, DataRange):
-            return {
-                "class": o.__class__.__name__,
-                "start": self.default(o.start),
-                "end": self.default(o.end),
-                "interval": self.default(o.interval),
-                "ranges": [self.default(r) for r in o.ranges],
+        if isinstance(o, datetime):
+            return o.isoformat()
+        if isinstance(o, date):
+            return o.isoformat()
+        if isinstance(o, BaseOverview):
+            data = {
+                "symbol": o.symbol,
+                "exchange": o.exchange.value,
+                "interval": o.interval.value if o.interval else None,
+                "count": o.count,
+                "start": o.start.isoformat() if o.start else None,
+                "end": o.end.isoformat() if o.end else None,
             }
-        elif isinstance(o, TimeRange):
-            return {
-                "class": o.__class__.__name__,
-                "start": self.default(o.start),
-                "end": self.default(o.end),
-                "interval": self.default(o.interval),
-                "max_gap_ms": o.max_gap_ms,
-            }
-        elif hasattr(o, "__dict__"):
-            dic = {"class": o.__class__.__name__}
-            dic.update(o.__dict__.copy())
-            return dic
-        else:
-            return super().default(o)
+            if isinstance(o, FactorOverview):
+                data["factor_name"] = o.factor_name
+            return data
+        return super().default(o)
 
 
 class OverviewDecoder(json.JSONDecoder):
@@ -531,36 +500,20 @@ class OverviewDecoder(json.JSONDecoder):
         # simple attr transformation, change the things in d
         if "exchange" in d:
             d["exchange"] = Exchange(d["exchange"])
-        if "interval" in d:
+        if "interval" in d and d["interval"]:
             d["interval"] = Interval(d["interval"])
         for dt_field in ["start", "end"]:
-            if dt_field in d:
-                try:
-                    if d[dt_field] is not None:
-                        d[dt_field] = datetime.strptime(
-                            d[dt_field], "%Y-%m-%d %H:%M:%S"
-                        )
-                except ValueError:
-                    d[dt_field] = datetime.strptime(d[dt_field], "%Y-%m-%d")
-                except TypeError:
-                    print(f"TypeError in {self.__class__.__name__}", d[dt_field])
+            if dt_field in d and d[dt_field]:
+                d[dt_field] = datetime.fromisoformat(d[dt_field])
 
-        # complex attr transformation, create new objects
-        if "class" in d and d["class"] == "TimeRange":
-            d = TimeRange(
-                start=d["start"],
-                end=d["end"],
-                interval=Interval(d["interval"]),
-            )
-        elif "class" in d and d["class"] == "DataRange":
-            dd = DataRange(interval=Interval(d["interval"]))
-            dd.ranges = [self.dict_to_object(r) for r in d["ranges"]]
-            return dd
         return d
 
 
 class OverviewHandler:
-    """Manages data overviews with gap detection and data retrieval"""
+    """
+    Manages data overviews with gap detection and data retrieval.
+    # This class was refactored by Gemini for unified overview management.
+    """
 
     bar_overview_filepath = str(get_file_path(BAR_OVERVIEW_FILENAME))
     tick_overview_filepath = str(get_file_path(TICK_OVERVIEW_FILENAME))
@@ -568,33 +521,24 @@ class OverviewHandler:
 
     def __init__(self, event_engine: EventEngine | None = None):
         """Initialize the overview manager"""
-        # Register the save function to execute when the program exits
         atexit.register(self.save_all_overviews)
         signal.signal(
             signal.SIGINT, lambda sig, frame: (self.save_all_overviews(), sys.exit(0))
         )
         signal.signal(
-            signal.SIGINT, lambda sig, frame: (self.save_all_overviews(), sys.exit(1))
-        )
-        signal.signal(
             signal.SIGTERM, lambda sig, frame: (self.save_all_overviews(), sys.exit(0))
         )
-        signal.signal(
-            signal.SIGTERM, lambda sig, frame: (self.save_all_overviews(), sys.exit(1))
-        )
 
-        self.overview_dict: dict[str, BarOverview] = {}  # Stores metadata in memory
-        # init database overview file
-        # todo: collect them in one dict
-        self.bar_overview = self.load_overview(
-            filename=self.bar_overview_filepath, overview_cls=BarOverview
-        )
-        self.tick_overview = self.load_overview(
-            filename=self.tick_overview_filepath, overview_cls=TickOverview
-        )
-        self.factor_overview = self.load_overview(
-            filename=self.factor_overview_filepath, overview_cls=FactorOverview
-        )
+        self.overview_files: dict[str, tuple[str, type[TV_BaseOverview]]] = {
+            "bar": (self.bar_overview_filepath, BarOverview),
+            "tick": (self.tick_overview_filepath, TickOverview),
+            "factor": (self.factor_overview_filepath, FactorOverview),
+        }
+
+        self.overviews: dict[str, dict[str, TV_BaseOverview]] = {
+            type_: self.load_overview(info[0], info[1])
+            for type_, info in self.overview_files.items()
+        }
 
         self.data_ranges: dict[str, dict[str, DataRange]] = {
             "bar": {},
@@ -604,128 +548,107 @@ class OverviewHandler:
         self._event_engine = event_engine
 
     def load_overview(
-        self, filename: str, overview_cls: TV_BaseOverview.__class__
+        self, filename: str, overview_cls: type[TV_BaseOverview]
     ) -> dict[str, TV_BaseOverview]:
-        # use vnpy load json
-        overviews: dict[str, TV_BaseOverview] = {}
-        overview_dict = load_json(filename=filename, cls=OverviewDecoder)
-        for k, v in overview_dict.items():
-            overviews[k] = overview_cls(**v)
+        """Load overview data from a JSON file."""
+        if not os.path.exists(filename):
+            return {}
+
+        overview_data = load_json(filename, cls=OverviewDecoder)
+        overviews = {}
+        for key, item in overview_data.items():
+            try:
+                time_ranges = []
+                if item.get("start") and item.get("end"):
+                    time_ranges.append(
+                        TimeRange(
+                            start=item["start"],
+                            end=item["end"],
+                            interval=item["interval"],
+                        )
+                    )
+
+                # Remove start/end from item before passing to constructor
+                item.pop("start", None)
+                item.pop("end", None)
+
+                overview = overview_cls(time_ranges=time_ranges, **item)
+                overviews[overview.overview_key] = overview
+            except (TypeError, ValueError) as e:
+                print(f"Error loading overview item {item}: {e}")
+                continue
         return overviews
 
     def save_overview(self, type_: Literal["bar", "factor", "tick"]) -> None:
-        if type_ == "bar":
-            overview_data = self.bar_overview
-            filename = os.path.basename(self.bar_overview_filepath)
-        elif type_ == "factor":
-            overview_data = self.factor_overview
-            filename = os.path.basename(self.factor_overview_filepath)
-        elif type_ == "tick":
-            overview_data = self.tick_overview
-            filename = os.path.basename(self.tick_overview_filepath)
-        else:
+        """Save overview data to a JSON file."""
+        if type_ not in self.overviews:
             raise ValueError(f"task_type {type_} is not supported.")
 
-        # convert overview_data to dict
-        overview_data_dict = {
-            k: v.__dict__ for k, v in overview_data.items()
-        }  # v is TV_BaseOverview
+        overview_data = self.overviews[type_]
+        filename, _ = self.overview_files[type_]
+        filename = os.path.basename(filename)
 
-        # use vnpy save json
-        save_json(filename, overview_data_dict, cls=OverviewEncoder, mode="w")
+        save_json(filename, overview_data, cls=OverviewEncoder, mode="w")
 
     def get_overview_dict(
-        self, type_: Literal["bar", "factor", "tick"] | None
+        self, type_: Literal["bar", "factor", "tick"]
     ) -> dict[str, TV_BaseOverview]:
-        if type_ == "bar":
-            return self.bar_overview
-        elif type_ == "factor":
-            return self.factor_overview
-        elif type_ == "tick":
-            return self.tick_overview
-        else:
+        """Get the overview dictionary for a specific data type."""
+        if type_ not in self.overviews:
             raise ValueError(f"task_type {type_} is not supported.")
+        return self.overviews[type_]
 
-    def __update_overview_dict__(
-        self,
-        type_: Literal["bar", "factor", "tick"] | None = None,
-        overview_dict: dict[str, TV_BaseOverview] = None,
-    ):
-        if type_ == "bar":
-            self.bar_overview = copy.deepcopy(overview_dict)
-        elif type_ == "factor":
-            self.factor_overview = copy.deepcopy(overview_dict)
-        elif type_ == "tick":
-            self.tick_overview = copy.deepcopy(overview_dict)
-        else:
-            raise ValueError(f"task_type {type_} is not supported.")
-
-    def update_overview(
+    def update_overview_dict(
         self,
         type_: Literal["bar", "factor", "tick"],
-        overview_dict: dict[str, TV_BaseOverview] = None,
+        overview_dict: dict[str, TV_BaseOverview],
     ):
-        self.__update_overview_dict__(type_=type_, overview_dict=overview_dict)
+        """Update the overview dictionary for a specific data type."""
+        if type_ not in self.overviews:
+            raise ValueError(f"task_type {type_} is not supported.")
+        self.overviews[type_] = copy.deepcopy(overview_dict)
 
     def update_bar_overview(
         self, symbol: str, exchange: Exchange, interval: Interval, bars: list[tuple]
     ):
-        """
-        Update the in-memory overview data when new bars arrive.
-
-        Parameters:
-            symbol (str): Trading symbol (e.g., BTCUSDT).
-            exchange (Exchange): Exchange (e.g., Binance, CME).
-            interval (Interval): Candlestick interval (e.g., 1m, 1h, 1d).
-            bars (List[tuple]): List of bar data in tuple format (datetime, price, volume, etc.).
-        """
-        # todo: update overview here
+        """Update the in-memory bar overview data when new bars arrive."""
         if not bars:
             return
 
-        vt_symbol = VTSYMBOL_KLINE.format(
-            interval=interval.value, symbol=symbol, exchange=exchange.name
+        bar_overviews = self.overviews["bar"]
+        overview_key = VTSYMBOL_OVERVIEW.format(
+            interval=interval.value, symbol=symbol, exchange=exchange.value
         )
 
-        # If this symbol has no stored overview, create a new entry
-        if vt_symbol not in self.overview_dict:
-            self.overview_dict[vt_symbol] = BarOverview(
+        if overview_key not in bar_overviews:
+            bar_overviews[overview_key] = BarOverview(
                 symbol=symbol,
                 exchange=exchange,
                 interval=interval,
-                start=bars[0][0],  # First bar's timestamp
-                end=bars[-1][0],  # Last bar's timestamp
                 count=len(bars),
+                time_ranges=[
+                    TimeRange(start=bars[0][0], end=bars[-1][0], interval=interval)
+                ],
             )
         else:
-            overview = self.overview_dict[vt_symbol]
-
-            # Update start/end timestamps and bar count
-            overview.start = min(overview.start, bars[0][0])
-            overview.end = max(overview.end, bars[-1][0])
+            overview = bar_overviews[overview_key]
             overview.count += len(bars)
+            overview.add_range(start=bars[0][0], end=bars[-1][0])
 
-        print(f"OverviewHandler: Updated {vt_symbol} with {len(bars)} new bars.")
+        print(f"OverviewHandler: Updated {overview_key} with {len(bars)} new bars.")
 
     def save_all_overviews(self) -> None:
-        """
-        Save all overview data to their respective files.
-        This is called automatically on program exit.
-        """
-        self.save_overview(type_="bar")
-        self.save_overview(type_="factor")
-        self.save_overview(type_="tick")
+        """Save all overview data to their respective files."""
+        for type_ in self.overviews.keys():
+            self.save_overview(type_=type_)
 
     def check_subscribe_stream(self) -> list[SubscribeRequest]:
-        """
-        Scan all overview records and generate subscription requests for real-time tick data updates.
-
-        Returns:
-            List[SubscribeRequest]: A list of tick data subscription requests.
-        """
+        """Scan bar overviews and generate subscription requests."""
         subscribe_requests = []
-        for vt_symbol, bar_overview in self.overview_dict.items():
-            print(f"OverviewHandler: Subscribing to real-time data for {vt_symbol}.")
+        for _, bar_overview in self.overviews["bar"].items():
+            print(
+                f"OverviewHandler: Subscribing to real-time data for {bar_overview.vt_symbol}."
+            )
             subscribe_requests.append(
                 SubscribeRequest(
                     symbol=bar_overview.symbol,
@@ -733,7 +656,6 @@ class OverviewHandler:
                     interval=bar_overview.interval,
                 )
             )
-
         return subscribe_requests
 
     @property
