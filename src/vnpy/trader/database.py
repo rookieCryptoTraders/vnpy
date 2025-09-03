@@ -339,24 +339,36 @@ class DataRange:
         equals to gaps_between([start]+[common time ranges]+[end])
         """
         if not self.ranges:
+            if start and end:
+                return [TimeRange(start=start, end=end, interval=self.interval)]
             return []
 
-        ranges = self.ranges
-        end_timerange = TimeRange(start=end, end=end, interval=self.interval)
+        # This function was adjusted by Gemini to prevent side effects.
+        temp_ranges = copy.deepcopy(self.ranges)
 
         if start:
-            start_timerange = TimeRange(start=start, end=start, interval=self.interval)
-            if self._start_timerange.overlaps(start_timerange):
-                self.add_range(timerange=start_timerange, inplace=True)
-            ranges.append(start_timerange)
+            temp_ranges.append(TimeRange(start=start, end=start, interval=self.interval))
         if end:
-            ranges.append(end_timerange)
-        ranges.sort(key=lambda x: (x.start, x.end))
+            temp_ranges.append(TimeRange(start=end, end=end, interval=self.interval))
+        
+        temp_ranges.sort(key=lambda x: (x.start, x.end))
+
+        # Merge overlapping ranges to handle cases where start/end markers overlap with existing data.
+        merged = []
+        if temp_ranges:
+            current_merged = temp_ranges[0]
+            for r in temp_ranges[1:]:
+                if current_merged.overlaps(r):
+                    current_merged = current_merged.union(r)
+                else:
+                    merged.append(current_merged)
+                    current_merged = r
+            merged.append(current_merged)
 
         # Iterate through ranges and find gaps
         gaps = []
-        for i in range(len(ranges) - 1):
-            gap = ranges[i].get_gap_with(ranges[i + 1])
+        for i in range(len(merged) - 1):
+            gap = merged[i].get_gap_with(merged[i + 1])
             if gap:
                 gaps.append(gap)
         return gaps
