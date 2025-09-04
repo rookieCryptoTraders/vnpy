@@ -16,8 +16,8 @@ from vnpy.app.data_recorder import DataRecorderApp
 from vnpy.app.vnpy_datamanager import DataManagerApp, DataManagerEngine
 from vnpy.config import match_format_string
 from vnpy.event import EventEngine
-from vnpy.factor import FactorMakerApp
-from vnpy.factor.engine import FactorEngine
+from vnpy_factor import FactorMakerApp
+from vnpy_factor.factor_engine import FactorEngine
 from vnpy.gateway.mimicgateway.mimicgateway import MimicGateway
 from vnpy.trader.constant import Exchange, Interval
 from vnpy.trader.database import VTSYMBOL_OVERVIEW
@@ -59,6 +59,7 @@ def run_child():
     main_engine = MainEngine(event_engine)
     main_engine.write_log("Main engine created successfully")
     __PROJECT_SETTING_DIR__ = main_engine.TEMP_DIR
+    print(__PROJECT_SETTING_DIR__)
 
     gateway_settings = {
         "symbols": [],

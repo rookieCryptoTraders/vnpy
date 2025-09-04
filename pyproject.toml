@@ -1,6 +1,6 @@
 [project]
 name = "vnpy"
-version = "4.0.0"
+version = "4.1.1"
 description = "A comprehensive, modular, event-driven quantitative trading framework for strategy development, backtesting, and live trading across stocks, futures, and cryptocurrencies. Features a decoupled architecture, high extensibility, and easy integration of custom modules. Includes event-driven engines, gateways for multiple exchanges, advanced portfolio and risk management, high-performance factor engineering, and a robust strategy engine with automated model retraining. Designed for real-time, low-latency trading and research workflows."
 readme = "README.md"
 license = { text = "MIT" }

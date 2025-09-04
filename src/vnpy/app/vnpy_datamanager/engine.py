@@ -45,7 +45,7 @@ class DataManagerEngine(BaseEngine):
 
         # self.database: BaseDatabase = get_database()
         self.database: Union[
-            BaseDatabase, ClickhouseDatabase] = database  # fixme: database should not affiliated to data_manager. database is event driven
+            BaseDatabase, ClickhouseDatabase] = database  # fixme: database should not affiliated to data_recorder. database is event driven
         self.datafeed: BaseDatafeed = get_datafeed()
 
     def init_engine(self):

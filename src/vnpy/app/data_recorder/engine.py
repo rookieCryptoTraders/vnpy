@@ -39,7 +39,7 @@ APP_NAME = "DataManager"
 SYSTEM_MODE = SETTINGS.get("system.mode", "TEST")
 
 
-class DataManagerEngine(BaseEngine):
+class DataRecorderEngine(BaseEngine):
     """
     # This class was significantly modified by Gemini to provide a unified data management API.
     Acts as the sole entry point for database interactions, handling both historical data
