@@ -347,10 +347,12 @@ class DataRange:
         temp_ranges = copy.deepcopy(self.ranges)
 
         if start:
-            temp_ranges.append(TimeRange(start=start, end=start, interval=self.interval))
+            temp_ranges.append(
+                TimeRange(start=start, end=start, interval=self.interval)
+            )
         if end:
             temp_ranges.append(TimeRange(start=end, end=end, interval=self.interval))
-        
+
         temp_ranges.sort(key=lambda x: (x.start, x.end))
 
         # Merge overlapping ranges to handle cases where start/end markers overlap with existing data.
@@ -880,19 +882,30 @@ class BaseDatabase(ABC):
         return gap_dict
 
 
+# 1. Initialize the global database variable to None at the module level
 database: BaseDatabase | None = None
 TV_BaseOverview = TypeVar("TV_BaseOverview", bound=BaseOverview)  # TV means TypeVar
 
 
 def get_database(*args, **kwargs) -> BaseDatabase:
-    """"""
-    # Return database object if already inited
+    """
+    Gets the singleton database instance for the application.
+
+    The first time this function is called, it initializes the database
+    connection based on global settings. Subsequent calls will return the
+    existing instance, ignoring any new arguments.
+    """
+    # Use the 'global' keyword to modify the module-level variable
     global database
+
+    # 2. Check if the instance already exists. If so, return it immediately.
     if database:
         return database
 
+    # --- This part of the code will only run on the first call ---
+
     # Read database related global setting
-    database_name: str = SETTINGS["database.name"]
+    database_name: str = SETTINGS.get("database.name", "sqlite")
     module_name: str = f"vnpy_{database_name}"
 
     # Try to import database module
@@ -900,10 +913,13 @@ def get_database(*args, **kwargs) -> BaseDatabase:
         module: ModuleType = import_module(module_name)
     except ModuleNotFoundError:
         print(
-            f"Cannot find database driver {module_name}, using default SQLite database"
+            f"Cannot find database driver '{module_name}', using default SQLite database."
         )
         module: ModuleType = import_module("vnpy_sqlite")
 
-    # Create database object from module
-    database = module.Database(args, kwargs)
+    # 3. Create the database object and assign it to the global variable
+    #    Note the use of *args and **kwargs to unpack the arguments
+    database = module.Database(*args, **kwargs)
+    print(f"Database instance '{database_name}' created and connected.")
+
     return database
