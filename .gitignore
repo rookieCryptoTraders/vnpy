@@ -40,7 +40,7 @@ _templates
 .DS_Store
 *.mo
 requirements.txt
-requirements.txt
+GEMINI.md
 
 # Alpha
 lab/
