@@ -13,23 +13,6 @@
 
 ## Getting Started
 
-### Installation
-
-It is recommended to use a virtual environment to install `vn.py`.
-
-```bash
-# Clone the repository
-git clone https://github.com/rookieCryptoTraders/vnpy.git
-cd vnpy
-
-# Create and activate a virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
-
-# Install dependencies
-pip install -r requirements.txt
-```
-
 ### Running a Simple Example
 
 The following example demonstrates how to initialize the framework, connect to a gateway, and subscribe to market data.
