@@ -11,8 +11,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, date, timedelta
 from importlib import import_module
 from types import ModuleType
-from typing import Dict, List, Literal, Optional, Union, Any
+from typing import Literal, Optional, Union, Any
 from typing import TypeVar, Self
+import logging
+import time
+from pathlib import Path
+import copy
+from datetime import datetime
+
 
 from vnpy.config import BAR_OVERVIEW_FILENAME, FACTOR_OVERVIEW_FILENAME, TICK_OVERVIEW_FILENAME, VTSYMBOL_KLINE, \
     VTSYMBOL, VTSYMBOL_OVERVIEW
@@ -24,6 +30,8 @@ from vnpy.trader.setting import SETTINGS
 from vnpy.trader.utility import get_file_path, ZoneInfo
 from vnpy.trader.utility import load_json, save_json
 from vnpy.utils.datetimes import DatetimeUtils
+from vnpy.utils.atomic_writer_config import AtomicWriterConfig, ConfiguredAtomicWriter
+from vnpy.utils.graceful_shutdown import get_shutdown_handler
 
 # if TYPE_CHECKING:
 # from vnpy.trader.database import TimeRange,DataRange
@@ -168,7 +176,7 @@ class TimeRange:
             interval=self.interval
         )
 
-    def subtract(self, other: Self) -> List[Self]:
+    def subtract(self, other: Self) -> list[Self]:
         """Subtract another range from this one, returning the remaining parts"""
         assert self.interval == other.interval
         if not self.overlaps(other):
@@ -186,9 +194,9 @@ class TimeRange:
 class DataRange:
     """Manages a collection of time ranges with gap detection"""
 
-    def __init__(self, interval: Optional[Interval] = None, ranges: List[TimeRange] = None):
+    def __init__(self, interval: Optional[Interval] = None, ranges: list[TimeRange] = None):
         """Initialize with optional interval for gap calculation"""
-        self.ranges: List[TimeRange] = ranges if ranges else []
+        self.ranges: list[TimeRange] = ranges if ranges else []
         self.interval = interval
         self._start_dt: Optional[datetime] = None
         self._end_dt: Optional[datetime] = None
@@ -293,7 +301,7 @@ class DataRange:
         else:
             raise ValueError(f"Unsupported method: {method}")
 
-    def get_gaps(self, start: Optional[datetime] = None, end: Optional[datetime] = None) -> List[TimeRange]:
+    def get_gaps(self, start: Optional[datetime] = None, end: Optional[datetime] = None) -> list[TimeRange]:
         """Get all gaps in the current ranges
 
         Notes
@@ -354,7 +362,7 @@ class BaseOverview:
     count: int = 0
     # start: datetime = None  # replaced by property
     # end: datetime = None  # replaced by property
-    time_ranges: List[TimeRange] = field(default_factory=list)
+    time_ranges: list[TimeRange] = field(default_factory=list)
     data_range: DataRange = field(default=None, init=True)
 
     vt_symbol: str = ""
@@ -525,16 +533,20 @@ class OverviewHandler:
     tick_overview_filepath = str(get_file_path(TICK_OVERVIEW_FILENAME))
     factor_overview_filepath = str(get_file_path(FACTOR_OVERVIEW_FILENAME))
 
-    def __init__(self, event_engine: Optional[EventEngine] = None):
-        """Initialize the overview manager"""
-        # Register the save function to execute when the program exits
-        atexit.register(self.save_all_overviews)
-        signal.signal(signal.SIGINT, lambda sig, frame: (self.save_all_overviews(), sys.exit(0)))
-        signal.signal(signal.SIGINT, lambda sig, frame: (self.save_all_overviews(), sys.exit(1)))
-        signal.signal(signal.SIGTERM, lambda sig, frame: (self.save_all_overviews(), sys.exit(0)))
-        signal.signal(signal.SIGTERM, lambda sig, frame: (self.save_all_overviews(), sys.exit(1)))
+    def __init__(self, event_engine: Optional[EventEngine] = None, config: Optional[AtomicWriterConfig] = None):
+        """Initialize the overview manager
 
-        self.overview_dict: Dict[str, BarOverview] = {}  # Stores metadata in memory
+        Args:
+            config: Configuration for atomic writing. If None, uses default config.
+        """
+        # Register the save function to execute when the program exits
+        # atexit.register(self.save_all_overviews)
+        # signal.signal(signal.SIGINT, lambda sig, frame: (self.save_all_overviews(), sys.exit(0)))
+        # signal.signal(signal.SIGINT, lambda sig, frame: (self.save_all_overviews(), sys.exit(1)))
+        # signal.signal(signal.SIGTERM, lambda sig, frame: (self.save_all_overviews(), sys.exit(0)))
+        # signal.signal(signal.SIGTERM, lambda sig, frame: (self.save_all_overviews(), sys.exit(1)))
+
+        self.overview_dict: dict[str, BarOverview] = {}  # Stores metadata in memory
         # init database overview file
         # todo: collect them in one dict
         self.bar_overview = self.load_overview(filename=self.bar_overview_filepath, overview_cls=BarOverview)
@@ -542,42 +554,77 @@ class OverviewHandler:
         self.factor_overview = self.load_overview(filename=self.factor_overview_filepath,
                                                   overview_cls=FactorOverview)
 
-        self.data_ranges: Dict[str, Dict[str, DataRange]] = {
+        self.data_ranges: dict[str, dict[str, DataRange]] = {
             "bar": {},
             "factor": {},
             "tick": {}
         }
         self._event_engine = event_engine
 
-    def load_overview(self, filename: str, overview_cls: TV_BaseOverview.__class__) -> Dict[str, TV_BaseOverview]:
+        # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+        # migrate from zc's code
+        self.config = config or AtomicWriterConfig(
+            sync_mode="fsync",  # Ensure data is written to disk
+            max_retries=2,  # Retry failed writes
+            min_disk_space_mb=5,  # Require 5MB free space
+            validate_permissions=True,
+            cleanup_temp_files=True
+
+        )
+        self.atomic_writer = ConfiguredAtomicWriter(self.config)
+        self.shutdown_handler = get_shutdown_handler()
+        self.logger = logging.getLogger(__name__)
+        # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+    def load_overview(self, filename: str, overview_cls: TV_BaseOverview.__class__) -> dict[str, TV_BaseOverview]:
 
         # use vnpy load json
-        overviews: Dict[str, TV_BaseOverview] = {}
+        overviews: dict[str, TV_BaseOverview] = {}
         overview_dict = load_json(filename=filename, cls=OverviewDecoder)
         for k, v in overview_dict.items():
             overviews[k] = overview_cls(**v)
         return overviews
 
     def save_overview(self, type_: Literal['bar', 'factor', 'tick']) -> None:
-        if type_ == 'bar':
-            overview_data = self.bar_overview
-            filename = os.path.basename(self.bar_overview_filepath)
-        elif type_ == 'factor':
-            overview_data = self.factor_overview
-            filename = os.path.basename(self.factor_overview_filepath)
-        elif type_ == 'tick':
-            overview_data = self.tick_overview
-            filename = os.path.basename(self.tick_overview_filepath)
-        else:
-            raise ValueError(f"task_type {type_} is not supported.")
+        operation_id = f"save_overview_{type_}_{time.time()}"
 
-        # convert overview_data to dict
-        overview_data_dict = {k: v.__dict__ for k, v in overview_data.items()}  # v is TV_BaseOverview
+        try:
+            if type_ == 'bar':
+                overview_data = self.bar_overview
+                filename = os.path.basename(self.bar_overview_filepath)
+            elif type_ == 'factor':
+                overview_data = self.factor_overview
+                filename = os.path.basename(self.factor_overview_filepath)
+            elif type_ == 'tick':
+                overview_data = self.tick_overview
+                filename = os.path.basename(self.tick_overview_filepath)
+            else:
+                raise ValueError(f"task_type {type_} is not supported.")
 
-        # use vnpy save json
-        save_json(filename, overview_data_dict, cls=OverviewEncoder, mode='w')
+            # Register operation for graceful shutdown
+            self.shutdown_handler.register_operation(
+                operation_id,
+                "json_write",
+                filename
+            )
 
-    def get_overview_dict(self, type_: Optional[Literal["bar", "factor", "tick"]]) -> Dict[str, TV_BaseOverview]:
+
+            # convert overview_data to dict
+            overview_data_dict = {k: v.__dict__ for k, v in overview_data.items()}  # v is TV_BaseOverview
+
+            # use vnpy save json
+            save_json(filename, overview_data_dict, cls=OverviewEncoder, mode='w')
+        except Exception as e:
+            self.logger.error(f"Error saving {type_} overview data: {e}")
+            raise
+        finally:
+            # Always unregister operation
+            self.shutdown_handler.unregister_operation(operation_id)
+
+
+
+    def get_overview_dict(self, type_: Optional[Literal["bar", "factor", "tick"]]) -> dict[str, TV_BaseOverview]:
         if type_ == 'bar':
             return self.bar_overview
         elif type_ == 'factor':
@@ -588,7 +635,7 @@ class OverviewHandler:
             raise ValueError(f"task_type {type_} is not supported.")
 
     def __update_overview_dict__(self, type_: Optional[Literal["bar", "factor", "tick"]] = None,
-                                 overview_dict: Dict[str, TV_BaseOverview] = None):
+                                 overview_dict: dict[str, TV_BaseOverview] = None):
         if type_ == 'bar':
             self.bar_overview = copy.deepcopy(overview_dict)
         elif type_ == 'factor':
@@ -599,10 +646,10 @@ class OverviewHandler:
             raise ValueError(f"task_type {type_} is not supported.")
 
     def update_overview(self, type_: Literal["bar", "factor", "tick"],
-                        overview_dict: Dict[str, TV_BaseOverview] = None):
+                        overview_dict: dict[str, TV_BaseOverview] = None):
         self.__update_overview_dict__(type_=type_, overview_dict=overview_dict)
 
-    def update_bar_overview(self, symbol: str, exchange: Exchange, interval: Interval, bars: List[tuple]):
+    def update_bar_overview(self, symbol: str, exchange: Exchange, interval: Interval, bars: list[tuple]):
         """
         Update the in-memory overview data when new bars arrive.
 
@@ -610,7 +657,7 @@ class OverviewHandler:
             symbol (str): Trading symbol (e.g., BTCUSDT).
             exchange (Exchange): Exchange (e.g., Binance, CME).
             interval (Interval): Candlestick interval (e.g., 1m, 1h, 1d).
-            bars (List[tuple]): List of bar data in tuple format (datetime, price, volume, etc.).
+            bars (list[tuple]): list of bar data in tuple format (datetime, price, volume, etc.).
         """
         # todo: update overview here
         if not bars:
@@ -647,12 +694,12 @@ class OverviewHandler:
         self.save_overview(type_='factor')
         self.save_overview(type_='tick')
 
-    def check_subscribe_stream(self) -> List[SubscribeRequest]:
+    def check_subscribe_stream(self) -> list[SubscribeRequest]:
         """
         Scan all overview records and generate subscription requests for real-time tick data updates.
 
         Returns:
-            List[SubscribeRequest]: A list of tick data subscription requests.
+            list[SubscribeRequest]: A list of tick data subscription requests.
         """
         subscribe_requests = []
         for vt_symbol, bar_overview in self.overview_dict.items():
@@ -728,7 +775,7 @@ class OverviewHandler:
 
         return gap_dict
 
-    def process_missing_data(self, download_requests: List[HistoryRequest]) -> None:
+    def process_missing_data(self, download_requests: list[HistoryRequest]) -> None:
         """Process missing data requests by downloading and processing the data"""
         if not self.event_engine:
             raise RuntimeError("EventEngine is required for processing missing data")
@@ -775,14 +822,14 @@ class BaseDatabase(ABC):
     database_name: str = ""
 
     @abstractmethod
-    def save_bar_data(self, bars: List[BarData], stream: bool = False) -> bool:
+    def save_bar_data(self, bars: list[BarData], stream: bool = False) -> bool:
         """
         Save bar data into database.
         """
         pass
 
     @abstractmethod
-    def save_tick_data(self, ticks: List[TickData], stream: bool = False) -> bool:
+    def save_tick_data(self, ticks: list[TickData], stream: bool = False) -> bool:
         """
         Save tick data into database.
         """
@@ -796,7 +843,7 @@ class BaseDatabase(ABC):
             interval: Interval,
             start: datetime,
             end: datetime
-    ) -> List[BarData]:
+    ) -> list[BarData]:
         """
         Load bar data from database.
         """
@@ -809,7 +856,7 @@ class BaseDatabase(ABC):
             exchange: Exchange,
             start: datetime,
             end: datetime
-    ) -> List[TickData]:
+    ) -> list[TickData]:
         """
         Load tick data from database.
         """
@@ -839,21 +886,21 @@ class BaseDatabase(ABC):
         pass
 
     @abstractmethod
-    def get_bar_overview(self) -> Union[List[BarOverview], dict[str, BarOverview]]:
+    def get_bar_overview(self) -> Union[list[BarOverview], dict[str, BarOverview]]:
         """
         Return bar data available in database.
         """
         pass
 
     @abstractmethod
-    def get_tick_overview(self) -> Union[List[TickOverview], dict[str, TickOverview]]:
+    def get_tick_overview(self) -> Union[list[TickOverview], dict[str, TickOverview]]:
         """
         Return tick data available in database.
         """
         pass
 
     @abstractmethod
-    def get_factor_overview(self) -> Union[List[FactorOverview], dict[str, FactorOverview]]:
+    def get_factor_overview(self) -> Union[list[FactorOverview], dict[str, FactorOverview]]:
         """
         Return factor data available in database.
         """
@@ -901,3 +948,32 @@ def get_database(*args, **kwargs) -> BaseDatabase:
     # Create database object from module
     database = module.Database(args, kwargs)
     return database
+
+
+# Factory function to create enhanced handler with default configuration
+def get_overview_handler(
+        sync_mode: Literal["fsync", "fdatasync", "none"] = "fsync",
+        max_retries: int = 2,
+        min_disk_space_mb: int = 5,
+        event_engine=None
+) -> OverviewHandler:
+    """
+    Create an enhanced overview handler with specified configuration.
+
+    Args:
+        sync_mode: File sync mode for atomic writes
+        max_retries: Maximum number of retry attempts
+        min_disk_space_mb: Minimum required disk space in MB
+
+    Returns:
+        OverviewHandler: Configured enhanced handler
+    """
+    config = AtomicWriterConfig(
+        sync_mode=sync_mode,
+        max_retries=max_retries,
+        min_disk_space_mb=min_disk_space_mb,
+        validate_permissions=True,
+        cleanup_temp_files=True
+    )
+
+    return OverviewHandler(event_engine=event_engine,config=config)
