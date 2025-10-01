@@ -1,41 +1,32 @@
 from __future__ import annotations
 
-import atexit
 import copy
 import json
+import logging
 import os
-import signal
-import sys
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, date, timedelta
+from datetime import date, timedelta
+from datetime import datetime
 from importlib import import_module
 from types import ModuleType
 from typing import Literal, Optional, Union, Any
 from typing import TypeVar, Self
-import logging
-import time
 from pathlib import Path
-import copy
-from datetime import datetime
 
-
-from vnpy.config import BAR_OVERVIEW_FILENAME, FACTOR_OVERVIEW_FILENAME, TICK_OVERVIEW_FILENAME, VTSYMBOL_KLINE, \
-    VTSYMBOL, VTSYMBOL_OVERVIEW
+from vnpy.config import BAR_OVERVIEW_FILENAME, FACTOR_OVERVIEW_FILENAME, TICK_OVERVIEW_FILENAME, VTSYMBOL, \
+    VTSYMBOL_OVERVIEW
 from vnpy.trader.constant import Exchange, Interval
 from vnpy.trader.engine import Event, EventEngine
 from vnpy.trader.event import EVENT_BAR
-from vnpy.trader.object import HistoryRequest, SubscribeRequest, BarData, TickData
+from vnpy.trader.object import HistoryRequest, BarData, TickData
 from vnpy.trader.setting import SETTINGS
 from vnpy.trader.utility import get_file_path, ZoneInfo
 from vnpy.trader.utility import load_json, save_json
-from vnpy.utils.datetimes import DatetimeUtils
 from vnpy.utils.atomic_writer_config import AtomicWriterConfig, ConfiguredAtomicWriter
+from vnpy.utils.datetimes import DatetimeUtils
 from vnpy.utils.graceful_shutdown import get_shutdown_handler
-
-# if TYPE_CHECKING:
-# from vnpy.trader.database import TimeRange,DataRange
-
 
 DB_TZ = ZoneInfo(SETTINGS["database.timezone"])
 SYSTEM_MODE = SETTINGS.get("system.mode", "LIVE")
@@ -96,9 +87,12 @@ class TimeRange:
         self.start = ensure_datetime(start)
         self.end = ensure_datetime(end)  # for system consistency, this attr indicates the start of the last bar
         self.interval = interval
-        self.max_gap_ms = DatetimeUtils.interval2unix(self.interval, ret_unit='ms')
         if self.start > self.end:
             raise ValueError(f"Start time ({self.start}) must <= end time ({self.end})")
+
+    @property
+    def max_gap_ms(self):
+        return DatetimeUtils.interval2unix(self.interval, ret_unit='ms')
 
     def overlaps(self, other: Self, max_gap_ms: int = None) -> bool:
         """Check if this range overlaps with another
@@ -200,10 +194,12 @@ class DataRange:
         self.interval = interval
         self._start_dt: Optional[datetime] = None
         self._end_dt: Optional[datetime] = None
-        # Calculate maximum allowable gap
-        self.max_gap_timedelta = timedelta(minutes=1)
+        self._start_timerange: Optional[TimeRange] = None
+        self._end_timerange: Optional[TimeRange] = None
+        self.max_gap_timedelta = timedelta(minutes=1)  # maximum allowable gap
         if self.interval is not None:
             self.max_gap_timedelta = IntervalUtil.get_interval_timedelta(self.interval)
+        self._update_bounds()
 
     @property
     def start(self) -> Optional[datetime]:
@@ -218,8 +214,6 @@ class DataRange:
     def _update_bounds(self) -> None:
         """Update the start and end timestamps"""
         if not self.ranges:
-            self._start_dt = None
-            self._end_dt = None
             return
 
         self._start_dt = min(r.start for r in self.ranges)
@@ -228,22 +222,49 @@ class DataRange:
         self._end_timerange = max(self.ranges,
                                   key=lambda x: x.end)  # todo: check if this is correct. should I use x.end?
 
-    def add_ranges(self, ranges: list[TimeRange], inplace=False,
+    def add_ranges(self, ranges: list[TimeRange], inplace=True,
                    method: Literal['union', 'intersection'] = 'union') -> None:
-        """Add multiple time ranges and update bounds"""
+        """Add multiple time ranges and update bounds
+
+        Parameters
+        ----------
+        ranges :
+        inplace : bool
+            if True, modify self.ranges in place and return None. if False, return the new list of ranges without modifying self.ranges
+        method :
+
+        Returns
+        -------
+
+        """
         if not ranges:
             return
-        for range in ranges:
-            assert range.interval == self.interval
-            self.ranges = self.add_range(start=range.start, end=range.end, method=method, inplace=inplace)
+        for time_range in ranges:
+            assert time_range.interval == self.interval
+            self.ranges = self.add_range(start=time_range.start, end=time_range.end, method=method, inplace=inplace)
         self._update_bounds()
 
     # This function was adjusted by Gemini
     def add_range(self, start: Optional[Union[datetime, int, float, str]] = None,
                   end: Optional[Union[datetime, int, float, str]] = None,
-                  inplace=False, timerange: Optional[TimeRange] = None,
+                  inplace=True,
+                  timerange: Optional[TimeRange] = None,
                   method: Literal['union', 'intersection'] = 'union') -> Optional[list[TimeRange]]:
-        """Add a new time range and merge/intersect with existing ones."""
+        """Add a new time range and merge/intersect with existing ones.
+
+        Parameters
+        ----------
+        start :
+        end :
+        inplace : bool
+            if True, modify self.ranges in place and return None. if False, return the new list of ranges without modifying self.ranges
+        timerange :
+        method :
+
+        Returns
+        -------
+
+        """
         # Validate inputs: either timerange or both start and end must be provided
         if (timerange is None and (start is None or end is None)) or \
                 (timerange is not None and (start is not None or end is not None)):
@@ -360,14 +381,14 @@ class BaseOverview:
     exchange: Exchange = None
     interval: Interval = None
     count: int = 0
-    # start: datetime = None  # replaced by property
-    # end: datetime = None  # replaced by property
-    time_ranges: list[TimeRange] = field(default_factory=list)
     data_range: DataRange = field(default=None, init=True)
 
     vt_symbol: str = ""
     overview_key: str = ""
     VTSYMBOL_TEMPLATE: str = field(default=None, init=False)
+
+    def __init__(self):
+        self.data_range = DataRange(interval=self.interval)
 
     def __post_init__(self):
         self.overview_key = VTSYMBOL_OVERVIEW.format(
@@ -375,20 +396,14 @@ class BaseOverview:
             symbol=self.symbol,
             exchange=self.exchange.value
         )
-        self.data_range = DataRange(interval=self.interval)
 
-    def add_range(self, start: datetime, end: datetime):
+    def add_range(self, start: datetime, end: datetime, inplace=True):
         """Add a time range and get any gaps"""
         new_range = TimeRange(start=start, end=end, interval=self.interval)
-        if not self.time_ranges:
-            self.data_range.add_range(timerange=new_range, inplace=True)
-            self.time_ranges = self.data_range.ranges
-            return []
 
         # Other time range operations are handled by DataRange class
-        self.data_range.add_range(start=start, end=end,
-                                  inplace=True)  # the default value of inplace in overview's add range should be true
-        self.time_ranges = self.data_range.ranges
+        self.data_range.add_range(timerange=new_range,
+                                  inplace=inplace)  # the default value of inplace in overview's add range should be true
 
     @property
     def start(self) -> Optional[datetime]:
@@ -403,6 +418,10 @@ class BaseOverview:
         if not self.time_ranges:
             return None
         return max(r.end for r in self.time_ranges)
+
+    @property
+    def time_ranges(self) -> list[TimeRange]:
+        return self.data_range.ranges
 
 
 @dataclass
@@ -479,7 +498,7 @@ class OverviewEncoder(json.JSONEncoder):
                 'start': self.default(o.start),
                 'end': self.default(o.end),
                 'interval': self.default(o.interval),
-                'max_gap_ms': o.max_gap_ms
+                # 'max_gap_ms': o.max_gap_ms
             }
         elif hasattr(o, '__dict__'):
             dic = {'class': o.__class__.__name__}
@@ -520,9 +539,8 @@ class OverviewDecoder(json.JSONDecoder):
             )
         elif 'class' in d and d['class'] == 'DataRange':
             dd = DataRange(
-                interval=Interval(d['interval'])
+                interval=Interval(d['interval']), ranges=[self.dict_to_object(r) for r in d['ranges']]
             )
-            dd.ranges = [self.dict_to_object(r) for r in d['ranges']]
             return dd
         return d
 
@@ -576,7 +594,6 @@ class OverviewHandler:
         self.logger = logging.getLogger(__name__)
         # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-
     def load_overview(self, filename: str, overview_cls: TV_BaseOverview.__class__) -> dict[str, TV_BaseOverview]:
 
         # use vnpy load json
@@ -609,20 +626,20 @@ class OverviewHandler:
                 filename
             )
 
-
             # convert overview_data to dict
             overview_data_dict = {k: v.__dict__ for k, v in overview_data.items()}  # v is TV_BaseOverview
 
             # use vnpy save json
-            save_json(filename, overview_data_dict, cls=OverviewEncoder, mode='w')
+            # save_json(filename, overview_data_dict, cls=OverviewEncoder, mode='w')
+            filepath: Path = get_file_path(filename)
+
+            self.atomic_writer.write_atomic(overview_data_dict, filepath, mode="w+", cls=OverviewEncoder)
         except Exception as e:
             self.logger.error(f"Error saving {type_} overview data: {e}")
             raise
         finally:
             # Always unregister operation
             self.shutdown_handler.unregister_operation(operation_id)
-
-
 
     def get_overview_dict(self, type_: Optional[Literal["bar", "factor", "tick"]]) -> dict[str, TV_BaseOverview]:
         if type_ == 'bar':
@@ -649,70 +666,49 @@ class OverviewHandler:
                         overview_dict: dict[str, TV_BaseOverview] = None):
         self.__update_overview_dict__(type_=type_, overview_dict=overview_dict)
 
-    def update_bar_overview(self, symbol: str, exchange: Exchange, interval: Interval, bars: list[tuple]):
-        """
-        Update the in-memory overview data when new bars arrive.
-
-        Parameters:
-            symbol (str): Trading symbol (e.g., BTCUSDT).
-            exchange (Exchange): Exchange (e.g., Binance, CME).
-            interval (Interval): Candlestick interval (e.g., 1m, 1h, 1d).
-            bars (list[tuple]): list of bar data in tuple format (datetime, price, volume, etc.).
-        """
-        # todo: update overview here
-        if not bars:
-            return
-
-        vt_symbol = VTSYMBOL_KLINE.format(interval=interval.value, symbol=symbol, exchange=exchange.name)
-
-        # If this symbol has no stored overview, create a new entry
-        if vt_symbol not in self.overview_dict:
-            self.overview_dict[vt_symbol] = BarOverview(
-                symbol=symbol,
-                exchange=exchange,
-                interval=interval,
-                start=bars[0][0],  # First bar's timestamp
-                end=bars[-1][0],  # Last bar's timestamp
-                count=len(bars)
-            )
-        else:
-            overview = self.overview_dict[vt_symbol]
-
-            # Update start/end timestamps and bar count
-            overview.start = min(overview.start, bars[0][0])
-            overview.end = max(overview.end, bars[-1][0])
-            overview.count += len(bars)
-
-        print(f"OverviewHandler: Updated {vt_symbol} with {len(bars)} new bars.")
+    # def update_bar_overview(self, symbol: str, exchange: Exchange, interval: Interval, bars: list[tuple]):
+    #     """
+    #     Update the in-memory overview data when new bars arrive.
+    #
+    #     Parameters:
+    #         symbol (str): Trading symbol (e.g., BTCUSDT).
+    #         exchange (Exchange): Exchange (e.g., Binance, CME).
+    #         interval (Interval): Candlestick interval (e.g., 1m, 1h, 1d).
+    #         bars (list[tuple]): list of bar data in tuple format (datetime, price, volume, etc.).
+    #     """
+    #     # todo: update overview here
+    #     if not bars:
+    #         return
+    #
+    #     vt_symbol = VTSYMBOL_KLINE.format(interval=interval.value, symbol=symbol, exchange=exchange.name)
+    #
+    #     # If this symbol has no stored overview, create a new entry
+    #     if vt_symbol not in self.overview_dict:
+    #         self.overview_dict[vt_symbol] = BarOverview(
+    #             symbol=symbol,
+    #             exchange=exchange,
+    #             interval=interval,
+    #             start=bars[0][0],  # First bar's timestamp
+    #             end=bars[-1][0],  # Last bar's timestamp
+    #             count=len(bars)
+    #         )
+    #     else:
+    #         overview = self.overview_dict[vt_symbol]
+    #
+    #         # Update start/end timestamps and bar count
+    #         overview.start = min(overview.start, bars[0][0])
+    #         overview.end = max(overview.end, bars[-1][0])
+    #         overview.count += len(bars)
+    #
+    #     print(f"OverviewHandler: Updated {vt_symbol} with {len(bars)} new bars.")
 
     def save_all_overviews(self) -> None:
         """
         Save all overview data to their respective files.
-        This is called automatically on program exit.
         """
         self.save_overview(type_='bar')
         self.save_overview(type_='factor')
         self.save_overview(type_='tick')
-
-    def check_subscribe_stream(self) -> list[SubscribeRequest]:
-        """
-        Scan all overview records and generate subscription requests for real-time tick data updates.
-
-        Returns:
-            list[SubscribeRequest]: A list of tick data subscription requests.
-        """
-        subscribe_requests = []
-        for vt_symbol, bar_overview in self.overview_dict.items():
-            print(f"OverviewHandler: Subscribing to real-time data for {vt_symbol}.")
-            subscribe_requests.append(
-                SubscribeRequest(
-                    symbol=bar_overview.symbol,
-                    exchange=bar_overview.exchange,
-                    interval=bar_overview.interval
-                )
-            )
-
-        return subscribe_requests
 
     @property
     def event_engine(self) -> Optional[EventEngine]:
@@ -976,4 +972,4 @@ def get_overview_handler(
         cleanup_temp_files=True
     )
 
-    return OverviewHandler(event_engine=event_engine,config=config)
+    return OverviewHandler(event_engine=event_engine, config=config)

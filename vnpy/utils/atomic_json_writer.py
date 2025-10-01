@@ -56,7 +56,8 @@ class AtomicJSONWriter:
         self.temp_dir = temp_dir
         self.logger = logging.getLogger(__name__)
         
-    def write_atomic(self, data: Dict[str, Any], filepath: str, sync_mode: str = "fsync", use_locking: bool = True, cls=None) -> bool:
+    def write_atomic(self, data: Dict[str, Any], filepath: str, sync_mode: str = "fsync", use_locking: bool = True,
+            mode="w+", cls=json.JSONEncoder) -> bool:
         """
         Atomically write JSON data to a file with optional file locking.
         
@@ -70,7 +71,8 @@ class AtomicJSONWriter:
             sync_mode: Sync mode - "fsync", "fdatasync", or "none"
             use_locking: Whether to use file locking for concurrent access protection
             cls: Optional JSON encoder class
-            
+            mode: File open mode
+
         Returns:
             bool: True if write was successful, False otherwise
             
@@ -83,16 +85,17 @@ class AtomicJSONWriter:
             if use_locking:
                 # Use file locking to prevent concurrent writes
                 with acquire_file_lock(str(filepath), timeout=30.0):
-                    return self._write_atomic_internal(filepath, data, sync_mode, cls=cls)
+                    return self._write_atomic_internal(filepath, data, sync_mode, mode=mode, cls=cls)
             else:
                 # Write without locking
-                return self._write_atomic_internal(filepath, data, sync_mode, cls=cls)
+                return self._write_atomic_internal(filepath, data, sync_mode, mode=mode, cls=cls)
                 
         except Exception as e:
             self.logger.error(f"Failed to write JSON data to {filepath}: {e}")
             raise AtomicJSONWriterError(f"Atomic write failed: {e}") from e
     
-    def _write_atomic_internal(self, filepath: Path, data: Dict[str, Any], sync_mode: str, cls=None) -> bool:
+    def _write_atomic_internal(self, filepath: Path, data: Dict[str, Any], sync_mode: str,
+            mode="w+", cls=json.JSONEncoder) -> bool:
         """
         Internal method for atomic writing without locking.
         
@@ -101,7 +104,8 @@ class AtomicJSONWriter:
             data: Dictionary to write as JSON
             sync_mode: Sync mode - "fsync", "fdatasync", or "none"
             cls: Optional JSON encoder class
-            
+            mode: File open mode
+
         Returns:
             bool: True if write was successful
         """
@@ -113,7 +117,7 @@ class AtomicJSONWriter:
         
         try:
             # Write data and sync to disk
-            self._write_and_sync(temp_path, data, sync_mode, cls=cls)
+            self._write_and_sync(temp_path, data, sync_mode, mode=mode, cls=cls)
             
             # Atomically replace target with temp file
             self._atomic_replace(temp_path, filepath)
@@ -124,7 +128,7 @@ class AtomicJSONWriter:
         except Exception as e:
             # Clean up temp file on failure
             self._cleanup_temp_file(temp_path)
-            raise
+            raise e
     
     def _validate_write_conditions(self, filepath: Path) -> None:
         """
@@ -198,7 +202,8 @@ class AtomicJSONWriter:
         except OSError as e:
             raise AtomicJSONWriterError(f"Failed to create temporary file: {e}")
     
-    def _write_and_sync(self, temp_path: Path, data: Dict[str, Any], sync_mode: str = "fsync", cls=None) -> None:
+    def _write_and_sync(self, temp_path: Path, data: Dict[str, Any], sync_mode: str = "fsync",
+            mode="w+", cls=json.JSONEncoder) -> None:
         """
         Write JSON data to temporary file and sync to disk.
         
@@ -207,14 +212,15 @@ class AtomicJSONWriter:
             data: Data to write as JSON
             sync_mode: Sync mode - "fsync", "fdatasync", or "none"
             cls: Optional JSON encoder class
+            mode: File open mode
             
         Raises:
             AtomicJSONWriterError: If write or sync fails
         """
         try:
-            with open(temp_path, 'w', encoding='utf-8') as f:
+            with open(temp_path, mode, encoding='utf-8') as f:
                 # Write JSON data with proper formatting
-                json.dump(data, f, indent=2, ensure_ascii=False, sort_keys=True, cls=cls)
+                json.dump(data, f, indent=4, ensure_ascii=False, sort_keys=False, cls=cls)
                 
                 # Force write to disk based on sync mode
                 f.flush()

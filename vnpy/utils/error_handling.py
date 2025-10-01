@@ -16,6 +16,7 @@ from typing import List, Optional, Dict, Any, Callable
 from pathlib import Path
 from dataclasses import dataclass
 from enum import Enum
+import json
 
 
 class ErrorSeverity(Enum):
@@ -272,6 +273,7 @@ class TempFileCleanupManager:
             logger_name: Name for the logger instance
         """
         self.logger = logging.getLogger(logger_name)
+        self.logger.setLevel('INFO')
 
     def cleanup_orphaned_temp_files(
         self, directory: Path, max_age_hours: int = 24, dry_run: bool = False
@@ -349,7 +351,6 @@ class TempFileCleanupManager:
 
         try:
             with open(filepath, "r", encoding="utf-8") as f:
-                import json
 
                 json.load(f)
 
