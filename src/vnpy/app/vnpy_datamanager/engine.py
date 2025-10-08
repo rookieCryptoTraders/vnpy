@@ -78,9 +78,8 @@ class DataManagerEngine(BaseEngine):
             self.write_log(f"Invalid data format for {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}: {data}", level=ERROR)
             raise TypeError(f"Invalid data format for {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}: {data}")
         self.write_log(
-            f"Successfully processed {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}, response count: {len(res)}")
+            f"Successfully processed {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}, response count: {len(res) if res is not None else 0}")
         self.put_event(Event(EVENT_DATAMANAGER_LOAD_BAR_RESPONSE, data=res))
-        print(f"put_event {EVENT_DATAMANAGER_LOAD_BAR_RESPONSE}: {event_type}, {data}, response count: {len(res)}",flush=True)
 
     def on_load_factor_data(self, event: Event) -> None:
         event_type, data = event.type, event.data

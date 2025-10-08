@@ -74,7 +74,7 @@ def run_child():
 
     # start factor engine
     factor_maker_engine: FactorEngine = main_engine.add_app(FactorMakerApp)
-    factor_maker_engine.init_engine(fake=False)
+    factor_maker_engine.init_engine()
     main_engine.write_log(f"Started [{factor_maker_engine.__class__.__name__}]")
 
     # start data recorder
