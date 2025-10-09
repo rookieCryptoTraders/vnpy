@@ -145,7 +145,7 @@ class MainEngine:
         ----------
         args: list
             args for engine
-        kwargs: dict
+        kwargs:
             kwargs for engine
         """
         app: BaseApp = app_class()

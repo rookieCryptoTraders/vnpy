@@ -18,7 +18,7 @@ from typing import Literal, TypeVar, Optional, Union, Any
 from typing_extensions import Self
 
 from vnpy.config import BAR_OVERVIEW_FILENAME, FACTOR_OVERVIEW_FILENAME, TICK_OVERVIEW_FILENAME, VTSYMBOL, \
-    VTSYMBOL_OVERVIEW
+    VTSYMBOL_OVERVIEW, VTSYMBOL_FACTORDATA, VTSYMBOL_BARDATA, VTSYMBOL_TICKDATA, VTSYMBOL_KLINE
 from vnpy.trader.constant import Exchange, Interval
 from vnpy.trader.engine import Event, EventEngine
 from vnpy.trader.event import EVENT_BAR
@@ -481,7 +481,7 @@ class BaseOverview:
 
 
 class BarOverview(BaseOverview):
-    VTSYMBOL_TEMPLATE = VTSYMBOL
+    VTSYMBOL_TEMPLATE = VTSYMBOL_KLINE
 
     def __init__(self, symbol: str = "", exchange: Exchange = None, interval: Interval = None, count: int = 0,
                  data_range: DataRange = None, vt_symbol: str = "", overview_key: str = "",
@@ -531,10 +531,11 @@ class TickOverview(BaseOverview):
 class FactorOverview(BaseOverview):
     factor_name: str = ""
     factor_key: str = ""
-    VTSYMBOL_TEMPLATE = VTSYMBOL
+    VTSYMBOL_TEMPLATE = VTSYMBOL_FACTORDATA
 
     def __init__(self, symbol: str = "", exchange: Exchange = None, interval: Interval = None, count: int = 0,
-                 data_range: DataRange = None, vt_symbol: str = "", overview_key: str = "",
+                 data_range: DataRange = None, vt_symbol: str = "", overview_key: str = "", factor_name: str = "",
+                 factor_key: str = "",
                  ):
         super().__init__(
             symbol=symbol,
@@ -545,15 +546,19 @@ class FactorOverview(BaseOverview):
             overview_key=overview_key,
             data_range=data_range,
         )
+        self.factor_name = factor_name
+        self.factor_key = factor_key
 
     def __post_init__(self):
         self.vt_symbol = self.VTSYMBOL_TEMPLATE.format(
+            interval=self.interval.value,
             symbol=self.symbol,
-            exchange=self.exchange.value,
+            factorname=self.factor_name,
+            exchange=self.exchange.value
         )
         super().__post_init__()
         # This logic was adjusted by Gemini for correctness.
-        self.overview_key = f"{self.overview_key}.{self.factor_name}"
+        self.overview_key = f"{self.overview_key}.{self.factor_name}"  # overwrite overview_key
 
 
 class OverviewEncoder(json.JSONEncoder):

@@ -18,6 +18,7 @@ from vnpy.config import match_format_string
 from vnpy.event import EventEngine
 from vnpy_factor import FactorMakerApp
 from vnpy_factor.factor_engine import FactorEngine
+from vnpy_factor.factor_registry import FactorRegistry
 from vnpy.gateway.mimicgateway.mimicgateway import MimicGateway
 from vnpy.trader.constant import Exchange, Interval
 from vnpy.trader.database import VTSYMBOL_OVERVIEW
@@ -73,7 +74,7 @@ def run_child():
     }
 
     # start factor engine
-    factor_maker_engine: FactorEngine = main_engine.add_app(FactorMakerApp)
+    factor_maker_engine: FactorEngine = main_engine.add_app(FactorMakerApp, registry=FactorRegistry())
     factor_maker_engine.init_engine()
     main_engine.write_log(f"Started [{factor_maker_engine.__class__.__name__}]")
 
@@ -82,7 +83,7 @@ def run_child():
     data_recorder_engine.update_schema(database_name=data_recorder_engine.database_manager.database_name,
                                        exchanges=main_engine.exchanges,
                                        intervals=main_engine.intervals,
-                                       factor_keys=[key for key in factor_maker_engine.flattened_factors.keys()])
+                                       factor_keys=[key for key in factor_maker_engine.factor_data.keys()])
     data_recorder_engine.start()
     main_engine.write_log(f"Started [{data_recorder_engine.__class__.__name__}]")
 

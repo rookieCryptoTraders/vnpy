@@ -43,7 +43,7 @@ class DataRecorderEngine(BaseEngine):
     This engine is designed to be thread-safe and handles data in batches for efficiency.
     """
 
-    def __init__(self, main_engine: MainEngine, event_engine: EventEngine):
+    def __init__(self, main_engine: MainEngine, event_engine: EventEngine, *args, **kwargs):
         """Initializes the RecorderEngine."""
         super().__init__(main_engine, event_engine, engine_name=APP_NAME)
 
@@ -69,7 +69,10 @@ class DataRecorderEngine(BaseEngine):
         self.buffer_size: int = 1000 if SYSTEM_MODE != 'TEST' else 1  # Number of records to buffer before writing
 
         # Database manager instance
-        self.database_manager = ClickhouseDatabase(event_engine=event_engine)
+        self.database_manager = ClickhouseDatabase(event_engine=event_engine,
+                                                   table_prefix_bar=kwargs.get("table_prefix_bar", "bar"),
+                                                   table_prefix_factor=kwargs.get("table_prefix_factor", "factor")
+                                                   )
 
         # Overview handler for data consistency checks (optional)
         # self.overview_handler_for_result_check = OverviewHandler()
@@ -341,7 +344,7 @@ class DataRecorderEngine(BaseEngine):
             # This case is for flushing buffers when the queue is empty
             self._flush_all_buffers()
 
-    def _process_bar_data(self, data: BarData | list[BarData] | dict[str,list[BarData]], force_save: bool):
+    def _process_bar_data(self, data: BarData | list[BarData] | dict[str, list[BarData]], force_save: bool):
         """Helper to process and buffer bar data."""
         with self.lock:
             if isinstance(data, list):
