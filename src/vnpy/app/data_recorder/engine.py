@@ -334,12 +334,12 @@ class DataRecorderEngine(BaseEngine):
         #     f"saving data: {task_type}, force_save={force_save}, event_type={event_type}",
         #     level=INFO if task_type else NOTSET,
         # )
-        if task_type == "tick":
-            self.database_manager.save_tick_data([data])
-        elif task_type == "bar":
+        if task_type == "bar":
             self._process_bar_data(data=data, force_save=force_save)
         elif task_type == "factor":
             self._process_factor_data(data=data, force_save=force_save)
+        elif task_type == "tick":
+            self.database_manager.save_tick_data([data])
         elif force_save:
             # This case is for flushing buffers when the queue is empty
             self._flush_all_buffers()

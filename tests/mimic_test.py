@@ -21,7 +21,7 @@ from vnpy_factor.factor_engine import FactorEngine
 from vnpy_factor.factor_registry import FactorRegistry
 from vnpy.gateway.mimicgateway.mimicgateway import MimicGateway
 from vnpy.trader.constant import Exchange, Interval
-from vnpy.trader.database import VTSYMBOL_OVERVIEW
+from vnpy.trader.database import BAR_OVERVIEW_KEY
 from vnpy.trader.engine import MainEngine
 from vnpy.trader.object import BarData
 
@@ -101,7 +101,7 @@ def run_child():
     for i in range(3):  # allow 3 attempts to download data
         # gaps to requests
         gap_dict = data_recorder_engine.database_manager.get_gaps(end_time=datetime.datetime.now(),
-                                                                  start_time=datetime.datetime(2025, 8, 25, 12, 30))
+                                                                  start_time=datetime.datetime(2025, 10, 13, 12, 30))
         # no gap, break
         if all(len(gap) == 0 for gap in gap_dict.values()):
             break
@@ -111,7 +111,7 @@ def run_child():
 
         for overview_key, data_list in gap_data_dict.items():
             # print(f"main Processing overview key: {overview_key}, data count: {len(data_list)}")
-            info = match_format_string(VTSYMBOL_OVERVIEW, overview_key)
+            info = match_format_string(BAR_OVERVIEW_KEY, overview_key)
             for d in data_list:
                 bar = BarData(
                     gateway_name=gateway.gateway_name,
@@ -152,7 +152,7 @@ def run_child():
         time.sleep(3)
         for overview_key, data_list in gap_data_dict.items():
             # print(f"main Processing overview key: {overview_key}, data count: {len(data_list)}")
-            info = match_format_string(VTSYMBOL_OVERVIEW, overview_key)
+            info = match_format_string(BAR_OVERVIEW_KEY, overview_key)
             for d in data_list:
                 bar = BarData(
                     gateway_name=gateway.gateway_name,

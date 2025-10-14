@@ -14,7 +14,7 @@ from vnpy.config import match_format_string
 from vnpy.event import Event, EventEngine
 from vnpy.trader.constant import Interval, Exchange
 from vnpy.trader.database import BaseDatabase, BarOverview, DB_TZ, TV_BaseOverview, TickOverview, \
-    FactorOverview, TimeRange, VTSYMBOL_OVERVIEW
+    FactorOverview, TimeRange, BAR_OVERVIEW_KEY
 from vnpy.trader.datafeed import BaseDatafeed, get_datafeed
 from vnpy.trader.engine import BaseEngine, MainEngine
 from vnpy.trader.event import EVENT_LOG, EVENT_BAR_FILLING
@@ -117,7 +117,6 @@ class DataManagerEngine(BaseEngine):
         """
         res = defaultdict(list)
         for overview_key, time_ranges in gaps.items():
-            info = match_format_string(VTSYMBOL_OVERVIEW, overview_key)
             for time_range in time_ranges:
                 if time_range.start < start:
                     time_range.start = start
@@ -407,7 +406,7 @@ class DataManagerEngine(BaseEngine):
             start_dt = min([time_range.start for time_range in time_ranges])
             end_dt = max([time_range.end for time_range in time_ranges])
             self.write_log(f"download_bar_data_gaps: {overview_key}, {start_dt} - {end_dt}")
-            info = match_format_string(VTSYMBOL_OVERVIEW, overview_key)
+            info = match_format_string(BAR_OVERVIEW_KEY, overview_key)
             for time_range in time_ranges:
                 res[overview_key].extend(self.download_bar_data(symbol=info['symbol'],
                                                                 exchange=Exchange(info['exchange']),

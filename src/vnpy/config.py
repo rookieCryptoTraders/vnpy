@@ -35,7 +35,6 @@ VTSYMBOL_TICK = "tick_{interval}_{symbol}.{exchange}"  # interval, symbol, excha
 # for factor_key. all symbols and exchanges needs to be calculated, so we don't care if they will be displayed in the key.
 # forms factor_key and is displayed as column names in database
 VTSYMBOL_FACTOR = "factor_{interval}_{factorname}"
-VTSYMBOL_OVERVIEW = "overview_{interval}_{symbol}.{exchange}"
 # for datas. vnpy regards it as the combination of `symbol` and `exchange`, and rsplit it by '.'.
 VTSYMBOL_BARDATA = "{symbol}.{exchange}"
 VTSYMBOL_TICKDATA = "{symbol}.{exchange}"
@@ -51,10 +50,14 @@ TRAIN_END_DATE_for_test = '2022-01-31'
 TEST_START_DATE_for_test = '2022-02-01'
 TEST_END_DATE_for_test = '2022-02-28'
 
-# data related
+# overview related
 BAR_OVERVIEW_FILENAME = "overview_bar.json"
 TICK_OVERVIEW_FILENAME = "overview_tick.json"
 FACTOR_OVERVIEW_FILENAME = "overview_factor.json"
+BAR_OVERVIEW_KEY = "overview_bar_{interval}_{symbol}.{exchange}"
+TICK_OVERVIEW_KEY = "overview_tick_{interval}_{symbol}.{exchange}"
+FACTOR_OVERVIEW_KEY = "overview_factor_{interval}_{symbol}.{exchange}|{factor_key}"
+
 
 
 def match_format_string(format_str, s):

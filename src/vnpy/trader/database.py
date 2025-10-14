@@ -9,24 +9,28 @@ import signal
 import sys
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import field
 from datetime import date, datetime, timedelta
 from importlib import import_module
+from itertools import product
+from logging import INFO,WARNING
 from pathlib import Path
 from types import ModuleType
-from typing import Literal, TypeVar, Optional, Union, Any
+from typing import Literal, TypeVar, Optional, Union, Any, Type
+
 from typing_extensions import Self
 
-from vnpy.config import BAR_OVERVIEW_FILENAME, FACTOR_OVERVIEW_FILENAME, TICK_OVERVIEW_FILENAME, VTSYMBOL, \
-    VTSYMBOL_OVERVIEW, VTSYMBOL_FACTORDATA, VTSYMBOL_BARDATA, VTSYMBOL_TICKDATA, VTSYMBOL_KLINE
+from vnpy.config import BAR_OVERVIEW_FILENAME, FACTOR_OVERVIEW_FILENAME, TICK_OVERVIEW_FILENAME, BAR_OVERVIEW_KEY, \
+    TICK_OVERVIEW_KEY, \
+    FACTOR_OVERVIEW_KEY
 from vnpy.trader.constant import Exchange, Interval
 from vnpy.trader.engine import Event, EventEngine
-from vnpy.trader.event import EVENT_BAR
-from vnpy.trader.object import HistoryRequest, BarData, TickData
+from vnpy.trader.event import EVENT_BAR, EVENT_LOG
+from vnpy.trader.object import HistoryRequest, BarData, TickData,LogData
 from vnpy.trader.setting import SETTINGS
 from vnpy.trader.utility import get_file_path, load_json
 from vnpy.utils.atomic_writer_config import AtomicWriterConfig, ConfiguredAtomicWriter
-from vnpy.utils.datetimes import DatetimeUtils
+from vnpy.utils.datetimes import DatetimeUtils, TimeFreq
 from vnpy.utils.graceful_shutdown import get_shutdown_handler
 from .utility import ZoneInfo
 
@@ -426,9 +430,8 @@ class BaseOverview:
     count: int = 0
     data_range: DataRange = field(default=None, init=True)
 
-    vt_symbol: str = ""
+    # vt_symbol: str = ""
     overview_key: str = ""
-    VTSYMBOL_TEMPLATE: str = ""
 
     def __init__(self, symbol: str = ""
                  , exchange: Exchange = None
@@ -439,19 +442,18 @@ class BaseOverview:
                  , overview_key: str = ""
                  ):
         self.symbol = symbol
-        self.exchange = exchange
-        self.interval = interval
+        self.exchange = Exchange(exchange)
+        self.interval = Interval(interval)
         self.count = count
-        self.vt_symbol = vt_symbol
-        self.overview_key = overview_key
+        # self.vt_symbol = vt_symbol
+        self.overview_key = overview_key  # which will be overwritten in post init
         self.data_range = data_range if data_range else DataRange(interval=self.interval)
 
-    def __post_init__(self):
-        self.overview_key = VTSYMBOL_OVERVIEW.format(
-            interval=self.interval.value,
-            symbol=self.symbol,
-            exchange=self.exchange.value
-        )
+    # def __post_init__(self):
+    #     self.vt_symbol = VTSYMBOL.format(
+    #         symbol=self.symbol,
+    #         exchange=self.exchange.value,
+    #     )
 
     def add_range(self, start: datetime, end: datetime, inplace=True):
         """Add a time range and get any gaps"""
@@ -481,57 +483,54 @@ class BaseOverview:
 
 
 class BarOverview(BaseOverview):
-    VTSYMBOL_TEMPLATE = VTSYMBOL_KLINE
 
     def __init__(self, symbol: str = "", exchange: Exchange = None, interval: Interval = None, count: int = 0,
-                 data_range: DataRange = None, vt_symbol: str = "", overview_key: str = "",
+                 data_range: DataRange = None, vt_symbol: str = "", overview_key: str = ""
                  ):
         super().__init__(
             symbol=symbol,
             exchange=exchange,
             interval=interval,
             count=count,
-            vt_symbol=vt_symbol,
-            overview_key=overview_key,
+            # vt_symbol=vt_symbol,
             data_range=data_range,
+            overview_key=overview_key  # which will be overwritten in post init. put it here to avoid error
         )
 
-    def __post_init__(self):
-        self.vt_symbol = self.VTSYMBOL_TEMPLATE.format(
+    # def __post_init__(self):
+        # super().__post_init__()
+        self.overview_key = BAR_OVERVIEW_KEY.format(
+            interval=self.interval.value,
             symbol=self.symbol,
-            exchange=self.exchange.value,
+            exchange=self.exchange.value
         )
-        super().__post_init__()
 
 
 class TickOverview(BaseOverview):
-    VTSYMBOL_TEMPLATE = VTSYMBOL
 
     def __init__(self, symbol: str = "", exchange: Exchange = None, interval: Interval = None, count: int = 0,
-                 data_range: DataRange = None, vt_symbol: str = "", overview_key: str = "",
+                 data_range: DataRange = None, vt_symbol: str = "", overview_key: str = ""
                  ):
         super().__init__(
             symbol=symbol,
             exchange=exchange,
             interval=interval,
             count=count,
-            vt_symbol=vt_symbol,
-            overview_key=overview_key,
+            # vt_symbol=vt_symbol,
             data_range=data_range,
+            overview_key=overview_key  # which will be overwritten in post init. put it here to avoid error
         )
 
-    def __post_init__(self):
-        self.vt_symbol = self.VTSYMBOL_TEMPLATE.format(
+    # def __post_init__(self):
+    #     super().__post_init__()
+        self.overview_key = TICK_OVERVIEW_KEY.format(
+            interval=self.interval.value,
             symbol=self.symbol,
-            exchange=self.exchange.value,
+            exchange=self.exchange.value
         )
-        super().__post_init__()
 
 
 class FactorOverview(BaseOverview):
-    factor_name: str = ""
-    factor_key: str = ""
-    VTSYMBOL_TEMPLATE = VTSYMBOL_FACTORDATA
 
     def __init__(self, symbol: str = "", exchange: Exchange = None, interval: Interval = None, count: int = 0,
                  data_range: DataRange = None, vt_symbol: str = "", overview_key: str = "", factor_name: str = "",
@@ -542,23 +541,21 @@ class FactorOverview(BaseOverview):
             exchange=exchange,
             interval=interval,
             count=count,
-            vt_symbol=vt_symbol,
-            overview_key=overview_key,
+            # vt_symbol=vt_symbol,
             data_range=data_range,
+            overview_key=overview_key  # which will be overwritten in post init. put it here to avoid error
         )
         self.factor_name = factor_name
         self.factor_key = factor_key
 
-    def __post_init__(self):
-        self.vt_symbol = self.VTSYMBOL_TEMPLATE.format(
+    # def __post_init__(self):
+    #     super().__post_init__()
+        self.overview_key = FACTOR_OVERVIEW_KEY.format(
             interval=self.interval.value,
             symbol=self.symbol,
-            factorname=self.factor_name,
-            exchange=self.exchange.value
+            exchange=self.exchange.value,
+            factor_key=self.factor_key
         )
-        super().__post_init__()
-        # This logic was adjusted by Gemini for correctness.
-        self.overview_key = f"{self.overview_key}.{self.factor_name}"  # overwrite overview_key
 
 
 class OverviewEncoder(json.JSONEncoder):
@@ -643,7 +640,8 @@ class OverviewHandler:
     tick_overview_filepath = str(get_file_path(TICK_OVERVIEW_FILENAME))
     factor_overview_filepath = str(get_file_path(FACTOR_OVERVIEW_FILENAME))
 
-    def __init__(self, event_engine: Optional[EventEngine] = None, *args, **kwargs):
+    def __init__(self, event_engine: Optional[EventEngine] = None, atomic_config: AtomicWriterConfig = None, *args,
+                 **kwargs):
         """Initialize the overview manager"""
         # Register the save function to execute when the program exits
         atexit.register(self.save_all_overviews)
@@ -653,25 +651,32 @@ class OverviewHandler:
         signal.signal(
             signal.SIGTERM, lambda sig, frame: (self.save_all_overviews(), sys.exit(0))
         )
-        self.overview_dict: dict[str, BarOverview] = {}  # Stores metadata in memory
-        # init database overview file
-        # todo: collect them in one dict
-        self.bar_overview = self.load_overview(filename=self.bar_overview_filepath, overview_cls=BarOverview)
-        self.tick_overview = self.load_overview(filename=self.tick_overview_filepath, overview_cls=TickOverview)
-        self.factor_overview = self.load_overview(filename=self.factor_overview_filepath,
-                                                  overview_cls=FactorOverview)
 
+        # basic infos
+        self._event_engine = event_engine
         self.data_ranges: dict[str, dict[str, DataRange]] = {
             "bar": {},
             "factor": {},
             "tick": {}
         }
-        self._event_engine = event_engine
+        self.intervals: list[Interval] = [
+            Interval(interval) for interval in SETTINGS.get("gateway.intervals", [])
+        ]
+        self.minimum_freq: TimeFreq = min(
+            [DatetimeUtils.interval2freq(intvl) for intvl in self.intervals]
+        )
+        self.symbols = SETTINGS.get("gateway.symbols", [])
+        self.exchanges: list[Exchange] = [
+            Exchange(ex) for ex in SETTINGS.get("gateway.exchanges", [])
+        ]
+        self.vt_symbols: list[str] = [
+            f"{s}.{e.value}" for s, e in product(self.symbols, self.exchanges)
+        ]
+        self.mode: str = SYSTEM_MODE
 
         # vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
         # migrate from zc's code
-        config: AtomicWriterConfig = kwargs.get("atomic_writer_config")
-        self.config = config or AtomicWriterConfig(
+        self.config = atomic_config or AtomicWriterConfig(
             sync_mode="fsync",  # Ensure data is written to disk
             max_retries=2,  # Retry failed writes
             min_disk_space_mb=5,  # Require 5MB free space
@@ -683,6 +688,50 @@ class OverviewHandler:
         self.shutdown_handler = get_shutdown_handler()
         self.logger = logging.getLogger(__name__)
         # ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+        # init database overview file
+        # todo: collect them in one dict
+        self.overview_dict: dict[str, Type[BaseOverview]] = {}  # Stores metadata in memory
+        self.bar_overview = self.load_overview(filename=self.bar_overview_filepath, overview_cls=BarOverview)
+        self.tick_overview = self.load_overview(filename=self.tick_overview_filepath, overview_cls=TickOverview)
+        self.factor_overview = self.load_overview(filename=self.factor_overview_filepath,
+                                                  overview_cls=FactorOverview)
+        # init all overview dicts if empty
+        self.init_overviews()
+
+    def init_overviews(self):
+        """Initialize overview dictionaries if they are empty"""
+        if not self.bar_overview:
+            for symbol in self.symbols:
+                for exchange in self.exchanges:
+                    for interval in self.intervals:
+                        overview = BarOverview(
+                            symbol=symbol,
+                            exchange=exchange,
+                            interval=interval,
+                            count=0,
+                        )
+                        self.bar_overview[overview.overview_key] = overview
+            self.save_overview(type_='bar')
+            self.write_log("Initialized bar overview.",level=WARNING)
+
+        if not self.tick_overview:
+            for symbol in self.symbols:
+                for exchange in self.exchanges:
+                    for interval in self.intervals:
+                        overview = TickOverview(
+                            symbol=symbol,
+                            exchange=exchange,
+                            interval=interval,
+                            count=0,
+                        )
+                        self.tick_overview[overview.overview_key] = overview
+            self.save_overview(type_='tick')
+            self.write_log("Initialized tick overview.",level=WARNING)
+
+        if not self.factor_overview:
+            # factor overview is initialized when new factor is created
+            pass
 
     def load_overview(self, filename: str, overview_cls: TV_BaseOverview.__class__) -> dict[str, TV_BaseOverview]:
 
@@ -797,6 +846,7 @@ class OverviewHandler:
         Save all overview data to their respective files.
         This is called automatically on program exit.
         """
+        print("save_all_overviews",self.bar_overview)
         self.save_overview(type_='bar')
         self.save_overview(type_='factor')
         self.save_overview(type_='tick')
@@ -905,6 +955,14 @@ class OverviewHandler:
             except Exception as e:
                 print(f"Error processing request for {request.symbol}: {str(e)}")
                 continue
+
+    def write_log(self, msg: str, level: int = INFO) -> None:
+        """"""
+        if self.event_engine is None:
+            return
+        log: LogData = LogData(msg=msg, gateway_name='OverviewHandler', level=level)
+        event: Event = Event(EVENT_LOG, log)
+        self.event_engine.put(event)
 
 
 class BaseDatabase(ABC):
@@ -1088,4 +1146,4 @@ def get_overview_handler(
         cleanup_temp_files=True
     )
 
-    return OverviewHandler(event_engine=event_engine, config=config)
+    return OverviewHandler(event_engine=event_engine, atomic_config=config)
