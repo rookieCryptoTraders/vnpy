@@ -965,11 +965,36 @@ class OverviewHandler:
         self.event_engine.put(event)
 
 
+# Factory function to create enhanced handler with default configuration
+_overview_handler_instance: OverviewHandler | None = None
+def get_overview_handler(
+        sync_mode: Literal["fsync", "fdatasync", "none"] = "fsync",
+        max_retries: int = 2,
+        min_disk_space_mb: int = 5,
+        event_engine=None
+) -> OverviewHandler:
+    """
+    Get the singleton instance of the overview handler.
+    """
+    global _overview_handler_instance
+    if _overview_handler_instance:
+        return _overview_handler_instance
+
+    config = AtomicWriterConfig(
+        sync_mode=sync_mode,
+        max_retries=max_retries,
+        min_disk_space_mb=min_disk_space_mb,
+        validate_permissions=True,
+        cleanup_temp_files=True
+    )
+    _overview_handler_instance = OverviewHandler(event_engine=event_engine, atomic_config=config)
+    return _overview_handler_instance
+
 class BaseDatabase(ABC):
     """
     Abstract database class for connecting to different database.
     """
-    overview_handler: Union[OverviewHandler, Any] = field(default_factory=OverviewHandler)
+    overview_handler: Union[OverviewHandler, Any] = field(default_factory=get_overview_handler)
     database_name: str = ""
 
     @abstractmethod
@@ -1120,30 +1145,3 @@ def get_database(*args, **kwargs) -> BaseDatabase:
     return database
 
 
-# Factory function to create enhanced handler with default configuration
-def get_overview_handler(
-        sync_mode: Literal["fsync", "fdatasync", "none"] = "fsync",
-        max_retries: int = 2,
-        min_disk_space_mb: int = 5,
-        event_engine=None
-) -> OverviewHandler:
-    """
-    Create an enhanced overview handler with specified configuration.
-
-    Args:
-        sync_mode: File sync mode for atomic writes
-        max_retries: Maximum number of retry attempts
-        min_disk_space_mb: Minimum required disk space in MB
-
-    Returns:
-        OverviewHandler: Configured enhanced handler
-    """
-    config = AtomicWriterConfig(
-        sync_mode=sync_mode,
-        max_retries=max_retries,
-        min_disk_space_mb=min_disk_space_mb,
-        validate_permissions=True,
-        cleanup_temp_files=True
-    )
-
-    return OverviewHandler(event_engine=event_engine, atomic_config=config)
