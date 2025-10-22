@@ -109,68 +109,80 @@ def run_child():
         # have gaps, download data and fill bar gaps, insert bars into database
         gap_data_dict = data_manager_engine.download_bar_data_gaps(gap_dict)
 
-        for overview_key, data_list in gap_data_dict.items():
-            # print(f"main Processing overview key: {overview_key}, data count: {len(data_list)}")
-            info = match_format_string(BAR_OVERVIEW_KEY, overview_key)
-            for d in data_list:
-                bar = BarData(
-                    gateway_name=gateway.gateway_name,
-                    symbol=info['symbol'],
-                    exchange=Exchange(info['exchange']),
-                    interval=Interval(info['interval']),
-                    datetime=d['datetime'],
-                    volume=d['volume'],
-                    open_price=d['open'],
-                    high_price=d['high'],
-                    low_price=d['low'],
-                    close_price=d['close'],
-                    quote_asset_volume=d['quote_asset_volume'],
-                    number_of_trades=d['number_of_trades'],
-                    taker_buy_base_asset_volume=d['taker_buy_base_asset_volume'],
-                    taker_buy_quote_asset_volume=d['taker_buy_quote_asset_volume'],
-                )
-                # todo: improve data insertion
-                gateway.on_bar_filling(bar)  # todo: change belonging to data_manager_engine
-        time.sleep(3)
+        for overview_key, data_dict in gap_data_dict.items():
+            time_ranges = gap_dict[overview_key]
+            for time_range in time_ranges:
+                data_list = data_dict.get(time_range.start)
+
+                # pre-load historical memory for factor maker
+                lookback=max(factor_maker_engine.max_memory_length_bar,
+                factor_maker_engine.global_lookback_period,
+                             max(list(factor_maker_engine.factor_lookback_periods.values())))
+                start_dt = time_range.start - datetime.timedelta(minutes=lookback)
+                end_dt = time_range.start
+                factor_maker_engine.init_memory_data(start_dt=start_dt, end_dt=end_dt)
+
+                # trigger calculation of factors for these bars
+                info = match_format_string(BAR_OVERVIEW_KEY, overview_key)
+                for d in data_list:
+                    bar = BarData(
+                        gateway_name=gateway.gateway_name,
+                        symbol=info['symbol'],
+                        exchange=Exchange(info['exchange']),
+                        interval=Interval(info['interval']),
+                        datetime=d['datetime'],
+                        volume=d['volume'],
+                        open_price=d['open'],
+                        high_price=d['high'],
+                        low_price=d['low'],
+                        close_price=d['close'],
+                        quote_asset_volume=d['quote_asset_volume'],
+                        number_of_trades=d['number_of_trades'],
+                        taker_buy_base_asset_volume=d['taker_buy_base_asset_volume'],
+                        taker_buy_quote_asset_volume=d['taker_buy_quote_asset_volume'],
+                    )
+                    # todo: improve data insertion
+                    # gateway.on_bar_filling(bar)  # todo: change belonging to data_manager_engine
+                    gateway.on_bar(bar)
+        time.sleep(5)
         # todo:
         #  1. load <window>-1 bars
         #  2. request <window> bars to calculate <window> factors
         #  3. request <missing> bars to calculate <missing> factors
         # 1. load bar data from database, currently factor memory is empty, so we need to do additional calculations
-        start_dt = datetime.datetime.now()
-        for overview_key, time_ranges in gap_dict.items():
-            tmp = min([time_range.start for time_range in time_ranges])
-            if tmp < start_dt:
-                start_dt = tmp
-        params = {
-            "begin": start_dt - datetime.timedelta(minutes=1),  # start_dt is the start of filling gap factors
-            "end": start_dt - datetime.timedelta(minutes=1),  # start_dt is the start of filling gap factors
-            "interval": Interval.MINUTE,
-            "vt_symbol_list": main_engine.vt_symbols,
-        }
-        factor_maker_engine.send_load_bar_request(type_='period', param=params)
-        time.sleep(3)
-        for overview_key, data_list in gap_data_dict.items():
-            # print(f"main Processing overview key: {overview_key}, data count: {len(data_list)}")
-            info = match_format_string(BAR_OVERVIEW_KEY, overview_key)
-            for d in data_list:
-                bar = BarData(
-                    gateway_name=gateway.gateway_name,
-                    symbol=info['symbol'],
-                    exchange=Exchange(info['exchange']),
-                    interval=Interval(info['interval']),
-                    datetime=d['datetime'],
-                    volume=d['volume'],
-                    open_price=d['open'],
-                    high_price=d['high'],
-                    low_price=d['low'],
-                    close_price=d['close'],
-                    quote_asset_volume=d['quote_asset_volume'],
-                    number_of_trades=d['number_of_trades'],
-                    taker_buy_base_asset_volume=d['taker_buy_base_asset_volume'],
-                    taker_buy_quote_asset_volume=d['taker_buy_quote_asset_volume'],
-                )
-                gateway.on_bar(bar)  # todo: change belonging to data_manager_engine
+        # start_dt = datetime.datetime.now()
+        # for overview_key, time_ranges in gap_dict.items():
+        #     tmp = min([time_range.start for time_range in time_ranges])
+        #     if tmp < start_dt:
+        #         start_dt = tmp
+        # params = {
+        #     "begin": start_dt - datetime.timedelta(minutes=1),  # start_dt is the start of filling gap factors
+        #     "end": start_dt - datetime.timedelta(minutes=1),  # start_dt is the start of filling gap factors
+        #     "interval": Interval.MINUTE,
+        #     "vt_symbol_list": main_engine.vt_symbols,
+        # }
+        # time.sleep(3)
+        # for overview_key, data_list in gap_data_dict.items():
+        #     # print(f"main Processing overview key: {overview_key}, data count: {len(data_list)}")
+        #     info = match_format_string(BAR_OVERVIEW_KEY, overview_key)
+        #     for d in data_list:
+        #         bar = BarData(
+        #             gateway_name=gateway.gateway_name,
+        #             symbol=info['symbol'],
+        #             exchange=Exchange(info['exchange']),
+        #             interval=Interval(info['interval']),
+        #             datetime=d['datetime'],
+        #             volume=d['volume'],
+        #             open_price=d['open'],
+        #             high_price=d['high'],
+        #             low_price=d['low'],
+        #             close_price=d['close'],
+        #             quote_asset_volume=d['quote_asset_volume'],
+        #             number_of_trades=d['number_of_trades'],
+        #             taker_buy_base_asset_volume=d['taker_buy_base_asset_volume'],
+        #             taker_buy_quote_asset_volume=d['taker_buy_quote_asset_volume'],
+        #         )
+        #         gateway.on_bar(bar)  # todo: change belonging to data_manager_engine
 
         # factor_maker_engine.send_load_factor_request(type_='gap', param=gap_dict)
 

@@ -1103,11 +1103,11 @@ class BaseDatabase(ABC):
 
 
 # 1. Initialize the global database variable to None at the module level
-database: BaseDatabase | None = None
+database: BaseDatabase | None | Type[BaseDatabase] = None
 TV_BaseOverview = TypeVar("TV_BaseOverview", bound=BaseOverview)  # TV means TypeVar
 
 
-def get_database(*args, **kwargs) -> BaseDatabase:
+def get_database(*args, **kwargs) -> Type[BaseDatabase]:
     """
     Gets the singleton database instance for the application.
 

@@ -6,7 +6,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime
 from logging import INFO, ERROR
-from typing import List, Optional, Union, TYPE_CHECKING, Literal
+from typing import List, Optional, Union, TYPE_CHECKING, Literal, Any
 
 import polars as pl
 
@@ -64,7 +64,7 @@ class DataManagerEngine(BaseEngine):
         if isinstance(data, list) and isinstance(data[0], dict):
             res = []
             for d in data:
-                tmp=self.database.load_bar_data(**d)
+                tmp = self.database.load_bar_data(**d)
                 if tmp is not None:
                     res.append(tmp)
                 else:
@@ -397,23 +397,23 @@ class DataManagerEngine(BaseEngine):
     def download_missing_bars(self, requests: HistoryRequest) -> Union[TV_BaseOverview, None]:
         return None
 
-    def download_bar_data_gaps(self, gap_dict: dict[str, list[TimeRange]]):
+    def download_bar_data_gaps(self, gap_dict: dict[str, list[TimeRange]]) -> defaultdict[Any, dict]:
         """
         Download bar data for gaps in the overview.
         """
-        res = defaultdict(list)
+        res = defaultdict(dict)
         for overview_key, time_ranges in gap_dict.items():
             start_dt = min([time_range.start for time_range in time_ranges])
             end_dt = max([time_range.end for time_range in time_ranges])
             self.write_log(f"download_bar_data_gaps: {overview_key}, {start_dt} - {end_dt}")
             info = match_format_string(BAR_OVERVIEW_KEY, overview_key)
             for time_range in time_ranges:
-                res[overview_key].extend(self.download_bar_data(symbol=info['symbol'],
-                                                                exchange=Exchange(info['exchange']),
-                                                                interval=Interval(info['interval']),
-                                                                start=time_range.start,
-                                                                end=time_range.end,
-                                                                save=False))
+                res[overview_key][time_range.start] = self.download_bar_data(symbol=info['symbol'],
+                                                                             exchange=Exchange(info['exchange']),
+                                                                             interval=Interval(info['interval']),
+                                                                             start=time_range.start,
+                                                                             end=time_range.end,
+                                                                             save=False)
         return res
 
     def write_log(self, msg: str, level=INFO) -> None:
