@@ -11,6 +11,7 @@ import multiprocessing
 import time
 import traceback
 from time import sleep
+from logging import WARNING
 
 from vnpy.app.data_recorder import DataRecorderApp
 from vnpy.app.vnpy_datamanager import DataManagerApp, DataManagerEngine
@@ -99,9 +100,11 @@ def run_child():
 
     # makeup missing data (download data, save bars, calculate factors, save factors)
     for i in range(3):  # allow 3 attempts to download data
+        if i > 0:
+            data_manager_engine.write_log(f"Retrying data gap filling, attempt {i + 1}/3...", level=WARNING)
         # gaps to requests
         gap_dict = data_recorder_engine.database_manager.get_gaps(end_time=datetime.datetime.now(),
-                                                                  start_time=datetime.datetime(2025, 10, 13, 12, 30))
+                                                                  start_time=datetime.datetime(2025, 10, 23, 12, 30))
         # no gap, break
         if all(len(gap) == 0 for gap in gap_dict.values()):
             break
@@ -110,26 +113,21 @@ def run_child():
         gap_data_dict = data_manager_engine.download_bar_data_gaps(gap_dict)
 
         for overview_key, data_dict in gap_data_dict.items():
-            time_ranges = gap_dict[overview_key]
-            for time_range in time_ranges:
-                data_list = data_dict.get(time_range.start)
+            for period_start, data in data_dict.items():
 
-                # pre-load historical memory for factor maker
-                lookback=max(factor_maker_engine.max_memory_length_bar,
-                factor_maker_engine.global_lookback_period,
-                             max(list(factor_maker_engine.factor_lookback_periods.values())))
-                start_dt = time_range.start - datetime.timedelta(minutes=lookback)
-                end_dt = time_range.start
-                factor_maker_engine.init_memory_data(start_dt=start_dt, end_dt=end_dt)
+                time_range = data['time_range']
+                symbol = data['symbol']
+                exchange = data['exchange']
+                interval = data['interval']
+                data_list = data['data']
 
                 # trigger calculation of factors for these bars
-                info = match_format_string(BAR_OVERVIEW_KEY, overview_key)
                 for d in data_list:
                     bar = BarData(
                         gateway_name=gateway.gateway_name,
-                        symbol=info['symbol'],
-                        exchange=Exchange(info['exchange']),
-                        interval=Interval(info['interval']),
+                        symbol=symbol,
+                        exchange=exchange,
+                        interval=interval,
                         datetime=d['datetime'],
                         volume=d['volume'],
                         open_price=d['open'],
@@ -142,26 +140,24 @@ def run_child():
                         taker_buy_quote_asset_volume=d['taker_buy_quote_asset_volume'],
                     )
                     # todo: improve data insertion
-                    # gateway.on_bar_filling(bar)  # todo: change belonging to data_manager_engine
-                    gateway.on_bar(bar)
+                    gateway.on_bar_filling(bar)  # todo: change belonging to data_manager_engine
+        data_manager_engine.write_log(
+            "Finished inserting missing bars into database, waiting for factor calculation...")
         time.sleep(5)
         # todo:
         #  1. load <window>-1 bars
         #  2. request <window> bars to calculate <window> factors
         #  3. request <missing> bars to calculate <missing> factors
         # 1. load bar data from database, currently factor memory is empty, so we need to do additional calculations
-        # start_dt = datetime.datetime.now()
-        # for overview_key, time_ranges in gap_dict.items():
-        #     tmp = min([time_range.start for time_range in time_ranges])
-        #     if tmp < start_dt:
-        #         start_dt = tmp
-        # params = {
-        #     "begin": start_dt - datetime.timedelta(minutes=1),  # start_dt is the start of filling gap factors
-        #     "end": start_dt - datetime.timedelta(minutes=1),  # start_dt is the start of filling gap factors
-        #     "interval": Interval.MINUTE,
-        #     "vt_symbol_list": main_engine.vt_symbols,
-        # }
-        # time.sleep(3)
+        # for overview_key,time_ranges in gap_dict.items():
+        #     for time_range in time_ranges:
+        #         lookback = max(factor_maker_engine.max_memory_length_bar,
+        #                        factor_maker_engine.global_lookback_period,
+        #                        max(list(factor_maker_engine.factor_lookback_periods.values())))
+        #         start_dt = time_range.start - datetime.timedelta(minutes=lookback)
+        #         end_dt = time_range.start
+        #         factor_maker_engine.init_memory_data(start_dt=start_dt, end_dt=end_dt)
+        #         time.sleep(3)
         # for overview_key, data_list in gap_data_dict.items():
         #     # print(f"main Processing overview key: {overview_key}, data count: {len(data_list)}")
         #     info = match_format_string(BAR_OVERVIEW_KEY, overview_key)
@@ -183,12 +179,16 @@ def run_child():
         #             taker_buy_quote_asset_volume=d['taker_buy_quote_asset_volume'],
         #         )
         #         gateway.on_bar(bar)  # todo: change belonging to data_manager_engine
+        for overview_key, data_dict in gap_data_dict.items():
+            for period_start, data in data_dict.items():
 
-        # factor_maker_engine.send_load_factor_request(type_='gap', param=gap_dict)
+                time_range = data['time_range']
+
+                factor_maker_engine.fill_historical_factors(request_data=gap_dict)
 
         # filling missing factor
         # gateway.on_factor_filling(gap_dict)
-        break
+        time.sleep(5)
 
     # Start live data subscription
     # main_engine.connect(gateway_settings, "MIMIC")

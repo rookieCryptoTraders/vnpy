@@ -26,7 +26,7 @@ from vnpy.config import BAR_OVERVIEW_FILENAME, FACTOR_OVERVIEW_FILENAME, TICK_OV
 from vnpy.trader.constant import Exchange, Interval
 from vnpy.trader.engine import Event, EventEngine
 from vnpy.trader.event import EVENT_BAR, EVENT_LOG
-from vnpy.trader.object import HistoryRequest, BarData, TickData,LogData
+from vnpy.trader.object import HistoryRequest, BarData, TickData,LogData,FactorData
 from vnpy.trader.setting import SETTINGS
 from vnpy.trader.utility import get_file_path, load_json
 from vnpy.utils.atomic_writer_config import AtomicWriterConfig, ConfiguredAtomicWriter
@@ -1012,6 +1012,13 @@ class BaseDatabase(ABC):
         pass
 
     @abstractmethod
+    def save_factor_data(self, data: list[FactorData], stream: bool = False) -> bool:
+        """
+        Save factor data into database.
+        """
+        pass
+
+    @abstractmethod
     def load_bar_data(
             self,
             symbol: str,
@@ -1039,6 +1046,21 @@ class BaseDatabase(ABC):
         pass
 
     @abstractmethod
+    def load_factor_data(
+            self,
+            symbol: str,
+            exchange: Exchange,
+            start: datetime,
+            end: datetime,
+            interval: Interval,
+            factor_list: list[str]
+    ) -> list[FactorData] | Any:
+        """
+        Load factor data from database.
+        """
+        pass
+
+    @abstractmethod
     def delete_bar_data(
             self,
             symbol: str,
@@ -1058,6 +1080,19 @@ class BaseDatabase(ABC):
     ) -> int:
         """
         Delete all tick data with given symbol + exchange.
+        """
+        pass
+
+    @abstractmethod
+    def delete_factor_data(
+            self,
+            symbol: str,
+            exchange: Exchange,
+            interval: Interval,
+            factor_list: list[str]
+    ) -> int:
+        """
+        Delete all factor data with given symbol + exchange.
         """
         pass
 

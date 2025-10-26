@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import csv
 import time
 from collections import defaultdict
@@ -14,7 +15,7 @@ from vnpy.config import match_format_string
 from vnpy.event import Event, EventEngine
 from vnpy.trader.constant import Interval, Exchange
 from vnpy.trader.database import BaseDatabase, BarOverview, DB_TZ, TV_BaseOverview, TickOverview, \
-    FactorOverview, TimeRange, BAR_OVERVIEW_KEY
+    FactorOverview, TimeRange, BAR_OVERVIEW_KEY, DataRange
 from vnpy.trader.datafeed import BaseDatafeed, get_datafeed
 from vnpy.trader.engine import BaseEngine, MainEngine
 from vnpy.trader.event import EVENT_LOG, EVENT_BAR_FILLING
@@ -401,19 +402,37 @@ class DataManagerEngine(BaseEngine):
         """
         Download bar data for gaps in the overview.
         """
+        assert len(self.main_engine.intervals) == 1, "download_bar_data_gaps only support single interval now"
+        reformated_gap_dict = {}
         res = defaultdict(dict)
+        # merge gaps for bars and factors
         for overview_key, time_ranges in gap_dict.items():
-            start_dt = min([time_range.start for time_range in time_ranges])
-            end_dt = max([time_range.end for time_range in time_ranges])
-            self.write_log(f"download_bar_data_gaps: {overview_key}, {start_dt} - {end_dt}")
-            info = match_format_string(BAR_OVERVIEW_KEY, overview_key)
+
+            if overview_key.startswith("overview_factor"):
+                overview_key = copy.deepcopy(overview_key.split("|")[0].replace("factor", "bar"))
             for time_range in time_ranges:
-                res[overview_key][time_range.start] = self.download_bar_data(symbol=info['symbol'],
-                                                                             exchange=Exchange(info['exchange']),
-                                                                             interval=Interval(info['interval']),
-                                                                             start=time_range.start,
-                                                                             end=time_range.end,
-                                                                             save=False)
+                if overview_key not in reformated_gap_dict:
+                    reformated_gap_dict[overview_key] = DataRange(interval=self.main_engine.intervals[0])
+                reformated_gap_dict[overview_key].add_range(timerange=time_range, method='union')
+
+        # download data for each gap
+        for overview_key, data_range in reformated_gap_dict.items():
+            info = match_format_string(BAR_OVERVIEW_KEY, overview_key)
+            for time_range in data_range.ranges:
+                start_dt = time_range.start
+                end_dt = time_range.end
+                self.write_log(f"download_bar_data_gaps: {overview_key}, {start_dt} - {end_dt}")
+                res[overview_key][time_range.start] = {"time_range": time_range,
+                                                       "symbol": info['symbol'],
+                                                       "exchange": Exchange(info['exchange']),
+                                                       "interval": Interval(info['interval']),
+                                                       "data": self.download_bar_data(
+                                                           symbol=info['symbol'],
+                                                           exchange=Exchange(info['exchange']),
+                                                           interval=Interval(info['interval']),
+                                                           start=time_range.start,
+                                                           end=time_range.end,
+                                                           save=False)}
         return res
 
     def write_log(self, msg: str, level=INFO) -> None:

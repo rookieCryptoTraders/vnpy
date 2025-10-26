@@ -28,13 +28,14 @@ FILENAME_FACTOR = "{factorname}_{interval}_{date}.csv"  # factor, interval, date
 FILENAME_FACTOR_CONCAT = "{factorname}_{interval}_{start_date}_{end_date}.csv"  # factor, interval, start_date, end_date
 
 # vtsymbol templates.
-VTSYMBOL= "{symbol}.{exchange}"  # symbol, exchange
+VTSYMBOL = "{symbol}.{exchange}"  # symbol, exchange
 # for keys. such as the first part (the str before @) of the factor key
 VTSYMBOL_KLINE = "kline_{interval}_{symbol}.{exchange}"  # interval, symbol, exchange
 VTSYMBOL_TICK = "tick_{interval}_{symbol}.{exchange}"  # interval, symbol, exchange
 # for factor_key. all symbols and exchanges needs to be calculated, so we don't care if they will be displayed in the key.
 # forms factor_key and is displayed as column names in database
 VTSYMBOL_FACTOR = "factor_{interval}_{factorname}"
+FACTOR_KEY_TEMPLATE = "{factorname}@{version}|{config_hash}"
 # for datas. vnpy regards it as the combination of `symbol` and `exchange`, and rsplit it by '.'.
 VTSYMBOL_BARDATA = "{symbol}.{exchange}"
 VTSYMBOL_TICKDATA = "{symbol}.{exchange}"
@@ -57,7 +58,6 @@ FACTOR_OVERVIEW_FILENAME = "overview_factor.json"
 BAR_OVERVIEW_KEY = "overview_bar_{interval}_{symbol}.{exchange}"
 TICK_OVERVIEW_KEY = "overview_tick_{interval}_{symbol}.{exchange}"
 FACTOR_OVERVIEW_KEY = "overview_factor_{interval}_{symbol}.{exchange}|{factor_key}"
-
 
 
 def match_format_string(format_str, s):
