@@ -35,7 +35,7 @@ VTSYMBOL_TICK = "tick_{interval}_{symbol}.{exchange}"  # interval, symbol, excha
 # for factor_key. all symbols and exchanges needs to be calculated, so we don't care if they will be displayed in the key.
 # forms factor_key and is displayed as column names in database
 VTSYMBOL_FACTOR = "factor_{interval}_{factorname}"
-FACTOR_KEY_TEMPLATE = "{factorname}@{version}|{config_hash}"
+FACTOR_KEY_TEMPLATE = "{factorname}@{version}#{config_hash}"
 # for datas. vnpy regards it as the combination of `symbol` and `exchange`, and rsplit it by '.'.
 VTSYMBOL_BARDATA = "{symbol}.{exchange}"
 VTSYMBOL_TICKDATA = "{symbol}.{exchange}"
@@ -83,7 +83,7 @@ def match_format_string(format_str, s):
 
     # Now replace keyword arguments with named groups matching them. We also escape between keyword
     # arguments so we support meta-characters there. Re-join tokens to form our regexp pattern
-    tokens[1::2] = map(u'(?P<{}>.*)'.format, keywords)
+    tokens[1::2] = list(map(u'(?P<{}>.*?)'.format, keywords[:-1]))+[u'(?P<{}>.*)'.format(keywords[-1])]
     tokens[0::2] = map(re.escape, tokens[0::2])
     pattern = ''.join(tokens)
 

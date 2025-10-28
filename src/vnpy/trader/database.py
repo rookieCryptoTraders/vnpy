@@ -1021,12 +1021,14 @@ class BaseDatabase(ABC):
     @abstractmethod
     def load_bar_data(
             self,
-            symbol: str,
-            exchange: Exchange,
-            interval: Interval,
-            start: datetime,
-            end: datetime
-    ) -> list[BarData]:
+            symbol: str | list[str] = None,
+            exchange: Exchange | list[Exchange] = None,
+            interval: Interval = None,
+            start: datetime = None,
+            end: datetime = None,
+            *args,
+            **kwargs
+    ) -> list[BarData] | Any:
         """
         Load bar data from database.
         """
@@ -1142,7 +1144,7 @@ database: BaseDatabase | None | Type[BaseDatabase] = None
 TV_BaseOverview = TypeVar("TV_BaseOverview", bound=BaseOverview)  # TV means TypeVar
 
 
-def get_database(*args, **kwargs) -> Type[BaseDatabase]:
+def get_database(*args, **kwargs) -> Type[BaseDatabase] | BaseDatabase:
     """
     Gets the singleton database instance for the application.
 
