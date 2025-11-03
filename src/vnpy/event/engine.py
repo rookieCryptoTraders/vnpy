@@ -143,3 +143,7 @@ class EventEngine:
         """
         if handler in self._general_handlers:
             self._general_handlers.remove(handler)
+
+    @property
+    def queue(self):
+        return self._queue

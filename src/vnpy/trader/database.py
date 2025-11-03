@@ -893,11 +893,10 @@ class OverviewHandler:
         if end_time is None:
             end_time = datetime.now()
 
-        # The fixme is addressed by the logic: if overview_dict is empty, exist_dict will be empty, and no gaps are returned, which is correct.
         # get all existing data ranges and store them together
         exist_dict = {}
         for type_ in ["bar", "factor"]:
-            overview_dict = self.get_overview_dict(type_=type_)
+            overview_dict = self.get_overview_dict(type_=type_) # this function will create an initialized overview dict even if overview_dict is empty
             for vt_symbol, overview in overview_dict.items():
                 if exist_dict.get(overview.overview_key) is None:
                     exist_dict[overview.overview_key] = DataRange(
