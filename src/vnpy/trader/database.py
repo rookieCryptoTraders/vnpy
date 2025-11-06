@@ -380,7 +380,7 @@ class DataRange:
 
         temp_ranges.sort(key=lambda x: (x.start, x.end))
 
-        # Merge overlapping ranges to handle cases where start/end markers overlap with existing data.
+        # Merge overlapping exists ranges to handle cases where start/end markers overlap with existing data.
         merged = []
         if temp_ranges:
             current_merged = temp_ranges[0]

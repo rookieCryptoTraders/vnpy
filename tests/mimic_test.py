@@ -92,7 +92,6 @@ def run_child():
 
     # init gateway
     gateway = main_engine.add_gateway(MimicGateway, "MIMIC")
-    # main_engine.connect(gateway_settings, "MIMIC")
 
     # download data using vnpy_datamanager if data missed
     data_manager_engine: DataManagerEngine = main_engine.add_app(DataManagerApp,
@@ -106,7 +105,7 @@ def run_child():
             data_manager_engine.write_log(f"Retrying data gap filling, attempt {i + 1}/3...", level=WARNING)
         # gaps to requests
         gap_dict = data_recorder_engine.database_manager.get_gaps(end_time=datetime.datetime.now(),
-                                                                  start_time=datetime.datetime(2025, 11, 2, 12, 30))
+                                                                  start_time=datetime.datetime(2025, 11, 5, 10, 30))
         # no gap, break
         if all(len(gap) == 0 for gap in gap_dict.values()):
             break
@@ -143,7 +142,7 @@ def run_child():
                     # todo: improve data insertion
                     gateway.on_bar_filling(bar)  # todo: change belonging to data_manager_engine
 
-        for i in range(20):  # wait for all data to be processed
+        for i in range(60):  # wait for all data to be processed
             data_recorder_engine.write_log(f"processing bar data queues... {data_recorder_engine.queue.qsize()} left")
             time.sleep(3)
             if event_engine.queue.empty() and data_recorder_engine.queue.empty():
@@ -152,7 +151,7 @@ def run_child():
                 raise InsertError("Slow insertion. Not all datas have been saved")
 
         fill_period = factor_maker_engine.fill_historical_factors(request_data=gap_dict)
-        for i in range(20):  # wait for all data to be processed
+        for i in range(60):  # wait for all data to be processed
             data_recorder_engine.write_log(
                 f"processing factor data queues... {data_recorder_engine.queue.qsize()} left")
             time.sleep(3)
@@ -172,8 +171,8 @@ def run_child():
                 break
 
     # Start live data subscription
-    # main_engine.connect(gateway_settings, "MIMIC")
-    # main_engine.subscribe_all(gateway_name='MIMIC')
+    main_engine.connect(gateway_settings, "MIMIC")
+    main_engine.subscribe_all(gateway_name='MIMIC')
 
 
 def run_parent():
