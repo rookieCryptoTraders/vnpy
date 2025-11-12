@@ -13,6 +13,7 @@ import traceback
 from datetime import timedelta
 from time import sleep
 from logging import WARNING
+import polars as pl
 
 from vnpy.app.data_recorder import DataRecorderApp, DataRecorderEngine
 from vnpy.app.vnpy_datamanager import DataManagerApp, DataManagerEngine
@@ -78,7 +79,7 @@ def run_child():
 
     # start factor engine
     factor_maker_engine: FactorEngine = main_engine.add_app(FactorMakerApp, registry=FactorRegistry())
-    factor_maker_engine.init_engine()
+    factor_maker_engine.init_engine(use_talib=False)
     main_engine.write_log(f"Started [{factor_maker_engine.__class__.__name__}]")
 
     # start data recorder
@@ -105,7 +106,7 @@ def run_child():
             data_manager_engine.write_log(f"Retrying data gap filling, attempt {i + 1}/3...", level=WARNING)
         # gaps to requests
         gap_dict = data_recorder_engine.database_manager.get_gaps(end_time=datetime.datetime.now(),
-                                                                  start_time=datetime.datetime(2025, 11, 5, 10, 30))
+                                                                  start_time=datetime.datetime(2025, 11, 12, 5, 30))
         # no gap, break
         if all(len(gap) == 0 for gap in gap_dict.values()):
             break
@@ -113,34 +114,22 @@ def run_child():
         # have gaps, download data and fill bar gaps, insert bars into database
         gap_data_dict = data_manager_engine.download_bar_data_gaps(gap_dict)
 
+        # insert bar data using dataframes
         for overview_key, data_dict in gap_data_dict.items():
             for period_start, data in data_dict.items():
-                time_range = data['time_range']
-                symbol = data['symbol']
-                exchange = data['exchange']
-                interval = data['interval']
-                data_list = data['data']
-
-                # trigger calculation of factors for these bars
-                for d in data_list:
-                    bar = BarData(
-                        gateway_name=gateway.gateway_name,
-                        symbol=symbol,
-                        exchange=exchange,
-                        interval=interval,
-                        datetime=d['datetime'],
-                        volume=d['volume'],
-                        open_price=d['open'],
-                        high_price=d['high'],
-                        low_price=d['low'],
-                        close_price=d['close'],
-                        quote_asset_volume=d['quote_asset_volume'],
-                        number_of_trades=d['number_of_trades'],
-                        taker_buy_base_asset_volume=d['taker_buy_base_asset_volume'],
-                        taker_buy_quote_asset_volume=d['taker_buy_quote_asset_volume'],
-                    )
-                    # todo: improve data insertion
-                    gateway.on_bar_filling(bar)  # todo: change belonging to data_manager_engine
+                data_frame = pl.DataFrame(data['data'])
+                data_frame = data_frame.with_columns(
+                    pl.lit(data['symbol']).alias("symbol"),
+                    pl.lit(data['exchange']).alias("exchange"),
+                    pl.lit(data['interval']).alias("interval"),
+                )
+                data_frame = data_frame.rename({
+                    "open":"open_price",
+                    "high":"high_price",
+                    "low":"low_price",
+                    "close":"close_price",
+                })
+                gateway.on_bar_filling(data_frame)
 
         for i in range(60):  # wait for all data to be processed
             data_recorder_engine.write_log(f"processing bar data queues... {data_recorder_engine.queue.qsize()} left")

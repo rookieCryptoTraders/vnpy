@@ -357,6 +357,9 @@ class DataRecorderEngine(BaseEngine):
                     #     self.write_log(f"Invalid bar data in list for symbol {vt_symbol}. Skipping.", level=ERROR)
                     #     continue
                     self.buffer_bar[vt_symbol].extend(bars)
+            elif isinstance(data, pl.DataFrame):
+                assert force_save, "DataFrame input only supported for force_save=True"
+                self.buffer_bar["polars_dataframe"].append(data)
             else:
                 self.buffer_bar[data.vt_symbol].append(data)
             to_remove = []
@@ -414,12 +417,24 @@ class DataRecorderEngine(BaseEngine):
     def _save_bar_buffer(self, bar_list: list[BarData], stream=True):
         """Saves a list of bars from the buffer to the database."""
         sample_data = bar_list[0]
-        self.database_manager.save_bar_data(
-            bar_list,
-            interval=sample_data.interval,
-            exchange=sample_data.exchange,
-            stream=stream
-        )
+        if isinstance(sample_data, pl.DataFrame):
+            assert len(bar_list) == 1
+            assert sample_data.get_column("interval").n_unique() == 1, "All bars in DataFrame must have same interval."
+            interval = Interval(sample_data.get_column("interval")[0])
+            sample_data=sample_data.drop(["interval"])
+            # Directly save DataFrame
+            self.database_manager.save_bar_data(
+                sample_data,
+                interval=interval,
+                stream=stream
+            )
+        else:
+            self.database_manager.save_bar_data(
+                bar_list,
+                interval=sample_data.interval,
+                exchange=sample_data.exchange,
+                stream=stream
+            )
 
     def _process_factor_dict(self, data: dict):
         """
