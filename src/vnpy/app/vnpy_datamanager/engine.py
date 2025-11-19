@@ -352,24 +352,6 @@ class DataManagerEngine(BaseEngine):
 
         return 0
 
-    def download_bar_data_20250629(
-            self,
-            requests: list[HistoryRequest],
-            gateway_name: str = "",
-    ) -> Union[int, List[BarData]]:
-        """
-        Query bar data from datafeed.
-        """
-
-        bar_data_list: List[BarData] = []
-        for req in requests:
-            data: List[BarData] = self.main_engine.query_history(
-                req, gateway_name
-            )
-            bar_data_list.extend(data)
-
-        return bar_data_list
-
     def download_tick_data(
             self,
             symbol: str,
@@ -398,7 +380,7 @@ class DataManagerEngine(BaseEngine):
     def download_missing_bars(self, requests: HistoryRequest) -> Union[TV_BaseOverview, None]:
         return None
 
-    def download_bar_data_gaps(self, gap_dict: dict[str, list[TimeRange]]) -> defaultdict[Any, dict]:
+    def download_bar_data_gaps(self, gap_dict: dict[str, list[TimeRange]]) -> dict[Any, dict]:
         """
         Download bar data for gaps in the overview.
         """
@@ -433,7 +415,7 @@ class DataManagerEngine(BaseEngine):
                                                            start=time_range.start,
                                                            end=time_range.end,
                                                            save=False)}
-        return res
+        return dict(res)
 
     def write_log(self, msg: str, level=INFO) -> None:
         """

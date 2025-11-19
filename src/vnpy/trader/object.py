@@ -100,6 +100,13 @@ class FactorData(BaseData):
 
     value: float = None
 
+    primary_key_schema = {
+        "symbol": str,
+        "exchange": Exchange,
+        "datetime": Datetime,
+        "interval": Interval,
+    }
+
     VTSYMBOL_TEMPLATE = VTSYMBOL_FACTORDATA
 
     def __post_init__(self) -> None:
@@ -117,8 +124,8 @@ class BarData(BaseData):
     symbol: str = field(default=None, init=True)
     exchange: Exchange = field(default=None, init=True)
     datetime: Datetime = field(default=None, init=True)
-
     interval: Interval = None
+
     volume: float = 0  # quoted asset volume (Usually, it is denominated in USDT, so this volume is the volume denominated in USDT)
     turnover: float = 0
     open_interest: float = 0
@@ -132,6 +139,26 @@ class BarData(BaseData):
     taker_buy_quote_asset_volume: float = 0
 
     VTSYMBOL_TEMPLATE = VTSYMBOL_BARDATA
+
+    primary_key_schema = {
+        "symbol": str,
+        "exchange": Exchange,
+        "datetime": Datetime,
+        "interval": Interval,
+    }
+    data_schema = {
+        "open_price": float,
+        "high_price": float,
+        "low_price": float,
+        "close_price": float,
+        "volume": float,
+        "turnover": float,
+        "open_interest": float,
+        "quote_asset_volume": float,
+        "number_of_trades": float,
+        "taker_buy_base_asset_volume": float,
+        "taker_buy_quote_asset_volume": float,
+    }
 
     def __post_init__(self) -> None:
         """"""

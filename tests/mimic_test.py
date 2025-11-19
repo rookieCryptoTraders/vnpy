@@ -64,26 +64,15 @@ def run_child():
     main_engine = MainEngine(event_engine)
     main_engine.write_log("Main engine created successfully")
     __PROJECT_SETTING_DIR__ = main_engine.TEMP_DIR
-    print(__PROJECT_SETTING_DIR__)
-
-    gateway_settings = {
-        "symbols": [],
-        "simulation_interval_seconds": 4.0,  # Bars every second for each symbol
-        "open_price_range_min": 100,
-        "open_price_range_max": 105,
-        "price_change_range_min": -1,
-        "price_change_range_max": 1,
-        "volume_range_min": 50,
-        "volume_range_max": 200
-    }
+    main_engine.write_log(__PROJECT_SETTING_DIR__)
 
     # start factor engine
-    factor_maker_engine: FactorEngine = main_engine.add_app(FactorMakerApp, registry=FactorRegistry())
-    factor_maker_engine.init_engine(use_talib=False)
+    factor_maker_engine: FactorEngine = main_engine.add_app(FactorMakerApp, registry=FactorRegistry(), priority=1)
+    factor_maker_engine.init_engine(use_talib=True)
     main_engine.write_log(f"Started [{factor_maker_engine.__class__.__name__}]")
 
     # start data recorder
-    data_recorder_engine: DataRecorderEngine = main_engine.add_app(DataRecorderApp)
+    data_recorder_engine: DataRecorderEngine = main_engine.add_app(DataRecorderApp, priority=7)
     data_recorder_engine.update_schema(database_name=data_recorder_engine.database_manager.database_name,
                                        exchanges=main_engine.exchanges,
                                        intervals=main_engine.intervals,
@@ -92,11 +81,13 @@ def run_child():
     main_engine.write_log(f"Started [{data_recorder_engine.__class__.__name__}]")
 
     # init gateway
-    gateway = main_engine.add_gateway(MimicGateway, "MIMIC")
+    gateway = main_engine.add_gateway(MimicGateway, "MIMIC",
+                                      priority=0)  # can not move this line to the top of the function
 
     # download data using vnpy_datamanager if data missed
     data_manager_engine: DataManagerEngine = main_engine.add_app(DataManagerApp,
-                                                                 database=data_recorder_engine.database_manager)
+                                                                 database=data_recorder_engine.database_manager,
+                                                                 priority=6)
     data_manager_engine.init_engine()
     main_engine.write_log(f"Started [{data_manager_engine.__class__.__name__}]")
 
@@ -106,7 +97,7 @@ def run_child():
             data_manager_engine.write_log(f"Retrying data gap filling, attempt {i + 1}/3...", level=WARNING)
         # gaps to requests
         gap_dict = data_recorder_engine.database_manager.get_gaps(end_time=datetime.datetime.now(),
-                                                                  start_time=datetime.datetime(2025, 11, 12, 5, 30))
+                                                                  start_time=datetime.datetime(2025, 11, 17, 5, 30))
         # no gap, break
         if all(len(gap) == 0 for gap in gap_dict.values()):
             break
@@ -118,16 +109,22 @@ def run_child():
         for overview_key, data_dict in gap_data_dict.items():
             for period_start, data in data_dict.items():
                 data_frame = pl.DataFrame(data['data'])
+                if len(data_frame) == 0:
+                    print(overview_key, period_start, " no data downloaded")
+                    print(data_dict)
+                    print(data)
+                    print("=========", flush=True)
+                    continue
                 data_frame = data_frame.with_columns(
                     pl.lit(data['symbol']).alias("symbol"),
                     pl.lit(data['exchange']).alias("exchange"),
                     pl.lit(data['interval']).alias("interval"),
                 )
                 data_frame = data_frame.rename({
-                    "open":"open_price",
-                    "high":"high_price",
-                    "low":"low_price",
-                    "close":"close_price",
+                    "open": "open_price",
+                    "high": "high_price",
+                    "low": "low_price",
+                    "close": "close_price",
                 })
                 gateway.on_bar_filling(data_frame)
 
@@ -160,6 +157,16 @@ def run_child():
                 break
 
     # Start live data subscription
+    gateway_settings = {
+        "symbols": [],
+        "simulation_interval_seconds": 4.0,  # Bars every second for each symbol
+        "open_price_range_min": 100,
+        "open_price_range_max": 105,
+        "price_change_range_min": -1,
+        "price_change_range_max": 1,
+        "volume_range_min": 50,
+        "volume_range_max": 200
+    }
     main_engine.connect(gateway_settings, "MIMIC")
     main_engine.subscribe_all(gateway_name='MIMIC')
 
