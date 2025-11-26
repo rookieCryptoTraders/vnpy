@@ -68,7 +68,7 @@ def run_child():
 
     # start factor engine
     factor_maker_engine: FactorEngine = main_engine.add_app(FactorMakerApp, registry=FactorRegistry(), priority=1)
-    factor_maker_engine.init_engine(use_talib=True)
+    factor_maker_engine.init_engine(use_talib=False)
     main_engine.write_log(f"Started [{factor_maker_engine.__class__.__name__}]")
 
     # start data recorder
