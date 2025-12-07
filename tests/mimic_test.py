@@ -19,6 +19,7 @@ from vnpy.app.data_recorder import DataRecorderApp, DataRecorderEngine
 from vnpy.app.vnpy_datamanager import DataManagerApp, DataManagerEngine
 from vnpy.config import match_format_string
 from vnpy.event import EventEngine
+from vnpy.gateway.binance import BinanceSpotGateway
 from vnpy_clickhouse.exceptions import InsertError
 from vnpy_factor import FactorMakerApp
 from vnpy_factor.factor_engine import FactorEngine
@@ -28,6 +29,7 @@ from vnpy.trader.constant import Exchange, Interval
 from vnpy.trader.database import BAR_OVERVIEW_KEY
 from vnpy.trader.engine import MainEngine
 from vnpy.trader.object import BarData
+from vnpy.trader.setting import SETTINGS
 
 import os
 import glob
@@ -81,8 +83,13 @@ def run_child():
     main_engine.write_log(f"Started [{data_recorder_engine.__class__.__name__}]")
 
     # init gateway
-    gateway = main_engine.add_gateway(MimicGateway, "MIMIC",
+    gateway_class=BinanceSpotGateway
+    gateway_name="BINANCE_SPOT"
+    # gateway = main_engine.add_gateway(MimicGateway, "MIMIC",
+    #                                   priority=0)  # can not move this line to the top of the function
+    gateway = main_engine.add_gateway(gateway_class, gateway_name=gateway_name,
                                       priority=0)  # can not move this line to the top of the function
+
 
     # download data using vnpy_datamanager if data missed
     data_manager_engine: DataManagerEngine = main_engine.add_app(DataManagerApp,
@@ -97,7 +104,7 @@ def run_child():
             data_manager_engine.write_log(f"Retrying data gap filling, attempt {i + 1}/3...", level=WARNING)
         # gaps to requests
         gap_dict = data_recorder_engine.database_manager.get_gaps(end_time=datetime.datetime.now(),
-                                                                  start_time=datetime.datetime(2025, 11, 17, 5, 30))
+                                                                  start_time=datetime.datetime(2025, 12, 6, 5, 30))
         # no gap, break
         if all(len(gap) == 0 for gap in gap_dict.values()):
             break
@@ -157,18 +164,18 @@ def run_child():
                 break
 
     # Start live data subscription
-    gateway_settings = {
-        "symbols": [],
-        "simulation_interval_seconds": 4.0,  # Bars every second for each symbol
-        "open_price_range_min": 100,
-        "open_price_range_max": 105,
-        "price_change_range_min": -1,
-        "price_change_range_max": 1,
-        "volume_range_min": 50,
-        "volume_range_max": 200
-    }
-    main_engine.connect(gateway_settings, "MIMIC")
-    main_engine.subscribe_all(gateway_name='MIMIC')
+    # gateway_settings = {
+    #     "symbols": [],
+    #     "simulation_interval_seconds": 4.0,  # Bars every second for each symbol
+    #     "open_price_range_min": 100,
+    #     "open_price_range_max": 105,
+    #     "price_change_range_min": -1,
+    #     "price_change_range_max": 1,
+    #     "volume_range_min": 50,
+    #     "volume_range_max": 200
+    # }
+    main_engine.connect(setting=SETTINGS, gateway_name=gateway_name)
+    main_engine.subscribe_all(gateway_name=gateway_name)
 
 
 def run_parent():

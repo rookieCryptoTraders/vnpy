@@ -127,9 +127,9 @@ class BinanceSpotGateway(BaseGateway):
 
     def connect(self, setting: dict):
         """连接交易接口"""
-        key: str = setting["key"]
-        secret: str = setting["secret"]
-        server: str = setting["server"]
+        key: str = setting["gateway.api_key"]
+        secret: str = setting["gateway.api_secret"]
+        server: str = setting.get("gateway.server", "REAL")
 
         self.rest_api.connect(key, secret, server)
         self.market_ws_api.connect(server)
@@ -721,13 +721,13 @@ class BinanceSpotDataWebsocketApi:
 
         if server == "REAL":
             # self._client = SpotWebsocketStreamClient_vnpy(stream_url=WEBSOCKET_DATA_HOST, on_message=self.on_packet)
-            self._client = SpotWebsocketStreamClient_vnpy(stream_url=WEBSOCKET_DATA_HOST, 
+            self._client = SpotWebsocketStreamClient_vnpy(stream_url=WEBSOCKET_DATA_HOST,
                                                           on_message=self.on_packet,
                                                           on_close=self.on_disconnected,
                                                           is_combined=True)
         else:
             self._client = SpotWebsocketStreamClient_vnpy(stream_url=TESTNET_WEBSOCKET_DATA_HOST,
-                                                          on_message=self.on_packet, 
+                                                          on_message=self.on_packet,
                                                           on_close=self.on_disconnected,
                                                           is_combined=True)
 
