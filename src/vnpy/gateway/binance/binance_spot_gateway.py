@@ -92,6 +92,9 @@ TIMEDELTA_MAP: Dict[Interval, timedelta] = {
 # 合约数据全局缓存字典
 symbol_contract_map: Dict[str, ContractData] = {}
 
+# proxies
+proxies: Dict[str, str] = SETTINGS.get("gateway.proxies", {})
+
 
 class BinanceSpotGateway(BaseGateway):
     """
@@ -127,9 +130,9 @@ class BinanceSpotGateway(BaseGateway):
 
     def connect(self, setting: dict):
         """连接交易接口"""
-        key: str = setting["gateway.api_key"]
-        secret: str = setting["gateway.api_secret"]
-        server: str = setting.get("gateway.server", "REAL")
+        key: str = setting["key"]
+        secret: str = setting["secret"]
+        server: str = setting["server"]
 
         self.rest_api.connect(key, secret, server)
         self.market_ws_api.connect(server)
@@ -217,7 +220,7 @@ class BinanceSpotRestAPi:
         self.secret = secret
         self.server = server
 
-        self._client = Spot(api_key=self.key, api_secret=self.secret)
+        self._client = Spot(api_key=self.key, api_secret=self.secret,proxies=proxies)
 
         self.connect_time = self._client.time()["serverTime"]
 
@@ -876,7 +879,8 @@ class SpotWebsocketStreamClient_vnpy(BinanceWebsocketClient):
             is_combined=False,
             timeout=None,
             logger=None,
-            proxies: Optional[dict] = None,
+            proxies: Optional[dict] = proxies
+,
     ):
         if is_combined:
             stream_url = stream_url + "/stream"
