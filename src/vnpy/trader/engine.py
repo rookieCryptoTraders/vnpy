@@ -95,6 +95,7 @@ class MainEngine:
         self.intervals: list[Interval] = [
             Interval(interval) for interval in SETTINGS.get("gateway.intervals", [])
         ]
+        print(self.intervals)
         self.minimum_freq: TimeFreq = min(
             [DatetimeUtils.interval2freq(intvl) for intvl in self.intervals]
         )

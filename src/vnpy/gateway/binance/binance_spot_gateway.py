@@ -130,9 +130,9 @@ class BinanceSpotGateway(BaseGateway):
 
     def connect(self, setting: dict):
         """连接交易接口"""
-        key: str = setting["key"]
-        secret: str = setting["secret"]
-        server: str = setting["server"]
+        key: str = setting["gateway.api_key"]
+        secret: str = setting["gateway.api_secret"]
+        server: str = setting["gateway.server"]
 
         self.rest_api.connect(key, secret, server)
         self.market_ws_api.connect(server)
