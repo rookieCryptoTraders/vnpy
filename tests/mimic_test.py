@@ -104,7 +104,7 @@ def run_child():
             data_manager_engine.write_log(f"Retrying data gap filling, attempt {i + 1}/3...", level=WARNING)
         # gaps to requests
         gap_dict = data_recorder_engine.database_manager.get_gaps(end_time=datetime.datetime.now(),
-                                                                  start_time=datetime.datetime(2025, 11, 1, 0, 0))
+                                                                  start_time=datetime.datetime(2025, 12, 11, 0, 0))
         # no gap, break
         if all(len(gap) == 0 for gap in gap_dict.values()):
             break

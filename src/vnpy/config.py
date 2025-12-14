@@ -15,8 +15,22 @@ import re
 os.environ['TZ'] = 'UTC'
 
 # path related
-# Adjusted by Gemini to point to the current workspace directory.
-WORK_DIR = Path(os.getcwd())
+def _get_work_dir() -> Path:
+    """
+    Find the project root directory by searching for GEMINI.md.
+    This ensures that WORK_DIR is consistent (the workspace root)
+    regardless of where the script is executed from.
+    """
+    # Traverse up from this file to find the project root
+    current = Path(__file__).resolve().parent
+    for parent in [current] + list(current.parents):
+        if (parent / "GEMINI.md").exists():
+            return parent
+            
+    # Fallback to CWD if specific markers are not found
+    return Path(os.getcwd())
+
+WORK_DIR = _get_work_dir()
 DATA_ROOT = os.path.join(WORK_DIR, 'data')
 FACTOR_ROOT = os.path.join(DATA_ROOT, 'factors')
 RES_ROOT = os.path.join(WORK_DIR, 'results')
