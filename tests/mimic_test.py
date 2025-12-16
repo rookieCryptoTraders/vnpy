@@ -70,7 +70,7 @@ def run_child():
 
     # start factor engine
     factor_maker_engine: FactorEngine = main_engine.add_app(FactorMakerApp, registry=FactorRegistry(), priority=1)
-    factor_maker_engine.init_engine(use_talib=False)
+    factor_maker_engine.init_engine(use_talib=True)
     main_engine.write_log(f"Started [{factor_maker_engine.__class__.__name__}]")
 
     # start data recorder
@@ -117,10 +117,10 @@ def run_child():
             for period_start, data in data_dict.items():
                 data_frame = pl.DataFrame(data['data'])
                 if len(data_frame) == 0:
-                    print(overview_key, period_start, " no data downloaded")
-                    print(data_dict)
-                    print(data)
-                    print("=========", flush=True)
+                    gateway.write_log( f"{overview_key}, {period_start}, no data downloaded")
+                    gateway.write_log(str(data_dict))
+                    gateway.write_log(data)
+                    gateway.write_log("=========")
                     continue
                 data_frame = data_frame.with_columns(
                     pl.lit(data['symbol']).alias("symbol"),
