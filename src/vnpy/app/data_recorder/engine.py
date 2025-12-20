@@ -31,7 +31,7 @@ from vnpy.trader.object import (
     TickData,
 )
 from vnpy.trader.setting import SETTINGS
-from vnpy.trader.utility import BarGenerator, extract_factor_key, InstanceChecker
+from vnpy.trader.utility import BarGenerator, extract_factor_key, InstanceChecker, generate_vt_symbol
 
 APP_NAME = "DataRecorder"
 SYSTEM_MODE = SETTINGS.get("system.mode", "LIVE")
@@ -359,7 +359,8 @@ class DataRecorderEngine(BaseEngine):
                     self.buffer_bar[vt_symbol].extend(bars)
             elif isinstance(data, pl.DataFrame):
                 assert force_save, "DataFrame input only supported for force_save=True"
-                self.buffer_bar["polars_dataframe"].append(data)
+                vt_symbol=generate_vt_symbol(symbol=data.get_column("symbol")[0],exchange=data.get_column("exchange")[0])
+                self.buffer_bar[vt_symbol].append(data)
             else:
                 self.buffer_bar[data.vt_symbol].append(data)
             to_remove = []
@@ -421,7 +422,7 @@ class DataRecorderEngine(BaseEngine):
             assert len(bar_list) == 1
             assert sample_data.get_column("interval").n_unique() == 1, "All bars in DataFrame must have same interval."
             interval = Interval(sample_data.get_column("interval")[0])
-            sample_data=sample_data.drop(["interval"])
+            sample_data = sample_data.drop(["interval"])
             # Directly save DataFrame
             self.database_manager.save_bar_data(
                 sample_data,
