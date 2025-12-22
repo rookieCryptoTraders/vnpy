@@ -1118,25 +1118,25 @@ class BaseDatabase(ABC):
         """
         pass
 
-    def get_gaps(
+    @abstractmethod
+    def _get_overview_gaps(
             self, end_time: datetime | None = None, start_time: datetime | None = None
     ) -> dict[str, list[TimeRange]]:
-        """
-        Get gaps in data. As long as there is a missing value in the bar or factor, the time period of the missing value will be returned so that the data can be downloaded later to fill in the missing value.
+        pass
 
-        Parameters
-        ----------
-        end_time : Optional[datetime]
-            The end time of the gap search. If None, current time is used.
-        start_time : Optional[datetime]
-            The start time of the gap search. If None, the earliest time in the overview is used.
-        """
+    @abstractmethod
+    def _get_db_gaps(
+            self, end_time: datetime | None = None, start_time: datetime | None = None,
+            interval: Interval | None = Interval.MINUTE
+    ) -> dict[str, list[TimeRange]]:
+        pass
 
-        gap_dict: dict = self.overview_handler.get_gaps(
-            end_time=end_time, start_time=start_time
-        )
-        return gap_dict
-
+    @abstractmethod
+    def get_gaps(
+            self, end_time: datetime | None = None, start_time: datetime | None = None,
+            interval: Interval | None = Interval.MINUTE
+    ) -> dict[str, list[TimeRange]]:
+        pass
 
 # 1. Initialize the global database variable to None at the module level
 database: BaseDatabase | None | Type[BaseDatabase] = None
