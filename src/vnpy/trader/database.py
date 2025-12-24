@@ -13,7 +13,7 @@ from dataclasses import field
 from datetime import date, datetime, timedelta
 from importlib import import_module
 from itertools import product
-from logging import INFO,WARNING
+from logging import INFO, WARNING
 from pathlib import Path
 from types import ModuleType
 from typing import Literal, TypeVar, Optional, Union, Any, Type
@@ -26,7 +26,7 @@ from vnpy.config import BAR_OVERVIEW_FILENAME, FACTOR_OVERVIEW_FILENAME, TICK_OV
 from vnpy.trader.constant import Exchange, Interval
 from vnpy.trader.engine import Event, EventEngine
 from vnpy.trader.event import EVENT_BAR, EVENT_LOG
-from vnpy.trader.object import HistoryRequest, BarData, TickData,LogData,FactorData
+from vnpy.trader.object import HistoryRequest, BarData, TickData, LogData, FactorData
 from vnpy.trader.setting import SETTINGS
 from vnpy.trader.utility import get_file_path, load_json
 from vnpy.utils.atomic_writer_config import AtomicWriterConfig, ConfiguredAtomicWriter
@@ -153,15 +153,33 @@ class TimeRange:
         # not overlapping
         return self
 
-    def get_gap_with(self, other: Self) -> Self | None:
-        """Get the gap between this range and another"""
+    def get_gap_with(self, other: Self, closed_left=False, closed_right=False) -> Self | None:
+        """Get the gap between this range and another, two TimeRanges are closed on both sides, so the gap between them is exclusive on both sides.
+
+        Args:
+            closed_left (bool): if the gap should start from left TimeRange (True) or left TimeRange + 1 interval (False)
+            closed_right (bool): if the gap should end at right TimeRange (True) or right TimeRange - 1 interval (False)
+
+
+        """
         if self.overlaps(other):
             return None
         if self.end < other.start:
-            return TimeRange(start=self.end, end=other.start, interval=self.interval)
-        if other.end < self.start:
-            return TimeRange(start=other.end, end=self.start, interval=self.interval)
-        return None
+            start = self.end
+            end = other.start
+        elif other.end < self.start:
+            start = other.end
+            end = self.start
+        else:
+            raise ValueError("TimeRanges overlap, no gap exists")
+
+        interval_delta = IntervalUtil.get_interval_timedelta(self.interval)
+        if not closed_left:
+            start += interval_delta
+        if not closed_right:
+            end -= interval_delta
+
+        return TimeRange(start=start, end=end, interval=self.interval)
 
     def __str__(self) -> str:
         return f"TimeRange({self.interval.value}: {self.start} - {self.end})"
@@ -395,7 +413,15 @@ class DataRange:
         # Iterate through ranges and find gaps
         gaps = []
         for i in range(len(merged) - 1):
-            gap = merged[i].get_gap_with(merged[i + 1])
+            closed_left = False
+            closed_right = False
+            # if the start is designated by user (which means the data is not in database), the gap should include the start time
+            if start and merged[i].start == start:
+                closed_left = True
+            # if the end is designated by user (which means the data is not in database), the gap should include the end time
+            if end and merged[i + 1].end == end:
+                closed_right = True
+            gap = merged[i].get_gap_with(merged[i + 1], closed_left=closed_left, closed_right=closed_right)
             if gap:
                 gaps.append(gap)
         return gaps
@@ -497,7 +523,7 @@ class BarOverview(BaseOverview):
             overview_key=overview_key  # which will be overwritten in post init. put it here to avoid error
         )
 
-    # def __post_init__(self):
+        # def __post_init__(self):
         # super().__post_init__()
         self.overview_key = BAR_OVERVIEW_KEY.format(
             interval=self.interval.value,
@@ -521,8 +547,8 @@ class TickOverview(BaseOverview):
             overview_key=overview_key  # which will be overwritten in post init. put it here to avoid error
         )
 
-    # def __post_init__(self):
-    #     super().__post_init__()
+        # def __post_init__(self):
+        #     super().__post_init__()
         self.overview_key = TICK_OVERVIEW_KEY.format(
             interval=self.interval.value,
             symbol=self.symbol,
@@ -548,8 +574,8 @@ class FactorOverview(BaseOverview):
         self.factor_name = factor_name
         self.factor_key = factor_key
 
-    # def __post_init__(self):
-    #     super().__post_init__()
+        # def __post_init__(self):
+        #     super().__post_init__()
         self.overview_key = FACTOR_OVERVIEW_KEY.format(
             interval=self.interval.value,
             symbol=self.symbol,
@@ -713,7 +739,7 @@ class OverviewHandler:
                         )
                         self.bar_overview[overview.overview_key] = overview
             self.save_overview(type_='bar')
-            self.write_log("Initialized bar overview.",level=WARNING)
+            self.write_log("Initialized bar overview.", level=WARNING)
 
         if not self.tick_overview:
             for symbol in self.symbols:
@@ -727,7 +753,7 @@ class OverviewHandler:
                         )
                         self.tick_overview[overview.overview_key] = overview
             self.save_overview(type_='tick')
-            self.write_log("Initialized tick overview.",level=WARNING)
+            self.write_log("Initialized tick overview.", level=WARNING)
 
         if not self.factor_overview:
             # factor overview is initialized when new factor is created
@@ -846,7 +872,7 @@ class OverviewHandler:
         Save all overview data to their respective files.
         This is called automatically on program exit.
         """
-        print("save_all_overviews",self.bar_overview)
+        print("save_all_overviews", self.bar_overview)
         self.save_overview(type_='bar')
         self.save_overview(type_='factor')
         self.save_overview(type_='tick')
@@ -896,7 +922,8 @@ class OverviewHandler:
         # get all existing data ranges and store them together
         exist_dict = {}
         for type_ in ["bar", "factor"]:
-            overview_dict = self.get_overview_dict(type_=type_) # this function will create an initialized overview dict even if overview_dict is empty
+            overview_dict = self.get_overview_dict(
+                type_=type_)  # this function will create an initialized overview dict even if overview_dict is empty
             for vt_symbol, overview in overview_dict.items():
                 if exist_dict.get(overview.overview_key) is None:
                     exist_dict[overview.overview_key] = DataRange(
@@ -908,7 +935,7 @@ class OverviewHandler:
                         overview.time_ranges, method="union", inplace=True
                     )
 
-        # Find and store gaps for each data range
+        # Find and store gaps for each data range (each overview_vt_symbol/overview_factor_key)
         gap_dict = {}
         for overview_key, data_range in exist_dict.items():
             gaps = data_range.get_gaps(start=start_time, end=end_time)
@@ -966,6 +993,8 @@ class OverviewHandler:
 
 # Factory function to create enhanced handler with default configuration
 _overview_handler_instance: OverviewHandler | None = None
+
+
 def get_overview_handler(
         sync_mode: Literal["fsync", "fdatasync", "none"] = "fsync",
         max_retries: int = 2,
@@ -988,6 +1017,7 @@ def get_overview_handler(
     )
     _overview_handler_instance = OverviewHandler(event_engine=event_engine, atomic_config=config)
     return _overview_handler_instance
+
 
 class BaseDatabase(ABC):
     """
@@ -1138,6 +1168,7 @@ class BaseDatabase(ABC):
     ) -> dict[str, list[TimeRange]]:
         pass
 
+
 # 1. Initialize the global database variable to None at the module level
 database: BaseDatabase | None | Type[BaseDatabase] = None
 TV_BaseOverview = TypeVar("TV_BaseOverview", bound=BaseOverview)  # TV means TypeVar
@@ -1179,5 +1210,3 @@ def get_database(*args, **kwargs) -> Type[BaseDatabase] | BaseDatabase:
     print(f"Database instance '{database_name}' created and connected.")
 
     return database
-
-
