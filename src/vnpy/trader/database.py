@@ -381,6 +381,7 @@ class DataRange:
         --------
         equals to gaps_between([start]+[common time ranges]+[end])
         """
+        # self.ranges stands for existing data ranges
         if not self.ranges:
             if start and end:
                 return [TimeRange(start=start, end=end, interval=self.interval)]
@@ -389,11 +390,9 @@ class DataRange:
         # This function was adjusted by Gemini to prevent side effects.
         temp_ranges = copy.deepcopy(self.ranges)
 
-        if start:
-            temp_ranges.append(
-                TimeRange(start=start, end=start, interval=self.interval)
-            )
-        if end:
+        if start and start < min([x.start for x in temp_ranges]):
+            temp_ranges.append(TimeRange(start=start, end=start, interval=self.interval))
+        if end and end > max([x.end for x in temp_ranges]):
             temp_ranges.append(TimeRange(start=end, end=end, interval=self.interval))
 
         temp_ranges.sort(key=lambda x: (x.start, x.end))
@@ -416,10 +415,12 @@ class DataRange:
             closed_left = False
             closed_right = False
             # if the start is designated by user (which means the data is not in database), the gap should include the start time
-            if start and merged[i].start == start:
+            # only happens when merged[i] is the inserted TimeRange(start=start, end=start, interval=self.interval)
+            if start and merged[i].end == start: # to avoid the first normal data range.start==start (not the inserted one)
                 closed_left = True
             # if the end is designated by user (which means the data is not in database), the gap should include the end time
-            if end and merged[i + 1].end == end:
+            # only happens when merged[i + 1] is the inserted TimeRange(start=end, end=end, interval=self.interval)
+            if end and merged[i + 1].start == end:
                 closed_right = True
             gap = merged[i].get_gap_with(merged[i + 1], closed_left=closed_left, closed_right=closed_right)
             if gap:
