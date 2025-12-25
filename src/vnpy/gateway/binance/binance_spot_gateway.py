@@ -812,7 +812,14 @@ class BinanceSpotDataWebsocketApi:
                 bar.high_price = float(kdata['h'])
                 bar.low_price = float(kdata['l'])
                 bar.close_price = float(kdata['c'])
-                bar.volume = float(kdata['q'])
+                bar.volume = float(kdata['v'])
+                bar.turnover = 0
+                bar.open_interest = 0
+                bar.quote_asset_volume = float(kdata['q'])
+                bar.number_of_trades = float(kdata['n'])
+                bar.taker_buy_base_asset_volume = float(kdata['V'])
+                bar.taker_buy_quote_asset_volume = float(kdata['Q'])
+
                 if bar.volume < 1000 and SYSTEM_MODE == 'TEST':
                     self.gateway.write_log(f"bar.volume is too low: {str(bar.__dict__)}", )
                 self.gateway.on_bar(copy(bar))

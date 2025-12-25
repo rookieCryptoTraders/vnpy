@@ -126,14 +126,14 @@ class BarData(BaseData):
     datetime: Datetime = field(default=None, init=True)
     interval: Interval = None
 
-    volume: float = 0  # quoted asset volume (Usually, it is denominated in USDT, so this volume is the volume denominated in USDT)
-    turnover: float = 0
-    open_interest: float = 0
     open_price: float = 0
     high_price: float = 0
     low_price: float = 0
     close_price: float = 0
-    quote_asset_volume: float = 0
+    volume: float = 0  # the quantity in asset (e.g. btc)
+    turnover: float = 0
+    open_interest: float = 0
+    quote_asset_volume: float = 0  # the quantity in money (e.g. usdt)
     number_of_trades: float = 0
     taker_buy_base_asset_volume: float = 0
     taker_buy_quote_asset_volume: float = 0
