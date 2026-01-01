@@ -220,7 +220,7 @@ class BinanceSpotRestAPi:
         self.secret = secret
         self.server = server
 
-        self._client = Spot(api_key=self.key, api_secret=self.secret,proxies=proxies)
+        self._client = Spot(api_key=self.key, api_secret=self.secret, proxies=proxies)
 
         self.connect_time = self._client.time()["serverTime"]
 
@@ -723,17 +723,14 @@ class BinanceSpotDataWebsocketApi:
             self._client.stop()
 
         if server == "REAL":
-            # self._client = SpotWebsocketStreamClient_vnpy(stream_url=WEBSOCKET_DATA_HOST, on_message=self.on_packet)
-            self._client = SpotWebsocketStreamClient_vnpy(stream_url=WEBSOCKET_DATA_HOST,
-                                                          on_message=self.on_packet,
-                                                          on_close=self.on_disconnected,
-                                                          is_combined=True)
+            stream_url = WEBSOCKET_DATA_HOST
         else:
-            self._client = SpotWebsocketStreamClient_vnpy(stream_url=TESTNET_WEBSOCKET_DATA_HOST,
-                                                          on_message=self.on_packet,
-                                                          on_close=self.on_disconnected,
-                                                          is_combined=True)
+            stream_url = TESTNET_WEBSOCKET_DATA_HOST
 
+        self._client = SpotWebsocketStreamClient_vnpy(stream_url=stream_url,
+                                                      on_message=self.on_packet,
+                                                      on_close=self.on_disconnected,
+                                                      is_combined=True)
         self._active = True
         self.on_connected()
 
@@ -884,7 +881,7 @@ class SpotWebsocketStreamClient_vnpy(BinanceWebsocketClient):
             timeout=None,
             logger=None,
             proxies: Optional[dict] = proxies
-,
+            ,
     ):
         if is_combined:
             stream_url = stream_url + "/stream"

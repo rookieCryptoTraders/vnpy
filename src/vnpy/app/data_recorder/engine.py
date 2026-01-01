@@ -3,12 +3,14 @@ import sys
 import traceback
 from collections import defaultdict
 from copy import deepcopy
-from logging import ERROR, INFO, NOTSET
+from logging import ERROR, INFO, NOTSET, WARNING
 from queue import Empty, Queue
 from threading import Lock, Thread
 from typing import Literal
 
 import polars as pl
+from google.protobuf.internal.type_checkers import TypeChecker
+
 from vnpy_clickhouse.clickhouse_database import ClickhouseDatabase
 
 from vnpy.event.engine import Event
@@ -67,6 +69,7 @@ class DataRecorderEngine(BaseEngine):
         self.buffer_bar: defaultdict = defaultdict(list)
         self.buffer_factor: defaultdict = defaultdict(list)
         self.buffer_size: int = 1000 if SYSTEM_MODE != 'TEST' else 1  # Number of records to buffer before writing
+        self.write_log(f"DataRecorderEngine buffer_size set to {self.buffer_size}", level=INFO)
 
         # Database manager instance
         self.database_manager = ClickhouseDatabase(event_engine=event_engine,
@@ -359,7 +362,8 @@ class DataRecorderEngine(BaseEngine):
                     self.buffer_bar[vt_symbol].extend(bars)
             elif isinstance(data, pl.DataFrame):
                 assert force_save, "DataFrame input only supported for force_save=True"
-                vt_symbol=generate_vt_symbol(symbol=data.get_column("symbol")[0],exchange=data.get_column("exchange")[0])
+                vt_symbol = generate_vt_symbol(symbol=data.get_column("symbol")[0],
+                                               exchange=data.get_column("exchange")[0])
                 self.buffer_bar[vt_symbol].append(data)
             else:
                 self.buffer_bar[data.vt_symbol].append(data)
@@ -418,7 +422,7 @@ class DataRecorderEngine(BaseEngine):
     def _save_bar_buffer(self, bar_list: list[BarData], stream=True):
         """Saves a list of bars from the buffer to the database."""
         sample_data = bar_list[0]
-        if isinstance(sample_data, pl.DataFrame):
+        if InstanceChecker.is_list_of(bar_list, pl.DataFrame):
             assert len(bar_list) == 1
             assert sample_data.get_column("interval").n_unique() == 1, "All bars in DataFrame must have same interval."
             interval = Interval(sample_data.get_column("interval")[0])
@@ -427,6 +431,13 @@ class DataRecorderEngine(BaseEngine):
             self.database_manager.save_bar_data(
                 sample_data,
                 interval=interval,
+                stream=stream
+            )
+        elif InstanceChecker.is_list_of(bar_list, BarData):
+            self.database_manager.save_bar_data(
+                bar_list,
+                interval=sample_data.interval,
+                exchange=sample_data.exchange,
                 stream=stream
             )
         else:
