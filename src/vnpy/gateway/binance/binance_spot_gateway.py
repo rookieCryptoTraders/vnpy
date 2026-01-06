@@ -1,10 +1,12 @@
+import logging
+import traceback
 from functools import lru_cache
 import json
 import time
 from copy import copy
 from datetime import datetime, timedelta, timezone
 from threading import Lock
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 
 from binance.spot import Spot
 from binance.websocket.websocket_client import BinanceWebsocketClient
@@ -490,9 +492,18 @@ class BinanceSpotRestAPi:
         except Exception as e:
             self.gateway.write_log(f"重连失败：{e}")
 
-    def query_history(self, req: HistoryRequest) -> List[BarData]:
-        """查询历史数据"""
-        history: List[BarData] = []
+    def query_history(self, req: HistoryRequest,
+                      ret: Literal["list_dict", "list_bar_data"] = "list_dict") -> list[BarData] | list[dict]:
+        """查询历史数据
+
+        Args:
+            req ():
+            ret (Literal): return what type, 'list_dict' or 'list_bar_data'
+
+        Returns:
+            list[BarData] | list[dict]
+        """
+        history: list[BarData] | list[dict] = []
         limit: int = 1000
         start_time: int = int(datetime.timestamp(req.start))
 
@@ -516,10 +527,11 @@ class BinanceSpotRestAPi:
 
             try:
                 data = self._client.klines(**params)
-                data = json.loads(data)
-                if data['code']:
+                if isinstance(data, str):
+                    data = json.loads(data)
+                if isinstance(data, dict) and data['code']:
                     if data['code'] == 429:
-                        self.gateway.write_log(f"获取历史数据失败：{data['code']}, {data['msg']}")
+                        self.gateway.write_log(f"获取历史数据失败：error code {data['code']}, {data['msg']}")
                         self.gateway.write_log(f"{sleep_seconds=} for retring connection")
                         time.sleep(sleep_seconds)
                         sleep_seconds *= 2
@@ -528,37 +540,63 @@ class BinanceSpotRestAPi:
                         sleep_seconds = 0.5
 
                     if data["code"] // 100 != 2:
-                        self.gateway.write_log(f"获取历史数据失败：{data['code']}, {data['msg']}")
+                        self.gateway.write_log(f"获取历史数据失败：error code {data['code']}, {data['msg']}")
                         break
-                else:
-                    for row in data:
-                        bar: BarData = BarData(
-                            symbol=req.symbol,
-                            exchange=req.exchange,
-                            datetime=datetime.fromtimestamp(row[0]),
-                            interval=req.interval,
-                            volume=float(row[5]),
-                            turnover=float(row[7]),
-                            open_price=float(row[1]),
-                            high_price=float(row[2]),
-                            low_price=float(row[3]),
-                            close_price=float(row[4]),
-                            gateway_name=self.gateway_name
-                        )
-                        history.append(bar)
+                elif isinstance(data, list):
+                    if ret == "list_dict":
+                        for row in data:
+                            bar = {"datetime": datetime.fromtimestamp(row[0] / 1000),  # Convert ms to seconds
+                                   "open": float(row[1]),
+                                   "high": float(row[2]),
+                                   "low": float(row[3]),
+                                   "close": float(row[4]),
+                                   "volume": float(row[5]),
+                                   # "close_time": datetime.datetime.fromtimestamp(row[6] / 1000),  # Convert ms to seconds
+                                   "quote_asset_volume": float(row[7]),
+                                   "number_of_trades": int(row[8]),
+                                   "taker_buy_base_asset_volume": float(row[9]),
+                                   "taker_buy_quote_asset_volume": float(row[10]), }
+                            history.append(bar)
 
-                    begin: datetime = history[0].datetime
-                    end: datetime = history[-1].datetime
+                    elif ret == "list_bar_data":  # list_bar_data
+                        for row in data:
+                            bar: BarData = BarData(
+                                symbol=req.symbol,
+                                exchange=req.exchange,
+                                datetime=datetime.fromtimestamp(row[0] / 1000),
+                                interval=req.interval,
+                                open_price=float(row[1]),
+                                high_price=float(row[2]),
+                                low_price=float(row[3]),
+                                close_price=float(row[4]),
+                                volume=float(row[5]),
+                                quote_asset_volume=float(row[7]),
+                                number_of_trades=int(row[8]),
+                                taker_buy_base_asset_volume=float(row[9]),
+                                taker_buy_quote_asset_volume=float(row[10]),
+                                gateway_name=self.gateway_name
+                            )
+                            history.append(bar)
+
+                    if ret == "list_dict":
+                        begin: datetime = history[0]["datetime"]
+                        end: datetime = history[-1]["datetime"]
+                    elif ret == "list_bar_data":
+                        begin: datetime = history[0].datetime
+                        end: datetime = history[-1].datetime
+                    else:
+                        raise RuntimeError("unknown return type")
                     self.gateway.write_log(f"获取历史数据成功，{req.symbol} - {req.interval.value}, {begin} - {end}")
 
-                    if len(data) < limit:
-                        break
+                if len(data) < limit:
+                    break
 
-                    start_dt = bar.datetime + TIMEDELTA_MAP[req.interval]
-                    start_time = int(datetime.timestamp(start_dt))
+                else:
+                    raise RuntimeError("unknown data format")
             except Exception as e:
-                self.gateway.write_log(f"获取历史数据失败：{e}")
-                break
+                self.gateway.write_log(data, level=logging.ERROR)
+                self.gateway.write_log(f"{traceback.format_tb(e.__traceback__)}", level=logging.ERROR)
+                raise e
 
         return history
 

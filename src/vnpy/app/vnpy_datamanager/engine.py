@@ -7,7 +7,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime
 from logging import INFO, ERROR
-from typing import List, Optional, Union, TYPE_CHECKING, Literal, Any
+from typing import Optional, Union, TYPE_CHECKING, Literal, Any
 
 import polars as pl
 
@@ -149,7 +149,7 @@ class DataManagerEngine(BaseEngine):
 
         reader: csv.DictReader = csv.DictReader(buf, delimiter=",")
 
-        bars: List[BarData] = []
+        bars: list[BarData] = []
         start: Optional[datetime] = None
         count: int = 0
         tz = ZoneInfo(tz_name)
@@ -203,7 +203,7 @@ class DataManagerEngine(BaseEngine):
             end: datetime
     ) -> bool:
         """"""
-        bars: List[BarData] = self.load_bar_data(symbol, exchange, interval, start, end)
+        bars: list[BarData] = self.load_bar_data(symbol, exchange, interval, start, end)
 
         fieldnames: list = [
             "symbol",
@@ -258,9 +258,9 @@ class DataManagerEngine(BaseEngine):
             interval: Interval,
             start: datetime,
             end: datetime
-    ) -> List[BarData]:
+    ) -> list[BarData]:
         """"""
-        bars: List[BarData] = self.database.load_bar_data(
+        bars: list[BarData] = self.database.load_bar_data(
             symbol,
             exchange,
             interval,
@@ -280,7 +280,7 @@ class DataManagerEngine(BaseEngine):
             end: datetime,
             ret: Literal["rows", "numpy", "pandas", "polars"] = "polars",
     ) -> list[FactorData]:
-        factors: List[FactorData] = self.database.load_factor_data(
+        factors: list[FactorData] = self.database.load_factor_data(
             symbol=symbol,
             exchange=exchange,
             interval=interval,
@@ -314,7 +314,7 @@ class DataManagerEngine(BaseEngine):
             start: datetime,
             end: datetime = None,
             save: bool = False
-    ) -> Union[int, List[BarData]]:
+    ) -> Union[int, list[BarData]]:
         """
         Query bar data from datafeed.
         """
@@ -335,12 +335,12 @@ class DataManagerEngine(BaseEngine):
 
         # If history data provided in gateway, then query
         if contract and contract.history_data:
-            data: List[BarData] = self.main_engine.query_history(
+            data: list[BarData] = self.main_engine.query_history(
                 req, contract.gateway_name
             )
         # Otherwise use datafeed to query data
         else:
-            data: List[dict] = self.datafeed.query_bar_history(req=req, output=self.write_log)
+            data: list[dict] = self.datafeed.query_bar_history(req=req, output=self.write_log)
 
         if save:
             if data:
@@ -350,7 +350,7 @@ class DataManagerEngine(BaseEngine):
             # If not saving, just return the data
             return data
 
-        return 0
+        return data
 
     def download_tick_data(
             self,
@@ -369,7 +369,7 @@ class DataManagerEngine(BaseEngine):
             end=datetime.now(DB_TZ)
         )
 
-        data: List[TickData] = self.datafeed.query_tick_history(req, output)
+        data: list[TickData] = self.datafeed.query_tick_history(req, output)
 
         if data:
             self.database.save_tick_data(data)
