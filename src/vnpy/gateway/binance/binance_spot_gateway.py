@@ -161,7 +161,7 @@ class BinanceSpotGateway(BaseGateway):
         """查询持仓"""
         pass
 
-    def query_history(self, req: HistoryRequest) -> List[BarData]:
+    def query_history(self, req: HistoryRequest) -> list[BarData] | list[dict]:
         """查询历史数据"""
         return self.rest_api.query_history(req)
 
