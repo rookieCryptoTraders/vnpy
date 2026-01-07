@@ -620,12 +620,22 @@ class BinanceSpotTradeWebsocketApi:
 
     def connect(self, stream_url: str, listen_key: str) -> None:
         """连接Websocket交易频道"""
+
+        is_combined = False
         if self._client:
-            self._client.stop()
+            url_with_mode = self._client.socket_manager.stream_url.split("?timeUnit=")[0]
+            if is_combined and url_with_mode == stream_url + "/stream":
+                pass
+            elif not is_combined and url_with_mode == stream_url + "/ws":
+                pass
+            else:
+                self._client.logger.warning("BinanceSpotTradeWebsocketApi.connect: 重连不同模式的Websocket，先断开旧连接")
+                self._client.stop()
 
         self._client = SpotWebsocketStreamClient_vnpy(stream_url=stream_url,
                                                       on_message=self.on_packet,
-                                                      on_close=self.on_disconnected)
+                                                      on_close=self.on_disconnected,
+                                                      is_combined=False)
         self._client.user_data(listen_key)
 
         self._active = True
@@ -658,7 +668,7 @@ class BinanceSpotTradeWebsocketApi:
         self._active = False
         if self._client:
             self._client.stop()
-            self.gateway.write_log("交易Websocket API断开")
+            self.gateway.write_log("BinanceSpotTradeWebsocketApi.disconnect: 交易Websocket API断开")
 
     def on_account(self, packet: dict) -> None:
         """资金更新推送"""
@@ -729,9 +739,9 @@ class BinanceSpotTradeWebsocketApi:
         )
         self.gateway.on_trade(trade)
 
-    def on_disconnected(self) -> None:
+    def on_disconnected(self, *args) -> None:
         """连接断开回报"""
-        self.gateway.write_log("交易Websocket API断开")
+        self.gateway.write_log("BinanceSpotTradeWebsocketApi.on_disconnected:交易Websocket API断开")
         self.gateway.rest_api.start_user_stream()
 
     def stop(self):
@@ -757,18 +767,26 @@ class BinanceSpotDataWebsocketApi:
 
     def connect(self, server: str):
         """连接Websocket行情频道"""
-        if self._client:
-            self._client.stop()
-
         if server == "REAL":
             stream_url = WEBSOCKET_DATA_HOST
         else:
             stream_url = TESTNET_WEBSOCKET_DATA_HOST
 
+        is_combined = True
+        if self._client:
+            url_with_mode = self._client.socket_manager.stream_url.split("?timeUnit=")[0]
+            if is_combined and url_with_mode == stream_url + "/stream":
+                pass
+            elif not is_combined and url_with_mode == stream_url + "/ws":
+                pass
+            else:
+                self._client.logger.warning("BinanceSpotDataWebsocketApi.connect: 重连不同模式的Websocket，先断开旧连接")
+                self._client.stop()
+
         self._client = SpotWebsocketStreamClient_vnpy(stream_url=stream_url,
                                                       on_message=self.on_packet,
                                                       on_close=self.on_disconnected,
-                                                      is_combined=True)
+                                                      is_combined=is_combined)
         self._active = True
         self.on_connected()
 
@@ -894,7 +912,7 @@ class BinanceSpotDataWebsocketApi:
             tick.localtime = datetime.now()
             self.gateway.on_tick(copy(tick))
 
-    def on_disconnected(self) -> None:
+    def on_disconnected(self, *args) -> None:
         """连接断开回报"""
         self._client.stop()
         self.gateway.write_log("行情Websocket API断开")
