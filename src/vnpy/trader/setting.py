@@ -71,6 +71,12 @@ load_dotenv()
 SETTINGS.update({
     "gateway.api_key": os.getenv("BINANCE_API_KEY"),
     "gateway.api_secret": os.getenv("BINANCE_API_SECRET"),
+    "database.database": os.getenv("CLICKHOUSE_DB"),
+    "database.user": os.getenv("CLICKHOUSE_USER"),
+    "database.password": os.getenv("CLICKHOUSE_PASSWORD",""),
+    "database.host": os.getenv("CLICKHOUSE_HOST"),
+    "database.port": int(os.getenv("CLICKHOUSE_PORT", 8123)),
 })
+
 
 print(f"[vnpy.trader.setting] Updated SETTINGS from {setting_filepath}")
