@@ -39,8 +39,6 @@ _templates
 # Misc
 .DS_Store
 *.mo
-requirements.txt
-GEMINI.md
 
 # Alpha
 lab/
