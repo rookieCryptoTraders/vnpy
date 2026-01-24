@@ -63,10 +63,20 @@ if not _VT_SETTING_LOADED:
     new_settings,setting_filepath = load_json(SETTING_FILENAME, return_filepath=True)
     SETTINGS.update(new_settings)
     _VT_SETTING_LOADED = True
-    print(f"[vnpy.trader.setting] Updated SETTINGS from {setting_filepath}")
+    
+# laoding sensitive info from .env file
+import os
+from dotenv import load_dotenv
+load_dotenv()
+SETTINGS.update({
+    "gateway.api_key": os.getenv("BINANCE_API_KEY"),
+    "gateway.api_secret": os.getenv("BINANCE_API_SECRET"),
+    "database.database": os.getenv("CLICKHOUSE_DB"),
+    "database.user": os.getenv("CLICKHOUSE_USER"),
+    "database.password": os.getenv("CLICKHOUSE_PASSWORD",""),
+    "database.host": os.getenv("CLICKHOUSE_HOST"),
+    "database.port": int(os.getenv("CLICKHOUSE_PORT", 8123)),
+})
 
 
-# def get_settings(prefix: str = "") -> Dict[str, Any]:
-#     prefix_length: int = len(prefix)
-#     settings = {k[prefix_length:]: v for k, v in SETTINGS.items() if k.startswith(prefix)}
-#     return settings
+print(f"[vnpy.trader.setting] Updated SETTINGS from {setting_filepath}")

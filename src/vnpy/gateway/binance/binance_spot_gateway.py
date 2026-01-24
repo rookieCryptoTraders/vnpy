@@ -1,10 +1,12 @@
+import logging
+import traceback
 from functools import lru_cache
 import json
 import time
 from copy import copy
 from datetime import datetime, timedelta, timezone
 from threading import Lock
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 
 from binance.spot import Spot
 from binance.websocket.websocket_client import BinanceWebsocketClient
@@ -92,6 +94,9 @@ TIMEDELTA_MAP: Dict[Interval, timedelta] = {
 # 合约数据全局缓存字典
 symbol_contract_map: Dict[str, ContractData] = {}
 
+# proxies
+proxies: Dict[str, str] = SETTINGS.get("gateway.proxies", {})
+
 
 class BinanceSpotGateway(BaseGateway):
     """
@@ -127,9 +132,9 @@ class BinanceSpotGateway(BaseGateway):
 
     def connect(self, setting: dict):
         """连接交易接口"""
-        key: str = setting["key"]
-        secret: str = setting["secret"]
-        server: str = setting["server"]
+        key: str = setting["gateway.api_key"]
+        secret: str = setting["gateway.api_secret"]
+        server: str = setting["gateway.server"]
 
         self.rest_api.connect(key, secret, server)
         self.market_ws_api.connect(server)
@@ -156,7 +161,7 @@ class BinanceSpotGateway(BaseGateway):
         """查询持仓"""
         pass
 
-    def query_history(self, req: HistoryRequest) -> List[BarData]:
+    def query_history(self, req: HistoryRequest) -> list[BarData] | list[dict]:
         """查询历史数据"""
         return self.rest_api.query_history(req)
 
@@ -217,7 +222,7 @@ class BinanceSpotRestAPi:
         self.secret = secret
         self.server = server
 
-        self._client = Spot(api_key=self.key, api_secret=self.secret)
+        self._client = Spot(api_key=self.key, api_secret=self.secret, proxies=proxies)
 
         self.connect_time = self._client.time()["serverTime"]
 
@@ -487,9 +492,18 @@ class BinanceSpotRestAPi:
         except Exception as e:
             self.gateway.write_log(f"重连失败：{e}")
 
-    def query_history(self, req: HistoryRequest) -> List[BarData]:
-        """查询历史数据"""
-        history: List[BarData] = []
+    def query_history(self, req: HistoryRequest,
+                      ret: Literal["list_dict", "list_bar_data"] = "list_dict") -> list[BarData] | list[dict]:
+        """查询历史数据
+
+        Args:
+            req ():
+            ret (Literal): return what type, 'list_dict' or 'list_bar_data'
+
+        Returns:
+            list[BarData] | list[dict]
+        """
+        history: list[BarData] | list[dict] = []
         limit: int = 1000
         start_time: int = int(datetime.timestamp(req.start))
 
@@ -513,10 +527,11 @@ class BinanceSpotRestAPi:
 
             try:
                 data = self._client.klines(**params)
-                data = json.loads(data)
-                if data['code']:
+                if isinstance(data, str):
+                    data = json.loads(data)
+                if isinstance(data, dict) and data['code']:
                     if data['code'] == 429:
-                        self.gateway.write_log(f"获取历史数据失败：{data['code']}, {data['msg']}")
+                        self.gateway.write_log(f"获取历史数据失败：error code {data['code']}, {data['msg']}")
                         self.gateway.write_log(f"{sleep_seconds=} for retring connection")
                         time.sleep(sleep_seconds)
                         sleep_seconds *= 2
@@ -525,37 +540,63 @@ class BinanceSpotRestAPi:
                         sleep_seconds = 0.5
 
                     if data["code"] // 100 != 2:
-                        self.gateway.write_log(f"获取历史数据失败：{data['code']}, {data['msg']}")
+                        self.gateway.write_log(f"获取历史数据失败：error code {data['code']}, {data['msg']}")
                         break
-                else:
-                    for row in data:
-                        bar: BarData = BarData(
-                            symbol=req.symbol,
-                            exchange=req.exchange,
-                            datetime=datetime.fromtimestamp(row[0]),
-                            interval=req.interval,
-                            volume=float(row[5]),
-                            turnover=float(row[7]),
-                            open_price=float(row[1]),
-                            high_price=float(row[2]),
-                            low_price=float(row[3]),
-                            close_price=float(row[4]),
-                            gateway_name=self.gateway_name
-                        )
-                        history.append(bar)
+                elif isinstance(data, list):
+                    if ret == "list_dict":
+                        for row in data:
+                            bar = {"datetime": datetime.fromtimestamp(row[0] / 1000),  # Convert ms to seconds
+                                   "open": float(row[1]),
+                                   "high": float(row[2]),
+                                   "low": float(row[3]),
+                                   "close": float(row[4]),
+                                   "volume": float(row[5]),
+                                   # "close_time": datetime.datetime.fromtimestamp(row[6] / 1000),  # Convert ms to seconds
+                                   "quote_asset_volume": float(row[7]),
+                                   "number_of_trades": int(row[8]),
+                                   "taker_buy_base_asset_volume": float(row[9]),
+                                   "taker_buy_quote_asset_volume": float(row[10]), }
+                            history.append(bar)
 
-                    begin: datetime = history[0].datetime
-                    end: datetime = history[-1].datetime
+                    elif ret == "list_bar_data":  # list_bar_data
+                        for row in data:
+                            bar: BarData = BarData(
+                                symbol=req.symbol,
+                                exchange=req.exchange,
+                                datetime=datetime.fromtimestamp(row[0] / 1000),
+                                interval=req.interval,
+                                open_price=float(row[1]),
+                                high_price=float(row[2]),
+                                low_price=float(row[3]),
+                                close_price=float(row[4]),
+                                volume=float(row[5]),
+                                quote_asset_volume=float(row[7]),
+                                number_of_trades=int(row[8]),
+                                taker_buy_base_asset_volume=float(row[9]),
+                                taker_buy_quote_asset_volume=float(row[10]),
+                                gateway_name=self.gateway_name
+                            )
+                            history.append(bar)
+
+                    if ret == "list_dict":
+                        begin: datetime = history[0]["datetime"]
+                        end: datetime = history[-1]["datetime"]
+                    elif ret == "list_bar_data":
+                        begin: datetime = history[0].datetime
+                        end: datetime = history[-1].datetime
+                    else:
+                        raise RuntimeError("unknown return type")
                     self.gateway.write_log(f"获取历史数据成功，{req.symbol} - {req.interval.value}, {begin} - {end}")
 
-                    if len(data) < limit:
-                        break
+                if len(data) < limit:
+                    break
 
-                    start_dt = bar.datetime + TIMEDELTA_MAP[req.interval]
-                    start_time = int(datetime.timestamp(start_dt))
+                else:
+                    raise RuntimeError("unknown data format")
             except Exception as e:
-                self.gateway.write_log(f"获取历史数据失败：{e}")
-                break
+                self.gateway.write_log(data, level=logging.ERROR)
+                self.gateway.write_log(f"{traceback.format_tb(e.__traceback__)}", level=logging.ERROR)
+                raise e
 
         return history
 
@@ -579,12 +620,22 @@ class BinanceSpotTradeWebsocketApi:
 
     def connect(self, stream_url: str, listen_key: str) -> None:
         """连接Websocket交易频道"""
+
+        is_combined = False
         if self._client:
-            self._client.stop()
+            url_with_mode = self._client.socket_manager.stream_url.split("?timeUnit=")[0]
+            if is_combined and url_with_mode == stream_url + "/stream":
+                pass
+            elif not is_combined and url_with_mode == stream_url + "/ws":
+                pass
+            else:
+                self._client.logger.warning("BinanceSpotTradeWebsocketApi.connect: 重连不同模式的Websocket，先断开旧连接")
+                self._client.stop()
 
         self._client = SpotWebsocketStreamClient_vnpy(stream_url=stream_url,
                                                       on_message=self.on_packet,
-                                                      on_close=self.on_disconnected)
+                                                      on_close=self.on_disconnected,
+                                                      is_combined=False)
         self._client.user_data(listen_key)
 
         self._active = True
@@ -617,7 +668,7 @@ class BinanceSpotTradeWebsocketApi:
         self._active = False
         if self._client:
             self._client.stop()
-            self.gateway.write_log("交易Websocket API断开")
+            self.gateway.write_log("BinanceSpotTradeWebsocketApi.disconnect: 交易Websocket API断开")
 
     def on_account(self, packet: dict) -> None:
         """资金更新推送"""
@@ -688,9 +739,9 @@ class BinanceSpotTradeWebsocketApi:
         )
         self.gateway.on_trade(trade)
 
-    def on_disconnected(self) -> None:
+    def on_disconnected(self, *args) -> None:
         """连接断开回报"""
-        self.gateway.write_log("交易Websocket API断开")
+        self.gateway.write_log("BinanceSpotTradeWebsocketApi.on_disconnected:交易Websocket API断开")
         self.gateway.rest_api.start_user_stream()
 
     def stop(self):
@@ -716,21 +767,26 @@ class BinanceSpotDataWebsocketApi:
 
     def connect(self, server: str):
         """连接Websocket行情频道"""
-        if self._client:
-            self._client.stop()
-
         if server == "REAL":
-            # self._client = SpotWebsocketStreamClient_vnpy(stream_url=WEBSOCKET_DATA_HOST, on_message=self.on_packet)
-            self._client = SpotWebsocketStreamClient_vnpy(stream_url=WEBSOCKET_DATA_HOST, 
-                                                          on_message=self.on_packet,
-                                                          on_close=self.on_disconnected,
-                                                          is_combined=True)
+            stream_url = WEBSOCKET_DATA_HOST
         else:
-            self._client = SpotWebsocketStreamClient_vnpy(stream_url=TESTNET_WEBSOCKET_DATA_HOST,
-                                                          on_message=self.on_packet, 
-                                                          on_close=self.on_disconnected,
-                                                          is_combined=True)
+            stream_url = TESTNET_WEBSOCKET_DATA_HOST
 
+        is_combined = True
+        if self._client:
+            url_with_mode = self._client.socket_manager.stream_url.split("?timeUnit=")[0]
+            if is_combined and url_with_mode == stream_url + "/stream":
+                pass
+            elif not is_combined and url_with_mode == stream_url + "/ws":
+                pass
+            else:
+                self._client.logger.warning("BinanceSpotDataWebsocketApi.connect: 重连不同模式的Websocket，先断开旧连接")
+                self._client.stop()
+
+        self._client = SpotWebsocketStreamClient_vnpy(stream_url=stream_url,
+                                                      on_message=self.on_packet,
+                                                      on_close=self.on_disconnected,
+                                                      is_combined=is_combined)
         self._active = True
         self.on_connected()
 
@@ -809,9 +865,13 @@ class BinanceSpotDataWebsocketApi:
                 bar.high_price = float(kdata['h'])
                 bar.low_price = float(kdata['l'])
                 bar.close_price = float(kdata['c'])
-                bar.volume = float(kdata['q'])
-                if bar.volume < 1000 and SYSTEM_MODE == 'TEST':
-                    self.gateway.write_log(f"bar.volume is too low: {str(bar.__dict__)}", )
+                bar.volume = float(kdata['v'])
+                bar.turnover = 0
+                bar.open_interest = 0
+                bar.quote_asset_volume = float(kdata['q'])
+                bar.number_of_trades = float(kdata['n'])
+                bar.taker_buy_base_asset_volume = float(kdata['V'])
+                bar.taker_buy_quote_asset_volume = float(kdata['Q'])
                 self.gateway.on_bar(copy(bar))
             return
 
@@ -852,7 +912,7 @@ class BinanceSpotDataWebsocketApi:
             tick.localtime = datetime.now()
             self.gateway.on_tick(copy(tick))
 
-    def on_disconnected(self) -> None:
+    def on_disconnected(self, *args) -> None:
         """连接断开回报"""
         self._client.stop()
         self.gateway.write_log("行情Websocket API断开")
@@ -876,7 +936,8 @@ class SpotWebsocketStreamClient_vnpy(BinanceWebsocketClient):
             is_combined=False,
             timeout=None,
             logger=None,
-            proxies: Optional[dict] = None,
+            proxies: Optional[dict] = proxies
+            ,
     ):
         if is_combined:
             stream_url = stream_url + "/stream"

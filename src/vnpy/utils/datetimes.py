@@ -291,6 +291,35 @@ class DatetimeUtils:
         return f"{int(prefix)}{ret_unit.name}"
 
     @classmethod
+    def freq2interval(cls, freq: TimeFreq) -> Interval:
+        """
+        Converts a TimeFreq enum member to a vnpy Interval.
+
+        Parameters
+        ----------
+        freq : TimeFreq
+            The input time frequency.
+
+        Returns
+        -------
+        Interval
+            The corresponding vnpy Interval.
+        """
+        freq_map = {
+            # TimeFreq.s.value: Interval.TICK,
+            TimeFreq.m.value: Interval.MINUTE,
+            TimeFreq.h.value: Interval.HOUR,
+            TimeFreq.d.value: Interval.DAILY,
+            TimeFreq.W.value: Interval.WEEKLY,
+        }
+        if freq.value in freq_map:
+            return freq_map[freq.value]
+        else:
+            raise NotImplementedError(
+                f"Frequency '{freq.name}' cannot be converted to a vnpy Interval."
+            )
+
+    @classmethod
     def freq2unix(
             cls, freq: TimeFreq, ret_unit: TimeFreq | str | None = TimeFreq.ms
     ) -> int:

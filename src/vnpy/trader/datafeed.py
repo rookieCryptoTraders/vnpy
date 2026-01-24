@@ -17,7 +17,7 @@ class BaseDatafeed:
         """
         return False
 
-    def query_bar_history(self, req: HistoryRequest, output: Callable = print) -> list[BarData]:
+    def query_bar_history(self, req: HistoryRequest, output: Callable = print) -> list[BarData] | list[dict]:
         """
         Query history bar data.
         """

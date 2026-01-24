@@ -15,8 +15,22 @@ import re
 os.environ['TZ'] = 'UTC'
 
 # path related
-# Adjusted by Gemini to point to the current workspace directory.
-WORK_DIR = Path(os.getcwd())
+def _get_work_dir() -> Path:
+    """
+    Find the project root directory by searching for GEMINI.md.
+    This ensures that WORK_DIR is consistent (the workspace root)
+    regardless of where the script is executed from.
+    """
+    # Traverse up from this file to find the project root
+    current = Path(__file__).resolve().parent
+    for parent in [current] + list(current.parents):
+        if (parent / "GEMINI.md").exists():
+            return parent
+            
+    # Fallback to CWD if specific markers are not found
+    return Path(os.getcwd())
+
+WORK_DIR = _get_work_dir()
 DATA_ROOT = os.path.join(WORK_DIR, 'data')
 FACTOR_ROOT = os.path.join(DATA_ROOT, 'factors')
 RES_ROOT = os.path.join(WORK_DIR, 'results')
@@ -28,20 +42,20 @@ FILENAME_FACTOR = "{factorname}_{interval}_{date}.csv"  # factor, interval, date
 FILENAME_FACTOR_CONCAT = "{factorname}_{interval}_{start_date}_{end_date}.csv"  # factor, interval, start_date, end_date
 
 # vtsymbol templates.
-VTSYMBOL= "{symbol}.{exchange}"  # symbol, exchange
-# for keys. such as the first part (the str before @) of the factor key
+VTSYMBOL = "{symbol}.{exchange}"  # symbol, exchange
+#   for keys. such as the first part (the str before @) of the factor key
 VTSYMBOL_KLINE = "kline_{interval}_{symbol}.{exchange}"  # interval, symbol, exchange
 VTSYMBOL_TICK = "tick_{interval}_{symbol}.{exchange}"  # interval, symbol, exchange
-# for factor_key. all symbols and exchanges needs to be calculated, so we don't care if they will be displayed in the key.
-# forms factor_key and is displayed as column names in database
+#   for factor_key. all symbols and exchanges needs to be calculated, so we don't care if they will be displayed in the key.
+#   forms factor_key and is displayed as column names in database
 VTSYMBOL_FACTOR = "factor_{interval}_{factorname}"
-VTSYMBOL_OVERVIEW = "overview_{interval}_{symbol}.{exchange}"
-# for datas. vnpy regards it as the combination of `symbol` and `exchange`, and rsplit it by '.'.
+FACTOR_KEY_TEMPLATE = "{factorname}@{version}#{config_hash}"
+#   for datas. vnpy regards it as the combination of `symbol` and `exchange`, and rsplit it by '.'.
 VTSYMBOL_BARDATA = "{symbol}.{exchange}"
 VTSYMBOL_TICKDATA = "{symbol}.{exchange}"
 VTSYMBOL_FACTORDATA = "{interval}_{symbol}_{factorname}.{exchange}"  # displayed in ticker column of database
 
-# data related
+# backtest related
 TRAIN_START_DATE = '2020-10-01'
 TRAIN_END_DATE = '2022-12-31'
 TEST_START_DATE = '2023-01-01'
@@ -51,10 +65,13 @@ TRAIN_END_DATE_for_test = '2022-01-31'
 TEST_START_DATE_for_test = '2022-02-01'
 TEST_END_DATE_for_test = '2022-02-28'
 
-# data related
+# overview related
 BAR_OVERVIEW_FILENAME = "overview_bar.json"
 TICK_OVERVIEW_FILENAME = "overview_tick.json"
 FACTOR_OVERVIEW_FILENAME = "overview_factor.json"
+BAR_OVERVIEW_KEY = "overview_bar_{interval}_{symbol}.{exchange}"
+TICK_OVERVIEW_KEY = "overview_tick_{interval}_{symbol}.{exchange}"
+FACTOR_OVERVIEW_KEY = "overview_factor_{interval}_{symbol}.{exchange}|{factor_key}"
 
 
 def match_format_string(format_str, s):
@@ -80,7 +97,7 @@ def match_format_string(format_str, s):
 
     # Now replace keyword arguments with named groups matching them. We also escape between keyword
     # arguments so we support meta-characters there. Re-join tokens to form our regexp pattern
-    tokens[1::2] = map(u'(?P<{}>.*)'.format, keywords)
+    tokens[1::2] = list(map(u'(?P<{}>.*?)'.format, keywords[:-1])) + [u'(?P<{}>.*)'.format(keywords[-1])]
     tokens[0::2] = map(re.escape, tokens[0::2])
     pattern = ''.join(tokens)
 

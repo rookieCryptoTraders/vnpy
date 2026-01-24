@@ -9,7 +9,7 @@ import sys
 from datetime import datetime, time
 from pathlib import Path
 from decimal import Decimal, ROUND_DOWN
-from typing import Callable, Optional, Union, Literal,Any
+from typing import Callable, Optional, Union, Literal, Any
 import traceback
 
 import pandas as pd
@@ -73,11 +73,29 @@ def extract_vt_symbol(vt_symbol: str, is_factor=False) -> tuple[str, Exchange] |
     return symbol, Exchange(exchange_str)
 
 
-def generate_vt_symbol(symbol: str, exchange: Exchange, is_factor=False, factor_name=None,
+
+def extract_overview_key(overview_key: str) -> dict[str, Any]:
+    """
+    Returns
+    -------
+    (interval, symbol)
+    """
+    try:
+        _, interval_str, symbol = overview_key.split("_", maxsplit=2)
+        return Interval(interval_str), symbol
+    except Exception as e:
+        raise ValueError(
+            f"Invalid overview key format: {overview_key}. Expected format: 'overview_interval_symbol'") from e
+
+
+
+def generate_vt_symbol(symbol: str, exchange: Exchange | str, is_factor=False, factor_name=None,
                        interval: Interval = None) -> str:
     """
     return vt_symbol
     """
+    if isinstance(exchange, str):
+        exchange = Exchange(exchange)
     if is_factor:
         print("think about it. generate_vt_symbol maybe should only contain symbol and exchange")
         return FactorData(symbol=symbol, exchange=exchange, interval=interval,
@@ -1282,18 +1300,21 @@ def is_nothing(obj) -> bool:
         return True
     return False
 
+
 class InstanceChecker(object):
     """
     A class to check the type of an object.
     """
+
     @staticmethod
     def is_type(obj: Any, type_name: str) -> bool:
         """
         Check if the object is of a specific type.
         """
         return isinstance(obj, eval(type_name))
+
     @staticmethod
-    def is_dict_of(obj, type_value:Union[Any,list[Any]], type_key=str):
+    def is_dict_of(obj, type_value: Union[Any, list[Any]], type_key=str):
         """determine if an object is a dictionary of DataFrames
 
         Parameters

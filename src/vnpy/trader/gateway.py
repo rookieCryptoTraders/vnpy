@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from copy import copy
 from logging import INFO
+import polars as pl
 
 from vnpy.event import Event, EventEngine
 from .event import (
@@ -112,14 +113,15 @@ class BaseGateway(ABC):
         specific_event_type = EVENT_BAR + bar.vt_symbol
         self.on_event(specific_event_type, bar)
 
-    def on_bar_filling(self, bar: BarData) -> None:
+    def on_bar_filling(self, bar: BarData | pl.DataFrame) -> None:
         """
         Bar event push.
         Bar event of a specific vt_symbol is also pushed.
         """
         self.on_event(EVENT_BAR_FILLING, bar)
-        specific_event_type = EVENT_BAR_FILLING + bar.vt_symbol
-        self.on_event(specific_event_type, bar)
+        if isinstance(bar, BarData):
+            specific_event_type = EVENT_BAR_FILLING + bar.vt_symbol
+            self.on_event(specific_event_type, bar)
 
     def on_factor_filling(self, gap_dict: dict) -> None:
         """

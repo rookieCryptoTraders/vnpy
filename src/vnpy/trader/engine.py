@@ -88,9 +88,14 @@ class MainEngine:
         self.gateways: dict[str, BaseGateway] = {}
         self.engines: dict[str, BaseEngine] = {}
         self.apps: dict[str, BaseApp] = {}
+        # engine's priority > gateway's priority
+        self.gateways_priorities: dict[str, int] = {}  # 0 stands for the highest priority
+        self.engines_priorities: dict[str, int] = {}  # 0 stands for the highest priority
+
         self.intervals: list[Interval] = [
             Interval(interval) for interval in SETTINGS.get("gateway.intervals", [])
         ]
+        print(self.intervals)
         self.minimum_freq: TimeFreq = min(
             [DatetimeUtils.interval2freq(intvl) for intvl in self.intervals]
         )
@@ -108,19 +113,30 @@ class MainEngine:
         os.chdir(TRADER_DIR)  # Change working directory
         self.init_engines()  # Initialize function engines
 
-    def add_engine(self, engine_class: type[EngineType], *args, **kwargs) -> EngineType:
+    def add_engine(self, engine_class: type[EngineType], priority: int = 5, *args, **kwargs) -> EngineType:
         """
         Add function engine.
+
+        Parameters
+        ----------
+        priority: int
+            0 stands for the highest priority.
         """
         engine: EngineType = engine_class(self, self.event_engine, *args, **kwargs)  # type: ignore
         self.engines[engine.engine_name] = engine
+        self.engines_priorities[engine.engine_name] = priority
         return engine
 
     def add_gateway(
-        self, gateway_class: type[BaseGateway], gateway_name: str = ""
+            self, gateway_class: type[BaseGateway], gateway_name: str = "", priority: int = 5
     ) -> BaseGateway:
         """
         Add gateway.
+
+        Parameters
+        ----------
+        priority: int
+            0 stands for the highest priority.
         """
         # Use default name if gateway_name not passed
         if not gateway_name:
@@ -128,6 +144,7 @@ class MainEngine:
 
         gateway: BaseGateway = gateway_class(self.event_engine, gateway_name)
         self.gateways[gateway_name] = gateway
+        self.gateways_priorities[gateway_name] = priority
 
         # Add gateway supported exchanges into engine
         for exchange in gateway.exchanges:
@@ -137,7 +154,7 @@ class MainEngine:
         return gateway
 
     def add_app(
-        self, app_class: type[BaseApp], *args, **kwargs
+            self, app_class: type[BaseApp], priority: int = 5, *args, **kwargs
     ) -> BaseEngine | type[BaseEngine] | EngineType:
         """
         Add app.
@@ -145,13 +162,15 @@ class MainEngine:
         ----------
         args: list
             args for engine
-        kwargs: dict
+        kwargs:
             kwargs for engine
+        priority: int
+            0 stands for the highest priority.
         """
         app: BaseApp = app_class()
         self.apps[app.app_name] = app
 
-        engine: BaseEngine = self.add_engine(app.engine_class, *args, **kwargs)
+        engine: BaseEngine = self.add_engine(app.engine_class, priority=priority, *args, **kwargs)
         return engine
 
     def init_engines(self) -> None:
@@ -231,7 +250,7 @@ class MainEngine:
         return engine
 
     def get_default_setting(
-        self, gateway_name: str
+            self, gateway_name: str
     ) -> dict[str, str | bool | int | float] | None:
         """
         Get default setting dict of a specific gateway.
@@ -280,7 +299,7 @@ class MainEngine:
         Subscribe tick data update of all contracts in a gateway.
         """
         for symbol, exchange, interval in product(
-            self.symbols, self.exchanges, self.intervals
+                self.symbols, self.exchanges, self.intervals
         ):
             req: SubscribeRequest = SubscribeRequest(
                 symbol=symbol, exchange=Exchange(exchange), interval=Interval(interval)
@@ -324,7 +343,7 @@ class MainEngine:
             gateway.cancel_quote(req)
 
     def query_history(
-        self, req: HistoryRequest, gateway_name: str
+            self, req: HistoryRequest, gateway_name: str
     ) -> list[BarData] | None:
         """
         Query bar history data from a specific gateway.
@@ -342,28 +361,18 @@ class MainEngine:
         """
         # Stop event engine first to prevent new timer event.
         self.event_engine.stop()
+        close_order = [(priority, engine) for priority, engine in
+                       zip([self.engines_priorities[engine_name] for engine_name in self.engines.keys()],
+                           self.engines.values())] + \
+                      [(priority, gateway) for priority, gateway in
+                       zip([self.gateways_priorities[gateway_name] for gateway_name in self.gateways.keys()],
+                           self.gateways.values())]
+        close_order.sort(key=lambda x: x[0], reverse=False)  # close engines with higher priority first. sort is stable
 
-        for engine in self.engines.values():
-            engine.close()
-
-        for gateway in self.gateways.values():
-            gateway.close()
-
-    def start_data_stream(self):
-        for exchange in self.exchanges:
-            for ticker in self.tickers:
-                vt_symbol = f"{ticker}.{exchange.value}"
-                contract: ContractData | None = self.get_contract(vt_symbol)
-                if contract:
-                    req: SubscribeRequest = SubscribeRequest(
-                        symbol=contract.symbol, exchange=contract.exchange
-                    )
-                    self.subscribe(req, contract.gateway_name)
-                else:
-                    self.write_log(
-                        msg=f"Market data subscription failed, contract {vt_symbol} not found",
-                        source="MainEngine",
-                    )
+        for o in close_order:
+            print("closing priority: ",o[0])
+            print(o[1].__class__)
+            o[1].close()
 
 
 class BaseEngine(ABC):
@@ -372,10 +381,10 @@ class BaseEngine(ABC):
     """
 
     def __init__(
-        self,
-        main_engine: MainEngine,
-        event_engine: EventEngine,
-        engine_name: str,
+            self,
+            main_engine: MainEngine,
+            event_engine: EventEngine,
+            engine_name: str,
     ) -> None:
         """"""
         self.main_engine: MainEngine = main_engine
@@ -746,7 +755,7 @@ class OmsEngine(BaseEngine):
             return active_quotes
 
     def update_order_request(
-        self, req: OrderRequest, vt_orderid: str, gateway_name: str
+            self, req: OrderRequest, vt_orderid: str, gateway_name: str
     ) -> None:
         """
         Update order request to offset converter.
@@ -758,7 +767,7 @@ class OmsEngine(BaseEngine):
             converter.update_order_request(req, vt_orderid)
 
     def convert_order_request(
-        self, req: OrderRequest, gateway_name: str, lock: bool, net: bool = False
+            self, req: OrderRequest, gateway_name: str, lock: bool, net: bool = False
     ) -> list[OrderRequest]:
         """
         Convert original order request according to given mode.
@@ -798,7 +807,7 @@ class EmailEngine(BaseEngine):
         # self.main_engine.send_email = self.send_email  # vnpy v4.0.0 update. it is moved to initialization of main_engine
 
     def send_email(
-        self, subject: str, content: str, receiver: str | None = None
+            self, subject: str, content: str, receiver: str | None = None
     ) -> None:
         """"""
         # Start email engine when sending first email.

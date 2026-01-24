@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import copy
 import csv
 import time
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime
 from logging import INFO, ERROR
-from typing import List, Optional, Union, TYPE_CHECKING, Literal
+from typing import Optional, Union, TYPE_CHECKING, Literal, Any
 
 import polars as pl
 
@@ -14,7 +15,7 @@ from vnpy.config import match_format_string
 from vnpy.event import Event, EventEngine
 from vnpy.trader.constant import Interval, Exchange
 from vnpy.trader.database import BaseDatabase, BarOverview, DB_TZ, TV_BaseOverview, TickOverview, \
-    FactorOverview, TimeRange, VTSYMBOL_OVERVIEW
+    FactorOverview, TimeRange, BAR_OVERVIEW_KEY, DataRange
 from vnpy.trader.datafeed import BaseDatafeed, get_datafeed
 from vnpy.trader.engine import BaseEngine, MainEngine
 from vnpy.trader.event import EVENT_LOG, EVENT_BAR_FILLING
@@ -64,7 +65,7 @@ class DataManagerEngine(BaseEngine):
         if isinstance(data, list) and isinstance(data[0], dict):
             res = []
             for d in data:
-                tmp=self.database.load_bar_data(**d)
+                tmp = self.database.load_bar_data(**d)
                 if tmp is not None:
                     res.append(tmp)
                 else:
@@ -78,9 +79,8 @@ class DataManagerEngine(BaseEngine):
             self.write_log(f"Invalid data format for {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}: {data}", level=ERROR)
             raise TypeError(f"Invalid data format for {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}: {data}")
         self.write_log(
-            f"Successfully processed {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}, response count: {len(res)}")
+            f"Successfully processed {EVENT_DATAMANAGER_LOAD_BAR_REQUEST}, response count: {len(res) if res is not None else 0}")
         self.put_event(Event(EVENT_DATAMANAGER_LOAD_BAR_RESPONSE, data=res))
-        print(f"put_event {EVENT_DATAMANAGER_LOAD_BAR_RESPONSE}: {event_type}, {data}, response count: {len(res)}",flush=True)
 
     def on_load_factor_data(self, event: Event) -> None:
         event_type, data = event.type, event.data
@@ -118,7 +118,6 @@ class DataManagerEngine(BaseEngine):
         """
         res = defaultdict(list)
         for overview_key, time_ranges in gaps.items():
-            info = match_format_string(VTSYMBOL_OVERVIEW, overview_key)
             for time_range in time_ranges:
                 if time_range.start < start:
                     time_range.start = start
@@ -150,7 +149,7 @@ class DataManagerEngine(BaseEngine):
 
         reader: csv.DictReader = csv.DictReader(buf, delimiter=",")
 
-        bars: List[BarData] = []
+        bars: list[BarData] = []
         start: Optional[datetime] = None
         count: int = 0
         tz = ZoneInfo(tz_name)
@@ -204,7 +203,7 @@ class DataManagerEngine(BaseEngine):
             end: datetime
     ) -> bool:
         """"""
-        bars: List[BarData] = self.load_bar_data(symbol, exchange, interval, start, end)
+        bars: list[BarData] = self.load_bar_data(symbol, exchange, interval, start, end)
 
         fieldnames: list = [
             "symbol",
@@ -259,9 +258,9 @@ class DataManagerEngine(BaseEngine):
             interval: Interval,
             start: datetime,
             end: datetime
-    ) -> List[BarData]:
+    ) -> list[BarData]:
         """"""
-        bars: List[BarData] = self.database.load_bar_data(
+        bars: list[BarData] = self.database.load_bar_data(
             symbol,
             exchange,
             interval,
@@ -281,7 +280,7 @@ class DataManagerEngine(BaseEngine):
             end: datetime,
             ret: Literal["rows", "numpy", "pandas", "polars"] = "polars",
     ) -> list[FactorData]:
-        factors: List[FactorData] = self.database.load_factor_data(
+        factors: list[FactorData] = self.database.load_factor_data(
             symbol=symbol,
             exchange=exchange,
             interval=interval,
@@ -315,7 +314,7 @@ class DataManagerEngine(BaseEngine):
             start: datetime,
             end: datetime = None,
             save: bool = False
-    ) -> Union[int, List[BarData]]:
+    ) -> Union[int, list[BarData]]:
         """
         Query bar data from datafeed.
         """
@@ -336,12 +335,12 @@ class DataManagerEngine(BaseEngine):
 
         # If history data provided in gateway, then query
         if contract and contract.history_data:
-            data: List[BarData] = self.main_engine.query_history(
+            data: list[BarData] = self.main_engine.query_history(
                 req, contract.gateway_name
             )
         # Otherwise use datafeed to query data
         else:
-            data: List[dict] = self.datafeed.query_bar_history(req=req, output=self.write_log)
+            data: list[dict] = self.datafeed.query_bar_history(req=req, output=self.write_log)
 
         if save:
             if data:
@@ -351,25 +350,7 @@ class DataManagerEngine(BaseEngine):
             # If not saving, just return the data
             return data
 
-        return 0
-
-    def download_bar_data_20250629(
-            self,
-            requests: list[HistoryRequest],
-            gateway_name: str = "",
-    ) -> Union[int, List[BarData]]:
-        """
-        Query bar data from datafeed.
-        """
-
-        bar_data_list: List[BarData] = []
-        for req in requests:
-            data: List[BarData] = self.main_engine.query_history(
-                req, gateway_name
-            )
-            bar_data_list.extend(data)
-
-        return bar_data_list
+        return data
 
     def download_tick_data(
             self,
@@ -388,7 +369,7 @@ class DataManagerEngine(BaseEngine):
             end=datetime.now(DB_TZ)
         )
 
-        data: List[TickData] = self.datafeed.query_tick_history(req, output)
+        data: list[TickData] = self.datafeed.query_tick_history(req, output)
 
         if data:
             self.database.save_tick_data(data)
@@ -399,24 +380,42 @@ class DataManagerEngine(BaseEngine):
     def download_missing_bars(self, requests: HistoryRequest) -> Union[TV_BaseOverview, None]:
         return None
 
-    def download_bar_data_gaps(self, gap_dict: dict[str, list[TimeRange]]):
+    def download_bar_data_gaps(self, gap_dict: dict[str, list[TimeRange]]) -> dict[Any, dict]:
         """
         Download bar data for gaps in the overview.
         """
-        res = defaultdict(list)
+        assert len(self.main_engine.intervals) == 1, "download_bar_data_gaps only support single interval now"
+        reformated_gap_dict = {}
+        res = defaultdict(dict)
+        # merge gaps for bars and factors
         for overview_key, time_ranges in gap_dict.items():
-            start_dt = min([time_range.start for time_range in time_ranges])
-            end_dt = max([time_range.end for time_range in time_ranges])
-            self.write_log(f"download_bar_data_gaps: {overview_key}, {start_dt} - {end_dt}")
-            info = match_format_string(VTSYMBOL_OVERVIEW, overview_key)
+
+            if overview_key.startswith("overview_factor"):
+                overview_key = copy.deepcopy(overview_key.split("|")[0].replace("factor", "bar"))
             for time_range in time_ranges:
-                res[overview_key].extend(self.download_bar_data(symbol=info['symbol'],
-                                                                exchange=Exchange(info['exchange']),
-                                                                interval=Interval(info['interval']),
-                                                                start=time_range.start,
-                                                                end=time_range.end,
-                                                                save=False))
-        return res
+                if overview_key not in reformated_gap_dict:
+                    reformated_gap_dict[overview_key] = DataRange(interval=self.main_engine.intervals[0])
+                reformated_gap_dict[overview_key].add_range(timerange=time_range, method='union')
+
+        # download data for each gap
+        for overview_key, data_range in reformated_gap_dict.items():
+            info = match_format_string(BAR_OVERVIEW_KEY, overview_key)
+            for time_range in data_range.ranges:
+                start_dt = time_range.start
+                end_dt = time_range.end
+                self.write_log(f"download_bar_data_gaps: {overview_key}, {start_dt} - {end_dt}")
+                res[overview_key][time_range.start] = {"time_range": time_range,
+                                                       "symbol": info['symbol'],
+                                                       "exchange": Exchange(info['exchange']),
+                                                       "interval": Interval(info['interval']),
+                                                       "data": self.download_bar_data(
+                                                           symbol=info['symbol'],
+                                                           exchange=Exchange(info['exchange']),
+                                                           interval=Interval(info['interval']),
+                                                           start=time_range.start,
+                                                           end=time_range.end,
+                                                           save=False)}
+        return dict(res)
 
     def write_log(self, msg: str, level=INFO) -> None:
         """
