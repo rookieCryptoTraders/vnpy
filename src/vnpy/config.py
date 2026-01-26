@@ -24,7 +24,7 @@ def _get_work_dir() -> Path:
     # Traverse up from this file to find the project root
     current = Path(__file__).resolve().parent
     for parent in [current] + list(current.parents):
-        if (parent / "GEMINI.md").exists():
+        if (parent / "vnpy").exists() and (parent / "vnpy_clickhouse").exists() and (parent / "vnpy_datafeed").exists() and (parent / "vnpy_factor").exists():
             return parent
             
     # Fallback to CWD if specific markers are not found

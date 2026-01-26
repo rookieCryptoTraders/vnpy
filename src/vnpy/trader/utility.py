@@ -170,14 +170,14 @@ def load_json(filename: str, cls=json.JSONDecoder, return_filepath: bool = False
             return {}
 
 
-def save_json(filename: str, data: dict | list, mode="w+", cls=json.JSONEncoder) -> None:
+def save_json(filename: str, data: dict | list, mode="w+", cls=json.JSONEncoder) -> None | Path:
     """
     Save data into json file in temp path.
     """
     filepath: Path = get_file_path(filename)
     tmp_filepath: Path = get_file_path(
         filename + ".tmp")  # if use .tmp can get more data safety, but it will cause error
-    if not data:
+    if data is None or (data is not None and len(data)==0 and not isinstance(data, dict)):
         return None
     with open(tmp_filepath, mode=mode, encoding="UTF-8") as f:
         json.dump(
@@ -190,10 +190,10 @@ def save_json(filename: str, data: dict | list, mode="w+", cls=json.JSONEncoder)
         f.flush()
         os.fsync(
             f.fileno())  # Calling os.fsync(f.fileno()) forces a physical disk write, which is slow (especially on HDDs and for lots of small files). If you can tolerate some risk (i.e., rare data loss on power failure), you can skip os.fsync. Just use f.flush() or even nothing, letting the OS cache writes for a while.
-    #     print("Saved data to", tmp_filepath,flush=True)
     try:
         if tmp_filepath.exists():
             os.replace(tmp_filepath, filepath)
+            return filepath
     except FileNotFoundError as e:
         traceback.print_tb(e.__traceback__)
 
